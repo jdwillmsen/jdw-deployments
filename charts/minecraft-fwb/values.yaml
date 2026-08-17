@@ -98,7 +98,9 @@ backup:
   # Nightly. The world is small and the hold window is seconds, so frequency is
   # cheap; the constraint is retention space, not runtime.
   schedule: "0 4 * * *"
-  image: bitnami/kubectl:1.29.2-debian-12-r3
+  # bitnami/kubectl was retired from Docker Hub and no longer pulls at all.
+  # alpine/k8s carries kubectl plus the bash and coreutils this job needs.
+  image: alpine/k8s:1.31.1
   # Archives live on the file tier, not the block class the world uses.
   storageClass: truenas-nfs
   size: 20Gi
