@@ -1,0 +1,18 @@
+{{- if .Values.backup.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "backup.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Archives go to file storage, not the block class the world lives on. A tar
+  # stream has none of LevelDB's locking or mmap requirements, so NFS is both
+  # safe here and the right fit — it is the capacity tier, and archives are
+  # bulk sequential writes that never need to be a block device.
+  storageClassName: {{ .Values.backup.storageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.backup.size }}
+{{- end }}
