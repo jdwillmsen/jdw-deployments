@@ -65,6 +65,18 @@ minecraft-bedrock:
     serverPort: 31132
     nodePort: 31132
 
+  # The container downloads the pinned server binary on first start, so the
+  # chart's default liveness probe — 30s delay, then three 10s failures —
+  # kills it mid-download and the pod never gets far enough to persist the
+  # binary. The chart ships a startupProbe for exactly this and leaves it off
+  # by default; enabling it suspends liveness until the server answers, with a
+  # 10 minute budget, after which the normal probes take over unchanged.
+  startupProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 60
+
   persistence:
     storageClass: truenas-iscsi
     dataDir:
