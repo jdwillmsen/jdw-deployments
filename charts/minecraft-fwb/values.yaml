@@ -8,12 +8,16 @@ minecraft-bedrock:
     tag: "2026.8.1"
     pullPolicy: IfNotPresent
 
-  # The world is singleton state on a ReadWriteOnce volume. OnDelete rather
-  # than RollingUpdate so a new pod is never scheduled while the old one still
-  # holds the volume — with RWO that deadlocks, and with a LevelDB world two
-  # writers would be worse than a deadlock.
+  # RollingUpdate is safe here despite the ReadWriteOnce volume: a StatefulSet
+  # terminates its pod and waits for it to go before creating the replacement,
+  # unlike a Deployment which would start the new one alongside. There is never
+  # a moment with two writers on the world.
+  #
+  # OnDelete was the earlier choice and made every version bump a two-step
+  # manual chore — merge, then remember to delete the pod. Rolling means a
+  # version change in this file applies on the next sync by itself.
   workloadAsStatefulSet: true
-  strategyType: OnDelete
+  strategyType: RollingUpdate
 
   # Published guidance puts a light world with a handful of players at 1-2 GiB.
   # The VM's 4 GiB covered an entire guest OS as well, so it is not the right
@@ -43,10 +47,15 @@ minecraft-bedrock:
 
   minecraftServer:
     eula: "TRUE"
-    # Pinned to the binary the world was last opened with. A Bedrock world is
-    # upgraded in place on first load by a newer server and cannot be opened by
-    # an older one afterwards, so an unpinned version is a one-way door.
-    version: "1.26.36.1"
+    # Pinned, and bumped deliberately rather than tracking LATEST. Bedrock
+    # upgrades a world in place on first load and an older server cannot reopen
+    # it afterwards, so every bump is a one-way door — which is exactly why it
+    # should be a reviewed one-line change here rather than something that
+    # happens on its own overnight. The nightly backup is the safety net.
+    #
+    # To update: change this value, merge, done. The rolling update strategy
+    # above applies it on the next sync with no manual step.
+    version: "1.26.43.1"
     difficulty: hard
     gameMode: survival
     levelName: FWB
