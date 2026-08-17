@@ -1,0 +1,157 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "backup.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      # No retries. A failed backup must stay failed and visible: a retry that
+      # eventually succeeds hides the fact that the world was unprotected in
+      # between, which is precisely how the mechanism this replaces went
+      # unnoticed for months.
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "backup.name" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 2000
+            seccompProfile:
+              type: RuntimeDefault
+          # The world volume is ReadWriteOnce, so this pod must land on the
+          # node already holding it. RWO permits several pods on one node.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app: {{ .Release.Name }}-minecraft-bedrock
+          containers:
+            - name: backup
+              image: {{ .Values.backup.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: 128Mi
+                  cpu: 100m
+                limits:
+                  memory: 512Mi
+                  cpu: "1"
+              env:
+                - name: SERVER_POD
+                  value: {{ include "backup.serverPod" . }}
+                - name: MIN_BYTES
+                  value: {{ .Values.backup.minBytes | quote }}
+                - name: KEEP
+                  value: {{ .Values.backup.keep | quote }}
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+                  STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+                  STAGE="$(mktemp -d)"
+                  ARCHIVE="/backup/fwb-${STAMP}.tar.gz"
+
+                  # Always resume, even if the copy fails partway. Leaving the
+                  # server held would silently stop it persisting anything.
+                  resume() { kubectl exec -n "$NS" "$SERVER_POD" -- send-command save resume >/dev/null 2>&1 || true; }
+                  trap resume EXIT
+
+                  echo "holding saves"
+                  kubectl exec -n "$NS" "$SERVER_POD" -- send-command save hold
+
+                  # save query reports "ready to be copied" followed by a
+                  # comma-separated file:length manifest. Poll until it does.
+                  MANIFEST=""
+                  for _ in $(seq 1 30); do
+                    sleep 3
+                    kubectl exec -n "$NS" "$SERVER_POD" -- send-command save query >/dev/null
+                    sleep 2
+                    MANIFEST="$(kubectl logs -n "$NS" "$SERVER_POD" --tail=20 \
+                      | grep -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
+                    [[ "$MANIFEST" == *":"* ]] && break
+                    MANIFEST=""
+                  done
+                  if [[ -z "$MANIFEST" ]]; then
+                    echo "FATAL: server never reported a copyable manifest" >&2
+                    exit 1
+                  fi
+
+                  # Each entry is path:length. The length is the number of bytes
+                  # that are actually valid — LevelDB keeps appending, so a file
+                  # on disk can be longer than its committed contents. Copying
+                  # the whole file instead of truncating to this length is what
+                  # produces a backup that fails to restore.
+                  # Read from a process substitution rather than a pipe: a
+                  # piped while-loop runs in a subshell, where set -e cannot
+                  # abort the script and a failed copy would be swallowed —
+                  # producing a short archive that still exits zero.
+                  COUNT=0
+                  while read -r entry; do
+                    entry="$(echo "$entry" | xargs)"
+                    [[ -z "$entry" ]] && continue
+                    f="${entry%%:*}"
+                    len="${entry##*:}"
+                    mkdir -p "$STAGE/$(dirname "$f")"
+                    head -c "$len" "/data/worlds/$f" > "$STAGE/$f"
+                    COUNT=$((COUNT + 1))
+                  done < <(echo "$MANIFEST" | tr ',' '\n')
+                  echo "copied $COUNT files"
+                  if [[ "$COUNT" -lt 3 ]]; then
+                    echo "FATAL: manifest yielded only $COUNT files" >&2
+                    exit 1
+                  fi
+
+                  echo "resuming saves"
+                  resume
+                  trap - EXIT
+
+                  tar czf "$ARCHIVE" -C "$STAGE" .
+                  rm -rf "$STAGE"
+
+                  SIZE="$(stat -c %s "$ARCHIVE")"
+                  echo "archive $ARCHIVE is $SIZE bytes"
+
+                  # An archive that exists but is empty or absurdly small is the
+                  # failure mode that went unnoticed on the VM for months. Treat
+                  # it as a failure rather than a success with a small file.
+                  if [[ "$SIZE" -lt "$MIN_BYTES" ]]; then
+                    echo "FATAL: archive is $SIZE bytes, below the $MIN_BYTES floor" >&2
+                    rm -f "$ARCHIVE"
+                    exit 1
+                  fi
+
+                  # shopt -s nullglob so an empty backup dir does not make the
+                  # glob expand to a literal and trip set -e on the first run.
+                  shopt -s nullglob
+                  ARCHIVES=(/backup/fwb-*.tar.gz)
+                  if [[ ${#ARCHIVES[@]} -gt $KEEP ]]; then
+                    ls -1t /backup/fwb-*.tar.gz | tail -n +$((KEEP + 1)) | xargs -r rm -f
+                  fi
+                  echo "backup complete, ${#ARCHIVES[@]} archives on disk before trim"
+              volumeMounts:
+                - name: world
+                  mountPath: /data
+                - name: backup
+                  mountPath: /backup
+          volumes:
+            - name: world
+              persistentVolumeClaim:
+                claimName: datadir-{{ .Release.Name }}-minecraft-bedrock-0
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ include "backup.name" . }}
+{{- end }}

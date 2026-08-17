@@ -92,3 +92,19 @@ minecraft-bedrock:
       Size: 5Gi
       accessModes:
         - ReadWriteOnce
+
+backup:
+  enabled: true
+  # Nightly. The world is small and the hold window is seconds, so frequency is
+  # cheap; the constraint is retention space, not runtime.
+  schedule: "0 4 * * *"
+  image: bitnami/kubectl:1.29.2-debian-12-r3
+  # Archives live on the file tier, not the block class the world uses.
+  storageClass: truenas-nfs
+  size: 20Gi
+  keep: 14
+  # Floor for a plausible archive. The world is ~590 MB raw and compresses to
+  # roughly 700 MB with the rest of the level, so anything under 100 MB means
+  # the copy went wrong — which is the failure the VM's backup hid by writing
+  # nothing at all and reporting success.
+  minBytes: "104857600"

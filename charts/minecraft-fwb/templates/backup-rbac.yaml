@@ -1,0 +1,40 @@
+{{- if .Values.backup.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "backup.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "backup.name" . }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # The backup drives the server's own save protocol over its console, so it
+  # needs to exec into the pod and read back what `save query` printed. Scoped
+  # to this namespace; nothing here is cluster-wide.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "backup.name" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "backup.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "backup.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
