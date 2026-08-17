@@ -1,0 +1,6 @@
+dependencies:
+- name: minecraft-bedrock
+  repository: https://itzg.github.io/minecraft-server-charts/
+  version: 2.9.0
+digest: sha256:a68df4574f8e05dd4128bd83cc4ad51136150474be4ac497529713b261308c41
+generated: "2026-08-17T00:39:34.269085353Z"

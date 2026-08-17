@@ -1,0 +1,10 @@
+apiVersion: v2
+name: minecraft-fwb
+description: Minecraft Bedrock FWB server, migrated off an unmanaged Proxmox VM
+type: application
+version: 0.1.0
+appVersion: "1.26.36.1"
+dependencies:
+  - name: minecraft-bedrock
+    version: 2.9.0
+    repository: https://itzg.github.io/minecraft-server-charts/

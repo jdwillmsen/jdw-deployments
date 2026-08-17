@@ -1,0 +1,9 @@
+apps:
+  # --- PRD environment ---
+  - name: minecraft-fwb-prd
+    namespace: jdwillmsen-prd
+    chartPath: charts/minecraft-fwb
+    syncWave: "1"
+    valueFiles:
+      - values.yaml
+      - values-prd.yaml
