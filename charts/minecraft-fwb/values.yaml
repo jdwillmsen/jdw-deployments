@@ -1,0 +1,74 @@
+minecraft-bedrock:
+  image:
+    repository: itzg/minecraft-bedrock-server
+    # Pinned rather than latest. The VM this migrates from ran the image's
+    # default rolling tag, which upgrades the server binary underneath a live
+    # world; for a GitOps workload whose state is the whole point, that is a
+    # silent-change hazard rather than a convenience.
+    tag: "2026.8.1"
+    pullPolicy: IfNotPresent
+
+  # The world is singleton state on a ReadWriteOnce volume. OnDelete rather
+  # than RollingUpdate so a new pod is never scheduled while the old one still
+  # holds the volume — with RWO that deadlocks, and with a LevelDB world two
+  # writers would be worse than a deadlock.
+  workloadAsStatefulSet: true
+  strategyType: OnDelete
+
+  # Published guidance puts a light world with a handful of players at 1-2 GiB.
+  # The VM's 4 GiB covered an entire guest OS as well, so it is not the right
+  # reference. The namespace quota caps requests at 4 GiB in total, and the
+  # backup CronJob has to be able to schedule alongside this.
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: "1"
+    limits:
+      memory: 4Gi
+      cpu: "2"
+
+  # Bedrock ticks on a single core and uses others for chunk loading, so these
+  # two nodes are chosen for headroom rather than core count; every other node
+  # in the fleet is too memory-tight to take a 2 GiB request.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - talos-lx0-6a4
+                  - talos-4h8-zy6
+
+  minecraftServer:
+    eula: "TRUE"
+    # Pinned to the binary the world was last opened with. A Bedrock world is
+    # upgraded in place on first load by a newer server and cannot be opened by
+    # an older one afterwards, so an unpinned version is a one-way door.
+    version: "1.26.36.1"
+    difficulty: hard
+    gameMode: survival
+    levelName: FWB
+    serverName: "FWB Server"
+    allowCheats: false
+    tickDistance: 8
+    playerIdleTimeout: 0
+
+    # LAN-only. HAProxy terminates every frontend in TCP mode and cannot proxy
+    # UDP, baseline Pod Security forbids hostPort, and no LoadBalancer provider
+    # is deployed — so a NodePort is the only route in.
+    #
+    # serverPort matches nodePort deliberately: the chart's own guidance is
+    # that they must be equal for clients to display a ping time.
+    serviceType: NodePort
+    serverPort: 31132
+    nodePort: 31132
+
+  persistence:
+    storageClass: truenas-iscsi
+    dataDir:
+      enabled: true
+      Size: 5Gi
+      accessModes:
+        - ReadWriteOnce
