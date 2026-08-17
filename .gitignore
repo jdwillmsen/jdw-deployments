@@ -1,0 +1,9 @@
+.DS_Store
+*.swp
+
+# Vendored Helm dependencies ARE committed in this repo, unlike jdwlabs/deployments
+# which gitignores charts/*/charts/ and rebuilds from Chart.lock. That repo's
+# dependencies are file:// siblings already present in the checkout; this one
+# pulls from an external Helm repository, so leaving it unvendored would put an
+# upstream fetch in ArgoCD's render path — a failure mode that only shows up as
+# a broken sync. Vendoring keeps the chart self-contained and deterministic.
