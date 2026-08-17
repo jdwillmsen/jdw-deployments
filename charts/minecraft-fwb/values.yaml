@@ -65,6 +65,14 @@ minecraft-bedrock:
     serverPort: 31132
     nodePort: 31132
 
+    # Bedrock answers unconnected pings only when LAN visibility is on, and the
+    # chart defaults it off. That silences the very packet mc-monitor sends, so
+    # the chart's own liveness and readiness probes can never pass — the server
+    # runs correctly and reports itself unhealthy forever. It also belongs on
+    # for its stated purpose here: this server is LAN-only, so appearing in the
+    # client's LAN list is wanted rather than a leak.
+    enableLanVisibility: true
+
   # The container downloads the pinned server binary on first start, so the
   # chart's default liveness probe — 30s delay, then three 10s failures —
   # kills it mid-download and the pod never gets far enough to persist the
