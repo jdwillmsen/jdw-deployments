@@ -119,6 +119,23 @@ spec:
                   resume
                   trap - EXIT
 
+                  # save query lists world files only, so a backup built purely
+                  # from it restores the world with a DEFAULT allowlist — every
+                  # permitted player silently gone. For a server reachable
+                  # beyond the LAN that is an access-control failure, not an
+                  # inconvenience, so the player-facing config is copied too.
+                  # server.properties is deliberately excluded: the chart owns
+                  # it through env vars, and restoring a stale copy would fight
+                  # GitOps on every setting.
+                  for f in allowlist.json permissions.json; do
+                    if [[ -f "/data/$f" ]]; then
+                      cp "/data/$f" "$STAGE/$f"
+                      echo "included $f ($(stat -c %s "/data/$f") bytes)"
+                    else
+                      echo "WARNING: /data/$f absent, not in this archive" >&2
+                    fi
+                  done
+
                   tar czf "$ARCHIVE" -C "$STAGE" .
                   rm -rf "$STAGE"
 
