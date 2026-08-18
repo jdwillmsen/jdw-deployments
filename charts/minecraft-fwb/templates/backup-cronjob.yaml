@@ -16,6 +16,14 @@ spec:
       # between, which is precisely how the mechanism this replaces went
       # unnoticed for months.
       backoffLimit: 0
+      # A pod that cannot attach its volume never fails — it sits in
+      # ContainerCreating on FailedAttachVolume indefinitely, and backoffLimit
+      # does nothing because nothing has errored. With concurrencyPolicy
+      # Forbid that one wedged Job then suppresses every later run until a
+      # human deletes it, which is the silent-backup shape this whole change
+      # exists to remove. The deadline is what converts a wedge into a
+      # failure. Generous against an observed runtime of ~90s.
+      activeDeadlineSeconds: 3600
       template:
         spec:
           restartPolicy: Never
@@ -39,8 +47,10 @@ spec:
           # volumes are ReadWriteOnce: when the server is running its node
           # already holds the world, and the weight makes the scheduler pick
           # that node out of the two. If pressure pushes the job to the other
-          # node anyway, the mount fails and the job fails loudly — which is a
-          # far better outcome than never being scheduled at all.
+          # node anyway the volume cannot attach, and activeDeadlineSeconds
+          # above is what turns that into a failure rather than a pod wedged
+          # in ContainerCreating — still a far better outcome than never being
+          # scheduled at all.
           affinity:
             # Taken from the server's own values rather than restated, so the
             # two cannot drift apart into a job that is pinned away from the
@@ -94,6 +104,11 @@ spec:
                   NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
                   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
                   STAGE="$(mktemp -d)"
+
+                  # A pod killed outright leaves its partial behind, since no
+                  # trap runs. They match no glob the job uses, so they are
+                  # inert rather than dangerous, but they would accumulate.
+                  rm -f /backup/.fwb-*.tar.gz.partial
                   ARCHIVE="/backup/fwb-${STAMP}.tar.gz"
 
                   # Quiescing the server is an optimisation, not a correctness
@@ -222,10 +237,21 @@ spec:
                     fi
                   done
 
-                  tar czf "$ARCHIVE" -C "$STAGE" .
+                  # Built under a name that matches neither the retention nor
+                  # the freshness glob, and moved into place only once it has
+                  # passed the size floor. A tar that dies partway — a full
+                  # volume is the realistic case — would otherwise leave a
+                  # truncated archive under the real name: it would consume a
+                  # retention slot and evict a good archive, and being the
+                  # newest file it is the one a human would reach for in a
+                  # restore. Nothing unverified is ever allowed to carry the
+                  # name of a backup.
+                  ARCHIVE_TMP="/backup/.fwb-${STAMP}.tar.gz.partial"
+                  trap 'rm -f "$ARCHIVE_TMP"' EXIT
+                  tar czf "$ARCHIVE_TMP" -C "$STAGE" .
                   rm -rf "$STAGE"
 
-                  SIZE="$(stat -c %s "$ARCHIVE")"
+                  SIZE="$(stat -c %s "$ARCHIVE_TMP")"
                   echo "archive $ARCHIVE is $SIZE bytes (quiesced=$QUIESCED)"
 
                   # An archive that exists but is empty or absurdly small is the
@@ -233,9 +259,10 @@ spec:
                   # it as a failure rather than a success with a small file.
                   if [[ "$SIZE" -lt "$MIN_BYTES" ]]; then
                     echo "FATAL: archive is $SIZE bytes, below the $MIN_BYTES floor" >&2
-                    rm -f "$ARCHIVE"
                     exit 1
                   fi
+                  mv "$ARCHIVE_TMP" "$ARCHIVE"
+                  trap - EXIT
 
                   # Written only after the size check, so the sidecar file
                   # exists if and only if the archive beside it passed
@@ -254,7 +281,7 @@ spec:
                   shopt -s nullglob
                   ARCHIVES=(/backup/fwb-????????T??????Z.tar.gz)
                   if [[ ${#ARCHIVES[@]} -gt $KEEP ]]; then
-                    ls -1t /backup/fwb-????????T??????Z.tar.gz | tail -n +$((KEEP + 1)) | while read -r old; do
+                    ls -1t "${ARCHIVES[@]}" | tail -n +$((KEEP + 1)) | while read -r old; do
                       rm -f "$old" "${old}.meta"
                     done
                   fi
@@ -269,11 +296,20 @@ spec:
                   # Deliberately last. Everything above can still abort the run,
                   # and a freshness timestamp must never advance for a backup
                   # that did not fully succeed.
-                  NEWEST="$(ls -1t /backup/fwb-????????T??????Z.tar.gz 2>/dev/null | head -1 || true)"
-                  if [[ -z "$NEWEST" ]]; then
+                  # Counted through the array rather than by globbing inside
+                  # the command. nullglob is in effect, so an unmatched glob
+                  # vanishes and `ls -1t <glob>` silently degrades to a bare
+                  # `ls -1t` listing the working directory — which made the
+                  # emptiness check below unreachable and would have published
+                  # a fresh timestamp naming whatever happened to be in cwd.
+                  # A backup metric that invents its own success is the exact
+                  # failure this contract exists to catch.
+                  REMAINING=(/backup/fwb-????????T??????Z.tar.gz)
+                  if [[ ${#REMAINING[@]} -eq 0 ]]; then
                     echo "FATAL: no archive on disk after a successful run" >&2
                     exit 1
                   fi
+                  NEWEST="$(ls -1t "${REMAINING[@]}" | head -1)"
                   # Validated before they are formatted. Prometheus rejects a
                   # whole scrape on one malformed line, so an unparseable value
                   # here would take down all four gauges at once — silencing
