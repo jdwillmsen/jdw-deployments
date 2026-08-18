@@ -23,6 +23,16 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  # The job publishes its own freshness numbers into a ConfigMap, which is how
+  # they reach the exporter without a shared volume. Scoped to the one name it
+  # writes, so this cannot become a general write capability in the namespace.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ include "backup.metricsConfigMap" . }}"]
+    verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

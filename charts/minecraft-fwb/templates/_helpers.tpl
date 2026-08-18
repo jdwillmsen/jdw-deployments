@@ -2,8 +2,16 @@
 {{ .Release.Name }}-backup
 {{- end -}}
 
+{{- define "backup.exporter.name" -}}
+{{ .Release.Name }}-backup-exporter
+{{- end -}}
+
 {{- define "backup.serverPod" -}}
 {{ .Release.Name }}-minecraft-bedrock-0
+{{- end -}}
+
+{{- define "backup.metricsConfigMap" -}}
+{{ .Release.Name }}-backup-metrics
 {{- end -}}
 
 {{- define "recovery.name" -}}

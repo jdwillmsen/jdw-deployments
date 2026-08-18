@@ -78,6 +78,15 @@ spec:
                   value: {{ .Values.backup.minBytes | quote }}
                 - name: KEEP
                   value: {{ .Values.backup.keep | quote }}
+                - name: METRICS_CM
+                  value: {{ include "backup.metricsConfigMap" . }}
+                # Must match the exporter's label for the same workload, or the
+                # zeros it serves before the first run and the real values
+                # after it would arrive as two unrelated series.
+                - name: BACKUP_JOB
+                  value: {{ include "backup.name" . }}
+                - name: MAX_AGE_SECONDS
+                  value: {{ .Values.backup.exporter.maxAgeSeconds | quote }}
               command: ["/bin/bash", "-c"]
               args:
                 - |
@@ -250,6 +259,60 @@ spec:
                     done
                   fi
                   echo "backup complete, ${#ARCHIVES[@]} archives on disk before trim"
+
+                  # Publish the freshness contract. Derived from a scan of the
+                  # archive directory rather than from variables this run set,
+                  # so the numbers describe what is actually on disk — the
+                  # point of the contract is that an artifact nobody looked at
+                  # is exactly how the previous two backups failed unnoticed.
+                  #
+                  # Deliberately last. Everything above can still abort the run,
+                  # and a freshness timestamp must never advance for a backup
+                  # that did not fully succeed.
+                  NEWEST="$(ls -1t /backup/fwb-????????T??????Z.tar.gz 2>/dev/null | head -1 || true)"
+                  if [[ -z "$NEWEST" ]]; then
+                    echo "FATAL: no archive on disk after a successful run" >&2
+                    exit 1
+                  fi
+                  # Validated before they are formatted. Prometheus rejects a
+                  # whole scrape on one malformed line, so an unparseable value
+                  # here would take down all four gauges at once — silencing
+                  # the freshness signal in exactly the way it exists to
+                  # prevent. Better to fail the run than to publish gibberish.
+                  TS="$(stat -c %Y "$NEWEST")"
+                  BYTES="$(stat -c %s "$NEWEST")"
+                  if [[ ! "$TS" =~ ^[0-9]+$ || ! "$BYTES" =~ ^[0-9]+$ ]]; then
+                    echo "FATAL: could not stat $NEWEST for freshness metrics" >&2
+                    exit 1
+                  fi
+                  QMETRIC=""
+                  if [[ -f "${NEWEST}.meta" ]]; then
+                    Q="$(sed -n 's/^quiesced=//p' "${NEWEST}.meta" | head -1)"
+                    [[ "$Q" == "0" || "$Q" == "1" ]] && QMETRIC="$Q"
+                  fi
+
+                  LABELS="backup_job=\"${BACKUP_JOB}\",artifact=\"world\""
+                  {
+                    echo "# HELP backup_last_success_timestamp_seconds Unix time an artifact was last verified written and non-empty."
+                    echo "# TYPE backup_last_success_timestamp_seconds gauge"
+                    echo "backup_last_success_timestamp_seconds{${LABELS}} ${TS}"
+                    echo "# HELP backup_last_artifact_bytes Size in bytes of that artifact."
+                    echo "# TYPE backup_last_artifact_bytes gauge"
+                    echo "backup_last_artifact_bytes{${LABELS}} ${BYTES}"
+                    echo "# HELP backup_max_age_seconds Freshness budget this producer publishes for itself."
+                    echo "# TYPE backup_max_age_seconds gauge"
+                    echo "backup_max_age_seconds{${LABELS}} ${MAX_AGE_SECONDS}"
+                    if [[ -n "$QMETRIC" ]]; then
+                      echo "# HELP backup_last_artifact_quiesced 1 if the newest artifact was taken with the server held, 0 if taken cold."
+                      echo "# TYPE backup_last_artifact_quiesced gauge"
+                      echo "backup_last_artifact_quiesced{${LABELS}} ${QMETRIC}"
+                    fi
+                  } > /tmp/metrics.txt
+
+                  kubectl create configmap "$METRICS_CM" -n "$NS" \
+                    --from-file=metrics.txt=/tmp/metrics.txt \
+                    --dry-run=client -o yaml | kubectl apply -n "$NS" -f -
+                  echo "published freshness metrics for $(basename "$NEWEST")"
               volumeMounts:
                 - name: world
                   mountPath: /data
