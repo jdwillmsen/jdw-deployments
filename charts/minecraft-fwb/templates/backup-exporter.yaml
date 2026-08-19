@@ -75,6 +75,12 @@ spec:
               OUT=/run/metrics
               SRC=/run/state/metrics.txt
               mkdir -p "$OUT"
+              L="backup_job=\"${BACKUP_JOB}\",artifact=\"world\""
+
+              # Read once, before the first payload is written, so the elapsed
+              # time the unknown-state rule measures starts when this process
+              # began serving rather than when it was first scraped.
+              STARTED="$(date +%s)"
 
               # Checked once at startup, before anything can format it into an
               # exposition line. This value comes from chart values, and a bad
@@ -96,12 +102,20 @@ spec:
                   exit 1 ;;
               esac
 
+              # Same guard, same reason: a clock this pod cannot read would
+              # render as a bare metric name and reject the whole scrape,
+              # taking the gauges below down with it.
+              case "$STARTED" in
+                ''|*[!0-9]*)
+                  echo "FATAL: could not read the clock at startup" >&2
+                  exit 1 ;;
+              esac
+
               # Zeros rather than silence when the job has not reported yet.
               # Both gauges at 0 trip the empty and stale alerts together, so a
               # freshly deployed backup that has never produced anything says
               # so, instead of looking healthy until the first run.
               zeros() {
-                L="backup_job=\"${BACKUP_JOB}\",artifact=\"world\""
                 echo "# HELP backup_last_success_timestamp_seconds Unix time an artifact was last verified written and non-empty."
                 echo "# TYPE backup_last_success_timestamp_seconds gauge"
                 echo "backup_last_success_timestamp_seconds{${L}} 0"
@@ -113,6 +127,40 @@ spec:
                 echo "backup_max_age_seconds{${L}} ${MAX_AGE_SECONDS}"
               }
 
+              # Says which of the two payloads is being served, and is what
+              # separates "never measured" from "measured as zero".
+              #
+              # The zeros above are deliberate and stay: without them a backup
+              # deployed but never run looks healthy until its first run. The
+              # cost was that they are indistinguishable from a real reading of
+              # zero, and `optional: true` on the state mount turns a missing
+              # ConfigMap into exactly that reading silently. A backup that ran
+              # and produced nothing and a backup that has not reported yet are
+              # different conditions wanting different severities, and nothing
+              # in the payload could tell them apart.
+              #
+              # Published in both branches rather than only when zero. A gauge
+              # that appears and disappears cannot be joined against, and its
+              # absence would mean both "this producer reported" and "this
+              # producer never adopted the gauge" — the ambiguity being
+              # removed, reintroduced one level up.
+              #
+              # The start time rides along because "has not reported yet" is
+              # only excusable for as long as the producer's own published
+              # budget says a gap is normal, and that comparison needs to know
+              # when this process started serving. A restart resets it, which
+              # is honest: after a restart the mount is re-read, so a producer
+              # that has reported publishes 1 immediately and only a genuinely
+              # never-written state is delayed.
+              state() {
+                echo "# HELP backup_state_reported 1 if the producer has written the state being served, 0 if these are placeholder values for a producer that has not reported yet."
+                echo "# TYPE backup_state_reported gauge"
+                echo "backup_state_reported{${L}} $1"
+                echo "# HELP backup_exporter_start_time_seconds Unix time this exporter process began serving."
+                echo "# TYPE backup_exporter_start_time_seconds gauge"
+                echo "backup_exporter_start_time_seconds{${L}} ${STARTED}"
+              }
+
               # Copied out of the ConfigMap mount rather than served from it.
               # The mount is a symlink farm that kubelet swaps atomically on
               # update, and serving a static file avoids depending on how the
@@ -120,7 +168,7 @@ spec:
               #
               # The refresher runs beside httpd, not in front of it, so its
               # death is not by itself the container's. Under set -e one failed
-              # cp would end it silently while httpd carried on serving the
+              # read would end it silently while httpd carried on serving the
               # last file it wrote — and a frozen timestamp still parses, so
               # the scrape stays green and the pod stays Ready with nothing
               # behind it alive. Staleness would eventually catch that, hours
@@ -134,13 +182,21 @@ spec:
                 trap 'kill 1' EXIT
                 while true; do
                   if [ -s "$SRC" ]; then
-                    cp "$SRC" "$OUT/.metrics.tmp" 2>/dev/null || :
+                    { cat "$SRC" && state 1; } > "$OUT/.metrics.tmp" 2>/dev/null || :
                   else
-                    zeros > "$OUT/.metrics.tmp" 2>/dev/null || :
+                    { zeros && state 0; } > "$OUT/.metrics.tmp" 2>/dev/null || :
                   fi
                   # Never publish a half-written payload: Prometheus rejects
                   # the whole scrape on one malformed line.
-                  if [ -s "$OUT/.metrics.tmp" ]; then
+                  #
+                  # The state gauge is written last and both branches are
+                  # &&-chained, so a payload carrying it is one whose contract
+                  # gauges were written in full. A non-empty test is not enough
+                  # any more: a source read that died partway would still leave
+                  # bytes behind, and publishing a payload with the state gauge
+                  # missing reads as a producer that never adopted it — which
+                  # would quietly restore the very ambiguity it removes.
+                  if grep -q '^backup_state_reported{' "$OUT/.metrics.tmp" 2>/dev/null; then
                     mv "$OUT/.metrics.tmp" "$OUT/metrics.txt"
                   fi
                   sleep "$REFRESH_SECONDS"
@@ -169,6 +225,12 @@ spec:
         # sync and the freshness signal would sawtooth between real and stale.
         # Optional so the exporter still starts before the first backup has
         # ever run; it serves zeros until the job reports.
+        #
+        # Optional is also what makes a missing ConfigMap resolve to an empty
+        # mount rather than a pod that will not start, so "no state" and "state
+        # read as zero" are the same thing from inside this container. That is
+        # why the zeros are labelled by backup_state_reported instead of being
+        # left to speak for themselves.
         - name: state
           configMap:
             name: {{ include "backup.metricsConfigMap" . }}
