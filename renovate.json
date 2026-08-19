@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Renovate is the single owner of dependency updates for this repo; keep repository-level (UI) Dependabot disabled.",
+    "Covers: GitHub Actions pins, the Helm chart dependency in charts/*/Chart.yaml, and container image tags in chart values.",
+    "A Helm dependency bump will fail the vendored-dependencies check until charts/ is re-vendored, because this repo commits the resolved archives and Renovate only edits Chart.yaml. That failure is the intended behaviour: run helm dependency update on the branch and commit the result.",
+    "First-party image tags are release pins managed by their own repository's release process, not third-party dependencies, so they are deliberately not managed here."
+  ],
+  "extends": ["github>jdwlabs/.github"],
+  "packageRules": [
+    {
+      "description": "The AFK bot image is first-party; its tag moves when that repo cuts a release.",
+      "matchPackageNames": ["ghcr.io/jdwillmsen/minecraft-afk-bot"],
+      "enabled": false
+    },
+    {
+      "description": [
+        "The server image carries the world through a one-way door: Bedrock upgrades a world in place on first load and an older server cannot reopen it.",
+        "Reviewed on its own rather than inside the weekly batch, so the decision to walk through that door is never incidental to an unrelated update."
+      ],
+      "matchPackageNames": ["itzg/minecraft-bedrock-server"],
+      "groupName": null
+    }
+  ],
+  "customManagers": [
+    {
+      "description": [
+        "The backup job names its image as a bare `image: repo:tag` string rather than the repository/tag pair the helm-values manager recognises, so nothing would watch it.",
+        "That is the exact dependency that already broke once, when the image it previously used was retired from Docker Hub and stopped pulling at all."
+      ],
+      "customType": "regex",
+      "managerFilePatterns": ["/^charts/.+/values\\.yaml$/"],
+      "matchStrings": ["image:\\s+(?<depName>[^\\s:\"']+):(?<currentValue>[^\\s\"']+)\\s*\\n"],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}

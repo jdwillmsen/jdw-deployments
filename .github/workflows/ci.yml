@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Every job here only reads the tree; nothing writes back to the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5.0.1
+
+      - name: Lint charts
+        run: |
+          for chart in charts/*/; do
+            echo "linting $chart..."
+            helm lint "$chart"
+          done
+
+  template:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5.0.1
+
+      - name: Template charts with each environment values
+        run: |
+          # Every values-<env>.yaml, discovered rather than listed: a
+          # hard-coded env list leaves any new overlay unrendered and reading
+          # as passing.
+          for chart in charts/*/; do
+            name=$(basename "$chart")
+            for values_file in "$chart"values-*.yaml; do
+              [ -f "$values_file" ] || continue
+              echo "Templating $name with $(basename "$values_file")..."
+              helm template "$name" "$chart" -f "$chart/values.yaml" -f "$values_file" > /dev/null
+            done
+          done
+
+  vendored-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5.0.1
+
+      # This repo commits charts/*/charts/ rather than gitignoring it, so the
+      # failure to catch is a Chart.yaml bump merged without re-vendoring. Left
+      # unchecked ArgoCD is the first to notice, and it reports a missing
+      # dependency as a broken sync rather than as the stale lockfile it is.
+      #
+      # No network: helm reads the committed archives and compares them against
+      # Chart.lock, so a repository that has gone away cannot turn this green
+      # or red on its own.
+      - name: Vendored dependencies match Chart.lock
+        run: |
+          exit_code=0
+          for chart in charts/*/; do
+            [ -f "$chart/Chart.lock" ] || continue
+            echo "Checking $chart..."
+            # Process substitution, not a pipe: a piped while-loop runs in a
+            # subshell whose variable assignments are discarded, so a mismatch
+            # would set exit_code in a scope that no longer exists by the time
+            # it is read.
+            while read -r name version _repo status; do
+              [ -n "$name" ] || continue
+              if [ "$status" = "ok" ]; then
+                echo "  $name $version ok"
+              else
+                echo "  ERROR: $name $version is '$status' — run helm dependency update and commit charts/"
+                exit_code=1
+              fi
+            done < <(helm dependency list "$chart" | tail -n +2)
+          done
+          exit $exit_code
+
+  validate-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      # The ApplicationSet generates one Application per entry here, so a typo
+      # in a chartPath or a valueFiles entry becomes a failed sync rather than
+      # a parse error anyone sees at review time.
+      - name: Validate ArgoCD config files
+        run: |
+          exit_code=0
+          for config in argocd/*/config.yaml; do
+            echo "Validating $config..."
+
+            apps=$(yq '.apps | length' "$config")
+            for i in $(seq 0 $(( apps - 1))); do
+              name=$(yq ".apps[$i].name" "$config")
+              ns=$(yq ".apps[$i].namespace" "$config")
+              chart_path=$(yq ".apps[$i].chartPath" "$config")
+
+              if [ "$name" = "null" ] || [ -z "$name" ]; then
+                echo "  ERROR: apps[$i] missing 'name'"
+                exit_code=1
+              fi
+
+              if [ "$ns" = "null" ] || [ -z "$ns" ]; then
+                echo "  ERROR: apps[$i] ($name) missing 'namespace'"
+                exit_code=1
+              fi
+
+              if [ "$chart_path" = "null" ] || [ -z "$chart_path" ]; then
+                echo "  ERROR: apps[$i] ($name) missing 'chartPath'"
+                exit_code=1
+              elif [ ! -d "$chart_path" ]; then
+                echo "  ERROR: apps[$i] ($name) chartPath '$chart_path' does not exist"
+                exit_code=1
+              fi
+
+              value_files=$(yq ".apps[$i].valueFiles | length" "$config")
+              for j in $(seq 0 $(( value_files - 1 ))); do
+                vf=$(yq ".apps[$i].valueFiles[$j]" "$config")
+                if [ ! -f "$chart_path/$vf" ]; then
+                  echo "  ERROR: apps[$i] ($name) valueFile '$chart_path/$vf' does not exist"
+                  exit_code=1
+                fi
+              done
+            done
+
+            echo "  $apps apps validated"
+          done
+          exit $exit_code
