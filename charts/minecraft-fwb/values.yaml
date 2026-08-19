@@ -109,7 +109,13 @@ backup:
   schedule: "0 4 * * *"
   # bitnami/kubectl was retired from Docker Hub and no longer pulls at all.
   # alpine/k8s carries kubectl plus the bash and coreutils this job needs.
-  image: alpine/k8s:1.31.1
+  #
+  # Tracks the cluster's minor version. kubectl supports one minor of skew
+  # either side of the API server, and this job drives the server's save
+  # protocol through exec and reads the manifest back off the pod log — if a
+  # skewed client ever misbehaves it does so on the one path that protects the
+  # world, and it does so silently.
+  image: alpine/k8s:1.36.2
   # Archives live on the file tier, not the block class the world uses.
   storageClass: truenas-nfs
   size: 20Gi
