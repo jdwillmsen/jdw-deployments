@@ -125,3 +125,30 @@ backup:
   # the copy went wrong — which is the failure the VM's backup hid by writing
   # nothing at all and reporting success.
   minBytes: "104857600"
+
+volumeRecovery:
+  # The server's volume has twice remounted read-only underneath a running pod
+  # after a transient error on the iSCSI path. Kubernetes cannot recover from
+  # that on its own: the kubelet restarts the container, the entrypoint runs
+  # again against the same mount, and it fails again -- so the pod sits in
+  # CrashLoopBackOff indefinitely. Deleting the pod is what unpublishes and
+  # republishes the volume, and nothing does that automatically.
+  #
+  # A liveness probe cannot substitute. Probes restart containers, which is
+  # precisely the action that does not work here.
+  enabled: true
+
+  # Five minutes bounds the outage without polling hard. The last occurrence
+  # ran thirteen minutes and was noticed only by chance.
+  schedule: "*/5 * * * *"
+  image: alpine/k8s:1.36.2
+
+  # Deletion is gated on this exact line rather than on "not ready", so a pod
+  # failing for a reason deletion cannot fix is left in its crash loop where it
+  # stays visible instead of being recreated forever.
+  signature: "Read-only file system"
+
+  # A slow first start is not a fault: the server downloads its binary and the
+  # chart allows ten minutes for it. Requiring repeated restarts as well as the
+  # signature keeps this from firing on a pod that is merely still starting.
+  minRestarts: 2

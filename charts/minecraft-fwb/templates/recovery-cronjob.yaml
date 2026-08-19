@@ -1,0 +1,105 @@
+{{- if .Values.volumeRecovery.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "recovery.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.volumeRecovery.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "recovery.name" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: recovery
+              image: {{ .Values.volumeRecovery.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: 64Mi
+                  cpu: 50m
+                limits:
+                  memory: 256Mi
+                  cpu: 500m
+              env:
+                - name: SERVER_POD
+                  value: {{ include "backup.serverPod" . }}
+                - name: MIN_RESTARTS
+                  value: {{ .Values.volumeRecovery.minRestarts | quote }}
+                - name: SIGNATURE
+                  value: {{ .Values.volumeRecovery.signature | quote }}
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+                  emit() { echo "{\"event\":\"$1\",\"pod\":\"$SERVER_POD\",\"detail\":\"${2:-}\"}"; }
+
+                  if ! kubectl get pod -n "$NS" "$SERVER_POD" >/dev/null 2>&1; then
+                    emit skipped "server pod absent"
+                    exit 0
+                  fi
+
+                  READY="$(kubectl get pod -n "$NS" "$SERVER_POD" \
+                    -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "")"
+                  if [[ "$READY" == "true" ]]; then
+                    emit healthy
+                    exit 0
+                  fi
+
+                  # A pod that is merely slow to start must not be deleted. The
+                  # server downloads its binary on first boot and the chart
+                  # allows ten minutes for it, so "not ready" alone is not a
+                  # fault — restarting it would turn a slow start into a loop
+                  # that never completes.
+                  RESTARTS="$(kubectl get pod -n "$NS" "$SERVER_POD" \
+                    -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo 0)"
+                  if [[ "${RESTARTS:-0}" -lt "$MIN_RESTARTS" ]]; then
+                    emit waiting "not ready, $RESTARTS restarts, below the $MIN_RESTARTS threshold"
+                    exit 0
+                  fi
+
+                  # Act only on this one failure, identified by the message the
+                  # entrypoint prints when it cannot write to the volume. A
+                  # broad "not ready and restarting" trigger would also delete
+                  # pods failing for reasons deletion cannot fix -- a bad image,
+                  # a corrupt world -- converting a visible crash loop into an
+                  # endless recreate loop that hides it.
+                  #
+                  # Both the live and previous container are checked: the log
+                  # of interest belongs to whichever attempt most recently died.
+                  FOUND=""
+                  for source in "" "--previous"; do
+                    # shellcheck disable=SC2086
+                    if kubectl logs -n "$NS" "$SERVER_POD" $source --tail=50 2>/dev/null \
+                        | grep -qF "$SIGNATURE"; then
+                      FOUND="yes"
+                      break
+                    fi
+                  done
+
+                  if [[ -z "$FOUND" ]]; then
+                    emit ignored "not ready with $RESTARTS restarts, but no read-only signature — left alone"
+                    exit 0
+                  fi
+
+                  emit recovering "read-only volume after $RESTARTS restarts, deleting pod to force remount"
+                  kubectl delete pod -n "$NS" "$SERVER_POD"
+                  emit deleted "StatefulSet will recreate it; the volume is published fresh"
+{{- end }}

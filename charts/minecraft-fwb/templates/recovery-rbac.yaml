@@ -1,0 +1,49 @@
+{{- if .Values.volumeRecovery.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "recovery.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "recovery.name" . }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # Reads pod status to find the failure and the pod log to confirm which
+  # failure it is, then deletes the pod. Delete is the whole point: a container
+  # restart re-runs the entrypoint against the same mount, so only recreating
+  # the pod gets the volume unpublished and published again.
+  #
+  # Restricted to the one pod by name rather than granted namespace-wide. This
+  # actor deletes with no human in the loop, which makes delete on pods the
+  # sharpest permission anything in this chart holds -- the backup path only
+  # ever reads and execs. A StatefulSet pod name is deterministic, so there is
+  # no reason to hold the broader grant.
+  #
+  # No list verb: resourceNames cannot restrict list, and the script never
+  # needs one -- every call names this pod.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "recovery.name" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "recovery.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "recovery.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
