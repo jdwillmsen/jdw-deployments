@@ -23,6 +23,13 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  # An absent server has two meanings and only the desired replica count tells
+  # them apart: scaled to zero is somebody's decision, one-or-more-but-absent
+  # is a fault. Read-only, and scoped to the one workload it asks about.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    resourceNames: ["{{ include "backup.serverStatefulSet" . }}"]
+    verbs: ["get"]
   # The job publishes its own freshness numbers into a ConfigMap, which is how
   # they reach the exporter without a shared volume. Scoped to the one name it
   # writes, so this cannot become a general write capability in the namespace.

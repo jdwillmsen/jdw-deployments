@@ -14,6 +14,10 @@
 {{ .Release.Name }}-backup-metrics
 {{- end -}}
 
+{{- define "backup.serverStatefulSet" -}}
+{{ .Release.Name }}-minecraft-bedrock
+{{- end -}}
+
 {{- define "recovery.name" -}}
 {{ .Release.Name }}-volume-recovery
 {{- end -}}
