@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# Console access to the Minecraft Bedrock server running in Kubernetes.
+#
+# The server ships `send-command`, which writes to the server's stdin. Driving
+# it directly through kubectl means hand-building the JSON that `tellraw`
+# wants inside two layers of shell quoting, which is where the mistakes are.
+# This wraps that.
+set -uo pipefail
+
+NAMESPACE="${MC_NAMESPACE:-jdwillmsen-prd}"
+SELECTOR="${MC_SELECTOR:-app=jdwillmsen-minecraft-fwb-prd-minecraft-bedrock}"
+SELF="$(basename "$0")"
+
+# Errors go to stdout as structured text, not stderr: an agent reading only
+# stdout must still see why a command failed rather than an empty result.
+err() {
+  echo "error: $1"
+  [ $# -gt 1 ] && echo "hint: $2"
+  exit 1
+}
+
+server_pod() {
+  local pod
+  pod="$(kubectl get pods -n "$NAMESPACE" -l "$SELECTOR" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
+  [ -n "$pod" ] || err "no server pod in namespace $NAMESPACE" \
+    "check MC_NAMESPACE and MC_SELECTOR, or: kubectl get pods -n $NAMESPACE"
+  printf '%s' "$pod"
+}
+
+# send-command returns 0 whether or not the server accepted the command, and
+# echoes nothing back for most of them. Callers are told that rather than left
+# to assume a silent success means delivery.
+send() {
+  local pod="$1"; shift
+  kubectl exec -n "$NAMESPACE" "$pod" -- send-command "$@" >/dev/null 2>&1 \
+    || err "could not reach the server console" "the pod may be restarting: $SELF status"
+}
+
+cmd_status() {
+  local pod ready restarts online
+  pod="$(server_pod)" || exit 1
+  ready="$(kubectl get pod -n "$NAMESPACE" "$pod" \
+    -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null)"
+  restarts="$(kubectl get pod -n "$NAMESPACE" "$pod" \
+    -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null)"
+
+  echo "pod: $pod"
+  echo "ready: ${ready:-unknown}"
+  echo "restarts: ${restarts:-unknown}"
+
+  if [ "$ready" = "true" ]; then
+    send "$pod" list
+    sleep 2
+    online="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
+      | grep -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '[0-9]+/[0-9]+')"
+    echo "players: ${online:-unknown}"
+  fi
+
+  echo
+  echo "help:"
+  echo "  $SELF say <message>              broadcast a plain message"
+  echo "  $SELF announce <message>         broadcast it highlighted"
+  echo "  $SELF players                    who is online"
+  echo "  $SELF run <command> [args...]    any console command"
+}
+
+cmd_players() {
+  local pod names count
+  pod="$(server_pod)" || exit 1
+  send "$pod" list
+  sleep 2
+  count="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
+    | grep -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
+  names="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
+    | grep -A1 'players online' | tail -1 | tr -d '\r')"
+
+  # An empty result is stated rather than printed as nothing, so a caller can
+  # tell "nobody online" apart from "the command did not work".
+  if [ "${count:-0}" = "0" ] || [ -z "$names" ] || [[ "$names" == *"players online"* ]]; then
+    echo "players: 0"
+    echo "online: none"
+    return 0
+  fi
+  echo "players: ${count:-unknown}"
+  echo "online:"
+  echo "$names" | tr ',' '\n' | sed 's/^ *//;s/^/  - /'
+}
+
+cmd_say() {
+  [ $# -gt 0 ] || err "say needs a message" "$SELF say Server restarting in 5 minutes"
+  local pod; pod="$(server_pod)" || exit 1
+  send "$pod" say "$*"
+  echo "sent: say"
+  echo "message: $*"
+
+  # say is genuinely unverifiable: the server prints nothing for it, success
+  # or failure. Rather than assert a delivery that cannot be checked, report
+  # whether anyone was there to receive it, which is the part that can be.
+  send "$pod" list
+  sleep 2
+  local online
+  online="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
+    | grep -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '[0-9]+/[0-9]+')"
+  echo "delivered: unconfirmed"
+  echo "recipients: ${online:-unknown}"
+  echo
+  echo "help:"
+  echo "  the server prints nothing for say, so delivery cannot be confirmed"
+  echo "  $SELF announce <message>    reports delivery, and stands out in chat"
+}
+
+cmd_announce() {
+  [ $# -gt 0 ] || err "announce needs a message" "$SELF announce Backup starting now"
+  local pod json message; pod="$(server_pod)" || exit 1
+  message="$*"
+
+  # Bedrock's tellraw is not Java's: it takes a top-level {"rawtext":[...]}
+  # wrapper. Built with a JSON encoder rather than string interpolation so a
+  # quote or backslash in the message cannot produce malformed JSON that the
+  # server silently rejects.
+  json="$(MC_MSG="$message" python3 -c '
+import json, os
+print(json.dumps({"rawtext": [{"text": "§e" + os.environ["MC_MSG"]}]}))
+' 2>/dev/null)"
+  [ -n "$json" ] || err "could not encode the message" "python3 is required for announce; $SELF say works without it"
+
+  # The console is a shared log, so the read-back below has to be bounded to
+  # what this command produced. A --tail window instead matches whatever
+  # happened to be there -- including an error from a previous command, which
+  # reports a healthy send as rejected. One second of slack absorbs clock skew
+  # between here and the node.
+  local since
+  since="$(date -u -d '1 second ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  send "$pod" tellraw @a "$json"
+  sleep 2
+
+  # tellraw does report failure, unlike say, so the outcome is read back
+  # rather than assumed. Two signatures matter: a rejected payload, and a
+  # well-formed one that reached nobody.
+  local tail
+  tail="$(kubectl logs -n "$NAMESPACE" "$pod" --since-time="$since" 2>/dev/null)"
+  echo "sent: tellraw"
+  echo "message: $message"
+  if grep -q "Syntax error" <<<"$tail"; then
+    echo "delivered: no"
+    echo "reason: the server rejected the payload"
+    echo "server: $(grep -o 'Syntax error.*' <<<"$tail" | tail -1)"
+    exit 1
+  elif grep -q "No targets matched selector" <<<"$tail"; then
+    echo "delivered: no"
+    echo "reason: nobody was online to receive it"
+    echo
+    echo "help:"
+    echo "  $SELF players    confirm who is on before announcing"
+    exit 0
+  fi
+  echo "delivered: yes"
+}
+
+cmd_run() {
+  [ $# -gt 0 ] || err "run needs a command" "$SELF run gamerule showcoordinates true"
+  local pod; pod="$(server_pod)" || exit 1
+  send "$pod" "$@"
+  sleep 2
+  echo "ran: $*"
+  echo "output:"
+  kubectl logs -n "$NAMESPACE" "$pod" --tail=5 2>/dev/null | sed 's/^/  /'
+}
+
+usage() {
+  cat <<EOF
+$SELF — console access to the Minecraft Bedrock server
+
+  $SELF                            server status and who is online
+  $SELF say <message>              broadcast a plain message
+  $SELF announce <message>         broadcast it highlighted
+  $SELF players                    who is online
+  $SELF run <command> [args...]    any console command
+
+environment:
+  MC_NAMESPACE   namespace to look in (default: $NAMESPACE)
+  MC_SELECTOR    label selector for the server pod
+EOF
+}
+
+case "${1:-}" in
+  ""|status)  shift || true; cmd_status ;;
+  say)        shift; cmd_say "$@" ;;
+  announce)   shift; cmd_announce "$@" ;;
+  players)    shift; cmd_players ;;
+  run)        shift; cmd_run "$@" ;;
+  -h|--help|help) usage ;;
+  *)          err "unknown command: $1" "$SELF --help" ;;
+esac
