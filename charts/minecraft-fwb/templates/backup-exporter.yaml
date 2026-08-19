@@ -76,6 +76,26 @@ spec:
               SRC=/run/state/metrics.txt
               mkdir -p "$OUT"
 
+              # Checked once at startup, before anything can format it into an
+              # exposition line. This value comes from chart values, and a bad
+              # one renders as a bare metric name with no value — which makes
+              # Prometheus reject the entire scrape, taking every gauge here
+              # down with it. The backup job refuses to run on the same value
+              # for the same reason; a guard that exists in one of the two pods
+              # only teaches a reader it is handled everywhere.
+              #
+              # Failing at startup is deliberate. The job will have refused the
+              # same value, so the ConfigMap is going stale regardless, and a
+              # crashlooping exporter plus BackupFreshnessSignalMissing is a
+              # far louder way to say so than a scrape that silently drops.
+              #
+              # case rather than a regex: this is busybox sh, which has no [[.
+              case "$MAX_AGE_SECONDS" in
+                ''|*[!0-9]*)
+                  echo "FATAL: MAX_AGE_SECONDS is '$MAX_AGE_SECONDS', not a number" >&2
+                  exit 1 ;;
+              esac
+
               # Zeros rather than silence when the job has not reported yet.
               # Both gauges at 0 trip the empty and stale alerts together, so a
               # freshly deployed backup that has never produced anything says
