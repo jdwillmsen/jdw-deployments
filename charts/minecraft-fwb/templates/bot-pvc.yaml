@@ -1,0 +1,20 @@
+{{- if .Values.bot.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "bot.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # A few small JSON files, not a database — the token cache has none of the
+  # locking or mmap requirements that put the world on the block tier.
+  #
+  # It is on a volume at all because losing it costs an interactive device-code
+  # login at a terminal, which is the one step in this whole deployment that a
+  # human has to perform by hand.
+  storageClassName: {{ .Values.bot.persistence.storageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.bot.persistence.size }}
+{{- end }}

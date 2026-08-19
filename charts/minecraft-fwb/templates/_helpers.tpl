@@ -9,3 +9,11 @@
 {{- define "recovery.name" -}}
 {{ .Release.Name }}-volume-recovery
 {{- end -}}
+
+{{- define "bot.name" -}}
+{{ .Release.Name }}-afk-bot
+{{- end -}}
+
+{{- define "bot.serverHost" -}}
+{{ .Release.Name }}-minecraft-bedrock.{{ .Release.Namespace }}.svc.cluster.local
+{{- end -}}

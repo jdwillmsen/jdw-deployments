@@ -152,3 +152,49 @@ volumeRecovery:
   # chart allows ten minutes for it. Requiring repeated restarts as well as the
   # signature keeps this from firing on a pod that is merely still starting.
   minRestarts: 2
+
+bot:
+  # Off until the account behind it exists. Enabling this before the one-time
+  # device-code login has been completed gets a pod that cannot authenticate
+  # and says so on a loop; the image tag below also has to have been published
+  # first, or the pod simply fails to pull.
+  #
+  # Turning it on is the deliberate second half of a two-step bootstrap, not
+  # something to flip alongside an unrelated change.
+  enabled: false
+
+  image:
+    repository: ghcr.io/jdwillmsen/minecraft-afk-bot
+    # Pinned for the same reason the server version is: this image bakes in the
+    # protocol data for exactly one Bedrock version, so the tag and the server
+    # version move together rather than independently.
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  # Not the gamertag other players see — Xbox Live supplies that. This is the
+  # key the token cache is filed under, so changing it orphans the cached
+  # credentials and forces another interactive login.
+  username: fwb-afk-bot
+
+  # Only governs how many chunks the server sends this client. Simulation is
+  # bounded by the server's own tickDistance, so a small value costs bandwidth
+  # and nothing else — it does not shrink the area the bot's presence keeps
+  # ticking.
+  viewDistance: 4
+
+  # A single idle UDP session and a JSON log line per chat message. The
+  # namespace quota caps total requests, and the server's 2Gi plus the backup
+  # job have to fit alongside this.
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+  persistence:
+    # File tier, not block: the cache is a few small JSON files with none of
+    # the locking semantics that put the world on iSCSI.
+    storageClass: truenas-nfs
+    size: 1Gi
