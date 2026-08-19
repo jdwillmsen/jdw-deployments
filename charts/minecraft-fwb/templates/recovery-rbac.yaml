@@ -16,12 +16,21 @@ rules:
   # restart re-runs the entrypoint against the same mount, so only recreating
   # the pod gets the volume unpublished and published again.
   #
-  # Namespaced, and the only thing in here worth deleting is the server pod.
+  # Restricted to the one pod by name rather than granted namespace-wide. This
+  # actor deletes with no human in the loop, which makes delete on pods the
+  # sharpest permission anything in this chart holds -- the backup path only
+  # ever reads and execs. A StatefulSet pod name is deterministic, so there is
+  # no reason to hold the broader grant.
+  #
+  # No list verb: resourceNames cannot restrict list, and the script never
+  # needs one -- every call names this pod.
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "delete"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
