@@ -109,7 +109,6 @@ jobs:
         run: |
           exit_code=0
           for config in argocd/*/config.yaml; do
-            env=$(basename "$(dirname "$config")")
             echo "Validating $config..."
 
             apps=$(yq '.apps | length' "$config")
