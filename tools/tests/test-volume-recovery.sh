@@ -34,7 +34,17 @@ sed -i "s|/var/run/secrets/kubernetes.io/serviceaccount/namespace|$work/sa/names
 mkdir -p "$work/bin"
 cat > "$work/bin/kubectl" <<'SHIM'
 #!/usr/bin/env bash
-if [[ "$1" == "delete" ]]; then echo "__DELETE_CALLED__"; exit 0; fi
+if [[ "$1" == "delete" ]]; then
+  # Real kubectl waits for the object to go by establishing a watch, and a
+  # watch requires the list verb this actor deliberately does not hold. Without
+  # --wait=false the delete lands but the wait never returns, which is exactly
+  # how the actor wedged itself in production after its first real recovery.
+  if [[ "$*" != *"--wait=false"* ]]; then
+    echo 'pods is forbidden: cannot list resource "pods"' >&2
+    sleep 3600
+  fi
+  echo "__DELETE_CALLED__"; exit 0
+fi
 if [[ "$1" == "get" ]]; then
   [[ "${FAKE_EXISTS:-yes}" == "no" ]] && exit 1
   [[ "$*" == *"containerStatuses[0].ready"* ]] && { printf '%s' "${FAKE_READY:-true}"; exit 0; }
@@ -46,8 +56,11 @@ exit 0
 SHIM
 chmod +x "$work/bin/kubectl"
 
+# timeout, because the regression this guards against is a hang: a delete that
+# waits on a watch it has no permission for never returns. Without a bound the
+# suite would hang instead of failing.
 run() {
-  env PATH="$work/bin:$PATH" \
+  timeout 20 env PATH="$work/bin:$PATH" \
       SERVER_POD=server-0 MIN_RESTARTS=2 SIGNATURE="Read-only file system" \
       "$@" bash "$work/recovery.sh" 2>&1
 }
@@ -58,19 +71,23 @@ run() {
 # pipeline whose behaviour was correct — an assertion that fails on success.
 assert_deletes() {
   local name="$1" out; shift
-  out="$(run "$@")"
+  # || true so a timed-out run reaches the assertion below and reports why,
+  # rather than aborting the suite through set -e with no message.
+  out="$(run "$@")" || true
   [[ "$out" == *__DELETE_CALLED__* ]] || fail "$name: expected the pod to be deleted"
   echo "  ok: $name"
 }
 
 assert_leaves_alone() {
   local name="$1" out; shift
-  out="$(run "$@")"
+  out="$(run "$@")" || true
   [[ "$out" != *__DELETE_CALLED__* ]] || fail "$name: pod was deleted and must not have been"
   echo "  ok: $name"
 }
 
-# The one state this exists for.
+# The one state this exists for. The shim hangs a delete that omits
+# --wait=false, so this case also fails if the actor ever reverts to a delete
+# that waits on a watch it cannot perform.
 assert_deletes "read-only volume, repeated restarts" \
   FAKE_READY=false FAKE_RESTARTS=5 FAKE_LOGS="server.properties: Read-only file system"
 
