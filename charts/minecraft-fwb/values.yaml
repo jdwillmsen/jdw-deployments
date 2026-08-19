@@ -171,6 +171,11 @@ volumeRecovery:
   # signature keeps this from firing on a pod that is merely still starting.
   minRestarts: 2
 
+  # Ceiling for a single run, which normally finishes in about three seconds.
+  # Exists so a run that hangs fails visibly instead of suspending recovery:
+  # concurrencyPolicy is Forbid, so one stuck job means no further attempts.
+  timeoutSeconds: 120
+
 bot:
   # Off until the account behind it exists. Enabling this before the one-time
   # device-code login has been completed gets a pod that cannot authenticate

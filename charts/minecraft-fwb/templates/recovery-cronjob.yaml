@@ -12,6 +12,12 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
+      # A run takes about three seconds. Anything approaching this bound is
+      # stuck rather than slow, and with concurrencyPolicy: Forbid a stuck run
+      # silently suspends recovery altogether -- the failure mode is not a slow
+      # job, it is no job. Bounding it converts that into a Failed Job, which
+      # is a signal something can alert on.
+      activeDeadlineSeconds: {{ .Values.volumeRecovery.timeoutSeconds }}
       template:
         spec:
           restartPolicy: Never
@@ -100,6 +106,15 @@ spec:
                   fi
 
                   emit recovering "read-only volume after $RESTARTS restarts, deleting pod to force remount"
-                  kubectl delete pod -n "$NS" "$SERVER_POD"
+                  # --wait=false is load-bearing, not a speed-up. kubectl's
+                  # default wait polls for the object to disappear using a
+                  # watch, and a watch needs the list verb this actor
+                  # deliberately does not hold. The delete itself succeeds and
+                  # the server recovers, but the wait then retries a forbidden
+                  # list forever -- and with concurrencyPolicy: Forbid, that
+                  # hung Job blocks every future recovery. Observed in
+                  # production: the actor fixed one outage and wedged itself
+                  # against the next.
+                  kubectl delete pod -n "$NS" "$SERVER_POD" --wait=false
                   emit deleted "StatefulSet will recreate it; the volume is published fresh"
 {{- end }}
