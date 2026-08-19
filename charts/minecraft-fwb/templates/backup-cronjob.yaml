@@ -225,6 +225,16 @@ spec:
                   # level so both paths produce the same archive layout and a
                   # restore does not care which one ran.
                   cold_copy() {
+                    # An empty level name would make the directory test below
+                    # pass on /data/worlds itself, copy every level into the
+                    # archive root, and clear the file-count gate — producing a
+                    # full-size archive with the wrong top-level layout, which
+                    # a restore would not find the world in. Size and file
+                    # count cannot catch that; only the name can.
+                    if [[ -z "$LEVEL_NAME" ]]; then
+                      echo "FATAL: LEVEL_NAME is empty, refusing to guess what to archive" >&2
+                      return 1
+                    fi
                     if [[ ! -d "/data/worlds/$LEVEL_NAME" ]]; then
                       echo "FATAL: /data/worlds/$LEVEL_NAME does not exist, there is nothing to archive" >&2
                       return 1
@@ -377,6 +387,16 @@ spec:
                   BYTES="$(stat -c %s "$NEWEST")"
                   if [[ ! "$TS" =~ ^[0-9]+$ || ! "$BYTES" =~ ^[0-9]+$ ]]; then
                     echo "FATAL: could not stat $NEWEST for freshness metrics" >&2
+                    exit 1
+                  fi
+                  # Comes from values rather than from this pod, and a chart
+                  # edit that lands it empty renders the line as a bare metric
+                  # name with no value — which fails the same way a bad stat
+                  # would, taking every gauge in this payload down with it. A
+                  # value arriving from outside deserves the check more than
+                  # one computed here, not less.
+                  if [[ ! "$MAX_AGE_SECONDS" =~ ^[0-9]+$ ]]; then
+                    echo "FATAL: MAX_AGE_SECONDS is '$MAX_AGE_SECONDS', not a number" >&2
                     exit 1
                   fi
                   QMETRIC=""

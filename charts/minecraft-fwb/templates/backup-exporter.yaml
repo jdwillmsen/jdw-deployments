@@ -97,14 +97,32 @@ spec:
               # The mount is a symlink farm that kubelet swaps atomically on
               # update, and serving a static file avoids depending on how the
               # web server treats those symlinks.
+              #
+              # The refresher runs beside httpd, not in front of it, so its
+              # death is not by itself the container's. Under set -e one failed
+              # cp would end it silently while httpd carried on serving the
+              # last file it wrote — and a frozen timestamp still parses, so
+              # the scrape stays green and the pod stays Ready with nothing
+              # behind it alive. Staleness would eventually catch that, hours
+              # later, having reported the pod healthy throughout.
+              #
+              # So a blip is tolerated and an exit is fatal: the copy may fail
+              # without ending the loop, and whatever does end the loop takes
+              # PID 1 — httpd, and therefore the pod — down with it, where a
+              # restart is visible.
               (
+                trap 'kill 1' EXIT
                 while true; do
                   if [ -s "$SRC" ]; then
-                    cp "$SRC" "$OUT/.metrics.tmp"
+                    cp "$SRC" "$OUT/.metrics.tmp" 2>/dev/null || :
                   else
-                    zeros > "$OUT/.metrics.tmp"
+                    zeros > "$OUT/.metrics.tmp" 2>/dev/null || :
                   fi
-                  mv "$OUT/.metrics.tmp" "$OUT/metrics.txt"
+                  # Never publish a half-written payload: Prometheus rejects
+                  # the whole scrape on one malformed line.
+                  if [ -s "$OUT/.metrics.tmp" ]; then
+                    mv "$OUT/.metrics.tmp" "$OUT/metrics.txt"
+                  fi
                   sleep "$REFRESH_SECONDS"
                 done
               ) &
