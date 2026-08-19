@@ -1,0 +1,66 @@
+{{- if .Values.bot.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bot.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "bot.name" . }}
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: the token cache is ReadWriteOnce, and two bots
+  # signed in as the same account would fight over both the volume and the
+  # server session.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ include "bot.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "bot.name" . }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bot
+          image: "{{ .Values.bot.image.repository }}:{{ .Values.bot.image.tag }}"
+          imagePullPolicy: {{ .Values.bot.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: MC_HOST
+              value: {{ include "bot.serverHost" . }}
+            # The in-cluster Service publishes the server on its own port
+            # rather than 19132, and the chart keeps serverPort and nodePort
+            # equal so clients display a ping time.
+            - name: MC_PORT
+              value: {{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" | quote }}
+            - name: MC_USERNAME
+              value: {{ .Values.bot.username | quote }}
+            - name: MC_VIEW_DISTANCE
+              value: {{ .Values.bot.viewDistance | quote }}
+          resources:
+            {{- toYaml .Values.bot.resources | nindent 12 }}
+          volumeMounts:
+            - name: auth
+              mountPath: /data
+            # The root filesystem is read-only, and node writes to a temp dir
+            # on paths that are not obvious from the source.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: auth
+          persistentVolumeClaim:
+            claimName: {{ include "bot.name" . }}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

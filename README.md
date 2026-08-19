@@ -23,6 +23,24 @@ self-contained here rather than referenced remotely.
 |---|---|
 | `minecraft-fwb` | Minecraft Bedrock server, migrated off an unmanaged Proxmox VM |
 
+### The AFK bot
+
+`minecraft-fwb` also carries an optional headless client, off by default. It
+holds a player slot so mob farms tick, and mirrors in-game chat to its stdout
+as JSON — the server itself never logs chat, and no `server.properties`
+setting makes it.
+
+Enabling it is a two-step bootstrap, because it signs in as a real Microsoft
+account:
+
+1. Publish the image tag named in `bot.image.tag`.
+2. Set `bot.enabled: true`, then read the pod log for a `device_code_required`
+   event and complete that login once. The token caches to a volume, so
+   restarts are unattended afterwards.
+
+The bot's XUID then goes on the server allowlist. It appears in the server log
+on first connect.
+
 ## Working on a chart
 
 Dependencies are declared in `Chart.yaml`, pinned by `Chart.lock`, and the
