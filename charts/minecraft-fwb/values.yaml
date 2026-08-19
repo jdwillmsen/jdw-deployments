@@ -126,6 +126,24 @@ backup:
   # nothing at all and reporting success.
   minBytes: "104857600"
 
+  # Publishes the platform's job-output freshness contract by reading the
+  # archive directory, so "the job produced nothing" is a metric rather than
+  # something a human has to go and look for.
+  exporter:
+    enabled: true
+    # busybox for its httpd applet: the exporter serves one static file that a
+    # shell loop rewrites, so nothing heavier earns its place here.
+    image: busybox:1.37
+    port: 9101
+    interval: 60s
+    refreshSeconds: 60
+    # Two nights. The CronJob rules already page within about an hour of a run
+    # that failed, so this is the slower backstop that catches the cases those
+    # rules cannot see — a job that completes successfully having written
+    # nothing, or one that is never scheduled at all. Set below 24h it would
+    # simply restate the schedule and double-page every failure.
+    maxAgeSeconds: 172800
+
 volumeRecovery:
   # The server's volume has twice remounted read-only underneath a running pod
   # after a transient error on the iSCSI path. Kubernetes cannot recover from

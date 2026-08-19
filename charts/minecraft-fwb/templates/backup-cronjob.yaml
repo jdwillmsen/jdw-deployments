@@ -16,6 +16,14 @@ spec:
       # between, which is precisely how the mechanism this replaces went
       # unnoticed for months.
       backoffLimit: 0
+      # A pod that cannot attach its volume never fails — it sits in
+      # ContainerCreating on FailedAttachVolume indefinitely, and backoffLimit
+      # does nothing because nothing has errored. With concurrencyPolicy
+      # Forbid that one wedged Job then suppresses every later run until a
+      # human deletes it, which is the silent-backup shape this whole change
+      # exists to remove. The deadline is what converts a wedge into a
+      # failure. Generous against an observed runtime of ~90s.
+      activeDeadlineSeconds: 3600
       template:
         spec:
           restartPolicy: Never
@@ -26,15 +34,37 @@ spec:
             fsGroup: 2000
             seccompProfile:
               type: RuntimeDefault
-          # The world volume is ReadWriteOnce, so this pod must land on the
-          # node already holding it. RWO permits several pods on one node.
+          # Scheduling must not depend on the server being up. A *required*
+          # podAffinity on the server pod reads as "run beside the server", but
+          # it means "run only if a server pod exists" — with the StatefulSet
+          # scaled to zero, or its pod crashlooping into Terminating, nothing
+          # matches and the backup never leaves Pending. The world went
+          # unprotected during the one incident it needed protecting from, and
+          # the job could not even start to report why.
+          #
+          # So the hard constraint is the node set the world volume can attach
+          # to, and co-location with the server is only a preference. Both
+          # volumes are ReadWriteOnce: when the server is running its node
+          # already holds the world, and the weight makes the scheduler pick
+          # that node out of the two. If pressure pushes the job to the other
+          # node anyway the volume cannot attach, and activeDeadlineSeconds
+          # above is what turns that into a failure rather than a pod wedged
+          # in ContainerCreating — still a far better outcome than never being
+          # scheduled at all.
           affinity:
+            # Taken from the server's own values rather than restated, so the
+            # two cannot drift apart into a job that is pinned away from the
+            # only nodes its volume can attach to.
+            nodeAffinity:
+{{- toYaml (index .Values "minecraft-bedrock" "affinity" "nodeAffinity") | nindent 14 }}
             podAffinity:
-              requiredDuringSchedulingIgnoredDuringExecution:
-                - topologyKey: kubernetes.io/hostname
-                  labelSelector:
-                    matchLabels:
-                      app: {{ .Release.Name }}-minecraft-bedrock
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        app: {{ .Release.Name }}-minecraft-bedrock
           containers:
             - name: backup
               image: {{ .Values.backup.image }}
@@ -52,10 +82,23 @@ spec:
               env:
                 - name: SERVER_POD
                   value: {{ include "backup.serverPod" . }}
+                - name: SERVER_STS
+                  value: {{ include "backup.serverStatefulSet" . }}
+                - name: LEVEL_NAME
+                  value: {{ index .Values "minecraft-bedrock" "minecraftServer" "levelName" | quote }}
                 - name: MIN_BYTES
                   value: {{ .Values.backup.minBytes | quote }}
                 - name: KEEP
                   value: {{ .Values.backup.keep | quote }}
+                - name: METRICS_CM
+                  value: {{ include "backup.metricsConfigMap" . }}
+                # Must match the exporter's label for the same workload, or the
+                # zeros it serves before the first run and the real values
+                # after it would arrive as two unrelated series.
+                - name: BACKUP_JOB
+                  value: {{ include "backup.name" . }}
+                - name: MAX_AGE_SECONDS
+                  value: {{ .Values.backup.exporter.maxAgeSeconds | quote }}
               command: ["/bin/bash", "-c"]
               args:
                 - |
@@ -63,61 +106,178 @@ spec:
                   NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
                   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
                   STAGE="$(mktemp -d)"
+
+                  # A pod killed outright leaves its partial behind, since no
+                  # trap runs. They match no glob the job uses, so they are
+                  # inert rather than dangerous, but they would accumulate.
+                  rm -f /backup/.fwb-*.tar.gz.partial
                   ARCHIVE="/backup/fwb-${STAMP}.tar.gz"
+
+                  # Quiescing the server is an optimisation, not a correctness
+                  # requirement. Bedrock's LevelDB is crash-consistent: it
+                  # replays its write-ahead log on open, which is the same
+                  # recovery path a power cut would take. A copy taken without
+                  # `save hold` is therefore restorable; it is merely a little
+                  # further behind than a held one.
+                  #
+                  # A backup that is slightly less quiesced is worth vastly
+                  # more than a backup that did not happen, so the server is
+                  # asked to hold when it can and skipped when it cannot.
+                  #
+                  # QUIESCED describes the *artifact*: whether anything was
+                  # writing the world while it was copied. A held server and a
+                  # stopped one are both answers of "nothing was", which is why
+                  # this is not simply "did save hold succeed".
+                  QUIESCED=0
+                  COLD=0
 
                   # Always resume, even if the copy fails partway. Leaving the
                   # server held would silently stop it persisting anything.
                   resume() { kubectl exec -n "$NS" "$SERVER_POD" -- send-command save resume >/dev/null 2>&1 || true; }
-                  trap resume EXIT
 
-                  echo "holding saves"
-                  kubectl exec -n "$NS" "$SERVER_POD" -- send-command save hold
+                  server_ready() {
+                    local phase ready
+                    phase="$(kubectl get pod -n "$NS" "$SERVER_POD" -o jsonpath='{.status.phase}' 2>/dev/null)" || return 1
+                    ready="$(kubectl get pod -n "$NS" "$SERVER_POD" \
+                      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" || return 1
+                    [[ "$phase" == "Running" && "$ready" == "True" ]]
+                  }
 
-                  # save query reports "ready to be copied" followed by a
-                  # comma-separated file:length manifest. Poll until it does.
-                  MANIFEST=""
-                  for _ in $(seq 1 30); do
-                    sleep 3
-                    kubectl exec -n "$NS" "$SERVER_POD" -- send-command save query >/dev/null
-                    sleep 2
-                    MANIFEST="$(kubectl logs -n "$NS" "$SERVER_POD" --tail=20 \
-                      | grep -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
-                    [[ "$MANIFEST" == *":"* ]] && break
-                    MANIFEST=""
-                  done
-                  if [[ -z "$MANIFEST" ]]; then
-                    echo "FATAL: server never reported a copyable manifest" >&2
-                    exit 1
+                  # Desired replicas, not observed ones: the question is what
+                  # somebody asked for, and only the spec carries intent. Zero
+                  # means a human or a sync stopped the server on purpose, so
+                  # nothing was writing the world and a copy taken without a
+                  # hold is at rest rather than degraded. Anything else means
+                  # the server was meant to be running, and its absence is a
+                  # fault worth surfacing.
+                  #
+                  # Reading the spec is what keeps a crashlooping pod out of
+                  # the stopped bucket: its desired count stays where it was
+                  # while no pod is ever ready, so "nothing is answering" and
+                  # "nobody asked for anything" look identical from status and
+                  # only the spec separates them.
+                  #
+                  # Prints nothing when the field is unset or unreadable, and
+                  # the caller treats that as the fault case. Guessing "stopped"
+                  # from a failed API call would turn every RBAC or apiserver
+                  # problem into silence, which is the failure this whole
+                  # contract exists to prevent.
+                  server_desired_replicas() {
+                    kubectl get statefulset -n "$NS" "$SERVER_STS" \
+                      -o jsonpath='{.spec.replicas}' 2>/dev/null
+                  }
+
+                  # Drives the server's own save protocol. Returns non-zero on
+                  # any hitch so the caller can fall back rather than abort:
+                  # every failure in here is a reason to take a colder copy,
+                  # never a reason to produce no copy.
+                  quiesced_copy() {
+                    # RETURN covers every way this function gives up; EXIT
+                    # covers the shell being killed while the server is still
+                    # held, which would otherwise leave it unable to persist
+                    # anything at all. resume is idempotent and swallows its
+                    # own errors, so both firing is harmless.
+                    trap resume RETURN
+                    trap resume EXIT
+                    echo "holding saves"
+                    kubectl exec -n "$NS" "$SERVER_POD" -- send-command save hold || return 1
+
+                    # save query reports "ready to be copied" followed by a
+                    # comma-separated file:length manifest. Poll until it does.
+                    local manifest="" entry f len count=0
+                    for _ in $(seq 1 30); do
+                      sleep 3
+                      kubectl exec -n "$NS" "$SERVER_POD" -- send-command save query >/dev/null || return 1
+                      sleep 2
+                      manifest="$(kubectl logs -n "$NS" "$SERVER_POD" --tail=20 \
+                        | grep -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
+                      [[ "$manifest" == *":"* ]] && break
+                      manifest=""
+                    done
+                    [[ -n "$manifest" ]] || return 1
+
+                    # Each entry is path:length. The length is the number of
+                    # bytes that are actually valid — LevelDB keeps appending,
+                    # so a file on disk can be longer than its committed
+                    # contents. Copying the whole file instead of truncating to
+                    # this length is what produces a backup that fails to
+                    # restore.
+                    # Read from a process substitution rather than a pipe: a
+                    # piped while-loop runs in a subshell, where a failed copy
+                    # would be swallowed — producing a short archive that still
+                    # looks like a success.
+                    while read -r entry; do
+                      entry="$(echo "$entry" | xargs)"
+                      [[ -z "$entry" ]] && continue
+                      f="${entry%%:*}"
+                      len="${entry##*:}"
+                      mkdir -p "$STAGE/$(dirname "$f")"
+                      head -c "$len" "/data/worlds/$f" > "$STAGE/$f" || return 1
+                      count=$((count + 1))
+                    done < <(echo "$manifest" | tr ',' '\n')
+                    echo "copied $count files under hold"
+                    [[ "$count" -ge 3 ]]
+                  }
+
+                  # A cold copy reads the level directory straight off the
+                  # volume with no server involved, so it works while the pod
+                  # is absent, crashlooping, or wedged. Scoped to the active
+                  # level so both paths produce the same archive layout and a
+                  # restore does not care which one ran.
+                  cold_copy() {
+                    # An empty level name would make the directory test below
+                    # pass on /data/worlds itself, copy every level into the
+                    # archive root, and clear the file-count gate — producing a
+                    # full-size archive with the wrong top-level layout, which
+                    # a restore would not find the world in. Size and file
+                    # count cannot catch that; only the name can.
+                    if [[ -z "$LEVEL_NAME" ]]; then
+                      echo "FATAL: LEVEL_NAME is empty, refusing to guess what to archive" >&2
+                      return 1
+                    fi
+                    if [[ ! -d "/data/worlds/$LEVEL_NAME" ]]; then
+                      echo "FATAL: /data/worlds/$LEVEL_NAME does not exist, there is nothing to archive" >&2
+                      return 1
+                    fi
+                    cp -a "/data/worlds/$LEVEL_NAME" "$STAGE/"
+                    local count
+                    count="$(find "$STAGE/$LEVEL_NAME" -type f | wc -l)"
+                    echo "copied $count files cold"
+                    [[ "$count" -ge 3 ]]
+                  }
+
+                  if server_ready && quiesced_copy; then
+                    QUIESCED=1
+                  else
+                    # Deliberate: degrade, do not abandon. This branch is the
+                    # whole point of the job — it is reached whenever the
+                    # server is not answering, which covers both the incident
+                    # the world most needs a copy during and the planned stop
+                    # where taking one is entirely routine. Which of the two it
+                    # was is decided below, once the copy is safely taken.
+                    echo "WARNING: server unavailable or hold protocol failed, falling back to a cold copy" >&2
+                    rm -rf "${STAGE:?}/"* 2>/dev/null || true
+                    cold_copy
+                    COLD=1
                   fi
-
-                  # Each entry is path:length. The length is the number of bytes
-                  # that are actually valid — LevelDB keeps appending, so a file
-                  # on disk can be longer than its committed contents. Copying
-                  # the whole file instead of truncating to this length is what
-                  # produces a backup that fails to restore.
-                  # Read from a process substitution rather than a pipe: a
-                  # piped while-loop runs in a subshell, where set -e cannot
-                  # abort the script and a failed copy would be swallowed —
-                  # producing a short archive that still exits zero.
-                  COUNT=0
-                  while read -r entry; do
-                    entry="$(echo "$entry" | xargs)"
-                    [[ -z "$entry" ]] && continue
-                    f="${entry%%:*}"
-                    len="${entry##*:}"
-                    mkdir -p "$STAGE/$(dirname "$f")"
-                    head -c "$len" "/data/worlds/$f" > "$STAGE/$f"
-                    COUNT=$((COUNT + 1))
-                  done < <(echo "$MANIFEST" | tr ',' '\n')
-                  echo "copied $COUNT files"
-                  if [[ "$COUNT" -lt 3 ]]; then
-                    echo "FATAL: manifest yielded only $COUNT files" >&2
-                    exit 1
-                  fi
-
-                  echo "resuming saves"
-                  resume
+                  # The server is no longer held either way past this point.
                   trap - EXIT
+
+                  # Read after the copy rather than before it, so a stop issued
+                  # while the hold protocol was still being attempted — the
+                  # poll above can run for two and a half minutes — is
+                  # attributed to whoever issued it instead of to the server
+                  # for failing to answer.
+                  DESIRED="$(server_desired_replicas)" || DESIRED=""
+                  [[ "$DESIRED" =~ ^[0-9]+$ ]] || DESIRED=""
+                  if [[ "$COLD" -eq 1 && "$DESIRED" == "0" ]]; then
+                    # Planned downtime, not an incident. Alerting here would
+                    # hand an operator a ticket for every night of a stop they
+                    # asked for, and an alert that fires on intended states is
+                    # one people learn to close unread.
+                    echo "server is scaled to zero, so the cold copy is at rest rather than degraded"
+                    QUIESCED=1
+                  fi
 
                   # save query lists world files only, so a backup built purely
                   # from it restores the world with a DEFAULT allowlist — every
@@ -136,29 +296,145 @@ spec:
                     fi
                   done
 
-                  tar czf "$ARCHIVE" -C "$STAGE" .
+                  # Built under a name that matches neither the retention nor
+                  # the freshness glob, and moved into place only once it has
+                  # passed the size floor. A tar that dies partway — a full
+                  # volume is the realistic case — would otherwise leave a
+                  # truncated archive under the real name: it would consume a
+                  # retention slot and evict a good archive, and being the
+                  # newest file it is the one a human would reach for in a
+                  # restore. Nothing unverified is ever allowed to carry the
+                  # name of a backup.
+                  ARCHIVE_TMP="/backup/.fwb-${STAMP}.tar.gz.partial"
+                  trap 'rm -f "$ARCHIVE_TMP"' EXIT
+                  tar czf "$ARCHIVE_TMP" -C "$STAGE" .
                   rm -rf "$STAGE"
 
-                  SIZE="$(stat -c %s "$ARCHIVE")"
-                  echo "archive $ARCHIVE is $SIZE bytes"
+                  SIZE="$(stat -c %s "$ARCHIVE_TMP")"
+                  echo "archive $ARCHIVE is $SIZE bytes (quiesced=$QUIESCED)"
 
                   # An archive that exists but is empty or absurdly small is the
                   # failure mode that went unnoticed on the VM for months. Treat
                   # it as a failure rather than a success with a small file.
                   if [[ "$SIZE" -lt "$MIN_BYTES" ]]; then
                     echo "FATAL: archive is $SIZE bytes, below the $MIN_BYTES floor" >&2
-                    rm -f "$ARCHIVE"
                     exit 1
                   fi
+                  mv "$ARCHIVE_TMP" "$ARCHIVE"
+                  trap - EXIT
 
+                  # Written only after the size check, so the sidecar file
+                  # exists if and only if the archive beside it passed
+                  # verification. The exporter reads it to publish the state of
+                  # the source this archive was copied from.
+                  #
+                  # The replica count is recorded alongside because quiesced
+                  # alone cannot say *how* the source came to be at rest, and
+                  # "held" and "deliberately stopped" are different enough that
+                  # someone reading the graph a month later will want them
+                  # apart. Empty when it could not be read.
+                  {
+                    echo "quiesced=$QUIESCED"
+                    echo "source_replicas=$DESIRED"
+                  } > "${ARCHIVE}.meta"
+
+                  # Both globs match the scheduled naming only —
+                  # fwb-<8 digits>T<6 digits>Z — never fwb-emergency-*. Manual
+                  # rescue archives must survive retention, and must not count
+                  # towards freshness either: a hand-made copy from weeks ago
+                  # sitting in this directory would otherwise make a dead
+                  # CronJob look like a healthy one.
                   # shopt -s nullglob so an empty backup dir does not make the
                   # glob expand to a literal and trip set -e on the first run.
                   shopt -s nullglob
-                  ARCHIVES=(/backup/fwb-*.tar.gz)
+                  ARCHIVES=(/backup/fwb-????????T??????Z.tar.gz)
                   if [[ ${#ARCHIVES[@]} -gt $KEEP ]]; then
-                    ls -1t /backup/fwb-*.tar.gz | tail -n +$((KEEP + 1)) | xargs -r rm -f
+                    ls -1t "${ARCHIVES[@]}" | tail -n +$((KEEP + 1)) | while read -r old; do
+                      rm -f "$old" "${old}.meta"
+                    done
                   fi
                   echo "backup complete, ${#ARCHIVES[@]} archives on disk before trim"
+
+                  # Publish the freshness contract. Derived from a scan of the
+                  # archive directory rather than from variables this run set,
+                  # so the numbers describe what is actually on disk — the
+                  # point of the contract is that an artifact nobody looked at
+                  # is exactly how the previous two backups failed unnoticed.
+                  #
+                  # Deliberately last. Everything above can still abort the run,
+                  # and a freshness timestamp must never advance for a backup
+                  # that did not fully succeed.
+                  # Counted through the array rather than by globbing inside
+                  # the command. nullglob is in effect, so an unmatched glob
+                  # vanishes and `ls -1t <glob>` silently degrades to a bare
+                  # `ls -1t` listing the working directory — which made the
+                  # emptiness check below unreachable and would have published
+                  # a fresh timestamp naming whatever happened to be in cwd.
+                  # A backup metric that invents its own success is the exact
+                  # failure this contract exists to catch.
+                  REMAINING=(/backup/fwb-????????T??????Z.tar.gz)
+                  if [[ ${#REMAINING[@]} -eq 0 ]]; then
+                    echo "FATAL: no archive on disk after a successful run" >&2
+                    exit 1
+                  fi
+                  NEWEST="$(ls -1t "${REMAINING[@]}" | head -1)"
+                  # Validated before they are formatted. Prometheus rejects a
+                  # whole scrape on one malformed line, so an unparseable value
+                  # here would take down all four gauges at once — silencing
+                  # the freshness signal in exactly the way it exists to
+                  # prevent. Better to fail the run than to publish gibberish.
+                  TS="$(stat -c %Y "$NEWEST")"
+                  BYTES="$(stat -c %s "$NEWEST")"
+                  if [[ ! "$TS" =~ ^[0-9]+$ || ! "$BYTES" =~ ^[0-9]+$ ]]; then
+                    echo "FATAL: could not stat $NEWEST for freshness metrics" >&2
+                    exit 1
+                  fi
+                  # Comes from values rather than from this pod, and a chart
+                  # edit that lands it empty renders the line as a bare metric
+                  # name with no value — which fails the same way a bad stat
+                  # would, taking every gauge in this payload down with it. A
+                  # value arriving from outside deserves the check more than
+                  # one computed here, not less.
+                  if [[ ! "$MAX_AGE_SECONDS" =~ ^[0-9]+$ ]]; then
+                    echo "FATAL: MAX_AGE_SECONDS is '$MAX_AGE_SECONDS', not a number" >&2
+                    exit 1
+                  fi
+                  QMETRIC=""
+                  RMETRIC=""
+                  if [[ -f "${NEWEST}.meta" ]]; then
+                    Q="$(sed -n 's/^quiesced=//p' "${NEWEST}.meta" | head -1)"
+                    [[ "$Q" == "0" || "$Q" == "1" ]] && QMETRIC="$Q"
+                    R="$(sed -n 's/^source_replicas=//p' "${NEWEST}.meta" | head -1)"
+                    [[ "$R" =~ ^[0-9]+$ ]] && RMETRIC="$R"
+                  fi
+
+                  LABELS="backup_job=\"${BACKUP_JOB}\",artifact=\"world\""
+                  {
+                    echo "# HELP backup_last_success_timestamp_seconds Unix time an artifact was last verified written and non-empty."
+                    echo "# TYPE backup_last_success_timestamp_seconds gauge"
+                    echo "backup_last_success_timestamp_seconds{${LABELS}} ${TS}"
+                    echo "# HELP backup_last_artifact_bytes Size in bytes of that artifact."
+                    echo "# TYPE backup_last_artifact_bytes gauge"
+                    echo "backup_last_artifact_bytes{${LABELS}} ${BYTES}"
+                    echo "# HELP backup_max_age_seconds Freshness budget this producer publishes for itself."
+                    echo "# TYPE backup_max_age_seconds gauge"
+                    echo "backup_max_age_seconds{${LABELS}} ${MAX_AGE_SECONDS}"
+                    if [[ -n "$QMETRIC" ]]; then
+                      echo "# HELP backup_last_artifact_quiesced 1 if nothing was writing the source when the newest artifact was taken (server held, or scaled to zero on purpose), 0 if it was meant to be running and could not be reached."
+                      echo "# TYPE backup_last_artifact_quiesced gauge"
+                      echo "backup_last_artifact_quiesced{${LABELS}} ${QMETRIC}"
+                    fi
+                    if [[ -n "$RMETRIC" ]]; then
+                      echo "# HELP backup_last_artifact_source_replicas Desired replicas of the source workload when the newest artifact was taken. With quiesced=1, 0 means a deliberate stop and non-zero means a held server."
+                      echo "# TYPE backup_last_artifact_source_replicas gauge"
+                      echo "backup_last_artifact_source_replicas{${LABELS}} ${RMETRIC}"
+                    fi
+                  } > /tmp/metrics.txt
+
+                  kubectl create configmap "$METRICS_CM" -n "$NS" \
+                    --from-file=metrics.txt=/tmp/metrics.txt \
+                    --dry-run=client -o yaml | kubectl apply -n "$NS" -f -
+                  echo "published freshness metrics for $(basename "$NEWEST")"
               volumeMounts:
                 - name: world
                   mountPath: /data

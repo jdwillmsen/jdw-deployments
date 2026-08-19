@@ -1,0 +1,212 @@
+{{- if and .Values.backup.enabled .Values.backup.exporter.enabled }}
+# Publishes the platform's job-output freshness contract for this workload.
+#
+# The values are computed by the backup job from a scan of the archive
+# directory — the artifact, not the job's opinion of itself — and handed here
+# through a ConfigMap. This pod only serves them.
+#
+# The obvious design, a long-lived pod that mounts the archive volume and reads
+# it directly, is not available. Both the archive and the world claims are
+# ReadWriteOnce against a CSI driver with attachRequired, and the backup job
+# needs both at once, so it must run on whichever node the server holds the
+# world on. A second permanent mounter of the archive claim would therefore
+# have to be pinned to that same node and follow it whenever it moved — the
+# same "only works if the server is up" coupling this change exists to remove,
+# reintroduced one layer down. A ConfigMap has no node affinity at all.
+#
+# The cost is that the numbers only refresh when the job runs, so archives
+# deleted behind its back go unnoticed until the next night. Staleness still
+# catches the case that matters: a job that stops producing, for any reason
+# including never being scheduled.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "backup.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "backup.exporter.name" . }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "backup.exporter.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "backup.exporter.name" . }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: {{ .Values.backup.exporter.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 10m
+            limits:
+              memory: 64Mi
+              cpu: 100m
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.backup.exporter.port }}
+          env:
+            - name: BACKUP_JOB
+              value: {{ include "backup.name" . }}
+            - name: MAX_AGE_SECONDS
+              value: {{ .Values.backup.exporter.maxAgeSeconds | quote }}
+            - name: REFRESH_SECONDS
+              value: {{ .Values.backup.exporter.refreshSeconds | quote }}
+            - name: PORT
+              value: {{ .Values.backup.exporter.port | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              OUT=/run/metrics
+              SRC=/run/state/metrics.txt
+              mkdir -p "$OUT"
+
+              # Checked once at startup, before anything can format it into an
+              # exposition line. This value comes from chart values, and a bad
+              # one renders as a bare metric name with no value — which makes
+              # Prometheus reject the entire scrape, taking every gauge here
+              # down with it. The backup job refuses to run on the same value
+              # for the same reason; a guard that exists in one of the two pods
+              # only teaches a reader it is handled everywhere.
+              #
+              # Failing at startup is deliberate. The job will have refused the
+              # same value, so the ConfigMap is going stale regardless, and a
+              # crashlooping exporter plus BackupFreshnessSignalMissing is a
+              # far louder way to say so than a scrape that silently drops.
+              #
+              # case rather than a regex: this is busybox sh, which has no [[.
+              case "$MAX_AGE_SECONDS" in
+                ''|*[!0-9]*)
+                  echo "FATAL: MAX_AGE_SECONDS is '$MAX_AGE_SECONDS', not a number" >&2
+                  exit 1 ;;
+              esac
+
+              # Zeros rather than silence when the job has not reported yet.
+              # Both gauges at 0 trip the empty and stale alerts together, so a
+              # freshly deployed backup that has never produced anything says
+              # so, instead of looking healthy until the first run.
+              zeros() {
+                L="backup_job=\"${BACKUP_JOB}\",artifact=\"world\""
+                echo "# HELP backup_last_success_timestamp_seconds Unix time an artifact was last verified written and non-empty."
+                echo "# TYPE backup_last_success_timestamp_seconds gauge"
+                echo "backup_last_success_timestamp_seconds{${L}} 0"
+                echo "# HELP backup_last_artifact_bytes Size in bytes of that artifact."
+                echo "# TYPE backup_last_artifact_bytes gauge"
+                echo "backup_last_artifact_bytes{${L}} 0"
+                echo "# HELP backup_max_age_seconds Freshness budget this producer publishes for itself."
+                echo "# TYPE backup_max_age_seconds gauge"
+                echo "backup_max_age_seconds{${L}} ${MAX_AGE_SECONDS}"
+              }
+
+              # Copied out of the ConfigMap mount rather than served from it.
+              # The mount is a symlink farm that kubelet swaps atomically on
+              # update, and serving a static file avoids depending on how the
+              # web server treats those symlinks.
+              #
+              # The refresher runs beside httpd, not in front of it, so its
+              # death is not by itself the container's. Under set -e one failed
+              # cp would end it silently while httpd carried on serving the
+              # last file it wrote — and a frozen timestamp still parses, so
+              # the scrape stays green and the pod stays Ready with nothing
+              # behind it alive. Staleness would eventually catch that, hours
+              # later, having reported the pod healthy throughout.
+              #
+              # So a blip is tolerated and an exit is fatal: the copy may fail
+              # without ending the loop, and whatever does end the loop takes
+              # PID 1 — httpd, and therefore the pod — down with it, where a
+              # restart is visible.
+              (
+                trap 'kill 1' EXIT
+                while true; do
+                  if [ -s "$SRC" ]; then
+                    cp "$SRC" "$OUT/.metrics.tmp" 2>/dev/null || :
+                  else
+                    zeros > "$OUT/.metrics.tmp" 2>/dev/null || :
+                  fi
+                  # Never publish a half-written payload: Prometheus rejects
+                  # the whole scrape on one malformed line.
+                  if [ -s "$OUT/.metrics.tmp" ]; then
+                    mv "$OUT/.metrics.tmp" "$OUT/metrics.txt"
+                  fi
+                  sleep "$REFRESH_SECONDS"
+                done
+              ) &
+
+              # The .txt suffix is load-bearing: it is what makes busybox httpd
+              # send text/plain, with no MIME configuration to get wrong.
+              exec httpd -f -v -p "$PORT" -h "$OUT"
+          readinessProbe:
+            httpGet:
+              path: /metrics.txt
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: state
+              mountPath: /run/state
+              readOnly: true
+            - name: metrics
+              mountPath: /run/metrics
+      volumes:
+        # Created by the backup job, deliberately not shipped by this chart.
+        # ArgoCD syncs this repo with selfHeal on, so a chart-managed ConfigMap
+        # would have its contents reverted to the committed values on every
+        # sync and the freshness signal would sawtooth between real and stale.
+        # Optional so the exporter still starts before the first backup has
+        # ever run; it serves zeros until the job reports.
+        - name: state
+          configMap:
+            name: {{ include "backup.metricsConfigMap" . }}
+            optional: true
+        - name: metrics
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "backup.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "backup.exporter.name" . }}
+spec:
+  selector:
+    app: {{ include "backup.exporter.name" . }}
+  ports:
+    - name: metrics
+      port: {{ .Values.backup.exporter.port }}
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "backup.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "backup.exporter.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "backup.exporter.name" . }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics.txt
+      interval: {{ .Values.backup.exporter.interval }}
+{{- end }}
