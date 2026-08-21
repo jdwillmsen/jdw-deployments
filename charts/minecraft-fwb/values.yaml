@@ -114,19 +114,24 @@ minecraft-bedrock:
     failureThreshold: 60
 
   # mc-monitor already ships in this image and already runs the probes above
-  # in its one-shot `status-bedrock` mode. `serve-bedrock` is the same binary
-  # in long-running Prometheus-exporter mode — reusing the image means no
-  # second image to pin or pull for player-count/reachability metrics.
+  # in its one-shot `status-bedrock` mode. `export-for-prometheus` is the same
+  # binary in long-running Prometheus-exporter mode — reusing the image means
+  # no second image to pin or pull for player-count/reachability metrics.
+  #
+  # There is no `serve-bedrock` subcommand — that was a guess that shipped
+  # without checking `mc-monitor help`, and it crash-looped the sidecar
+  # (confirmed live: `mc-monitor` prints its usage banner and exits non-zero
+  # on an unrecognized subcommand). `export-for-prometheus` is the real name.
   sidecarContainers: |
     - name: mc-monitor
       image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
       command:
         - mc-monitor
-        - serve-bedrock
-        - --host
-        - 127.0.0.1
-        - --port
-        - {{ .Values.minecraftServer.serverPort | quote }}
+        - export-for-prometheus
+        - -bedrock-servers
+        - 127.0.0.1:{{ .Values.minecraftServer.serverPort }}
+        - -port
+        - "8080"
       ports:
         - name: metrics
           containerPort: 8080
