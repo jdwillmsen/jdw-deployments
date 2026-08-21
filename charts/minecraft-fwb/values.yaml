@@ -21,15 +21,20 @@ minecraft-bedrock:
 
   # Published guidance puts a light world with a handful of players at 1-2 GiB.
   # The VM's 4 GiB covered an entire guest OS as well, so it is not the right
-  # reference. The namespace quota caps requests at 4 GiB in total, and the
-  # backup CronJob has to be able to schedule alongside this.
+  # reference. The namespace's quota tier (tenant.yaml) caps requests/limits
+  # in total, and the backup CronJob has to be able to schedule alongside this.
+  #
+  # cpu bumped 1/2 -> 4/8 after raising tick-distance/view-distance for the mob
+  # farm pushed the old 2-core limit into throttling (cgroup stats: ~34% of
+  # periods throttled) — the quota tier moved standard -> large alongside this
+  # to make room. Memory left as-is; usage stayed well under the old 4Gi limit.
   resources:
     requests:
       memory: 2Gi
-      cpu: "1"
+      cpu: "4"
     limits:
       memory: 4Gi
-      cpu: "2"
+      cpu: "8"
 
   # Bedrock ticks on a single core and uses others for chunk loading, so these
   # two nodes are chosen for headroom rather than core count; every other node
