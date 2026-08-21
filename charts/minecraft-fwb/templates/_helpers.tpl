@@ -22,6 +22,14 @@
 {{ .Release.Name }}-volume-recovery
 {{- end -}}
 
+{{- define "restore.name" -}}
+{{ .Release.Name }}-restore
+{{- end -}}
+
+{{- define "restore.scratchPVC.name" -}}
+{{ .Release.Name }}-restore-scratch
+{{- end -}}
+
 {{- define "bot.name" -}}
 {{ .Release.Name }}-afk-bot
 {{- end -}}

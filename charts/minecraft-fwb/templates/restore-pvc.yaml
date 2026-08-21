@@ -1,0 +1,19 @@
+{{- if .Values.restore.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "restore.scratchPVC.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Block, matching the world PVC's own class. This claim is deliberately
+  # separate from datadir-{{ include "backup.serverStatefulSet" . }}-0: a
+  # restore is written here first and inspected before anything is promoted
+  # onto the live world, so a bad archive or a bad extraction never has a
+  # path to the only copy that matters.
+  storageClassName: {{ .Values.restore.scratchPVC.storageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.restore.scratchPVC.size }}
+{{- end }}

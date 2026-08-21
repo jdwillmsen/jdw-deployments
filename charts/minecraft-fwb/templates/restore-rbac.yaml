@@ -1,0 +1,42 @@
+{{- if .Values.restore.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "restore.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "restore.name" . }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # A restore's first act is taking the server offline, so it must be able to
+  # zero the StatefulSet's own replica count. Scoped to that one resource by
+  # name -- this role can never touch any other workload in the namespace.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    resourceNames: ["{{ include "backup.serverStatefulSet" . }}"]
+    verbs: ["get", "patch"]
+  # Polled after the scale-down, to confirm the pod actually terminated
+  # before anything is extracted. Read-only, and scoped to the one pod name
+  # this job ever asks about.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "restore.name" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "restore.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "restore.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

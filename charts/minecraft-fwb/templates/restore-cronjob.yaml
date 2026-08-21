@@ -1,0 +1,178 @@
+{{- if .Values.restore.enabled }}
+# A restore is a deliberate, human-triggered incident action, not something
+# ArgoCD's selfHeal should ever run on its own -- so this is shaped as a
+# CronJob only so `kubectl create job --from=cronjob/{{ include "restore.name" . }}`
+# is the invocation path (see the restore runbook), never so it can fire on
+# a timer. `suspend: true` below is hardcoded, independent of
+# restore.enabled and of the schedule string, and is the actual guarantee:
+# nothing in values.yaml can turn this into a scheduled job.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "restore.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Inert. suspend: true is what stops this from ever being scheduled; the
+  # string only exists because the field is required.
+  schedule: "0 0 1 1 *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      # No retries. A restore that fails partway must stay failed and
+      # visible, the same reasoning as the backup CronJob's own
+      # backoffLimit: 0 -- a retry that eventually succeeds would hide that
+      # the first attempt left the scratch PVC or the server's replica count
+      # in a state nobody looked at.
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ .Values.restore.timeoutSeconds }}
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "restore.name" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 2000
+            seccompProfile:
+              type: RuntimeDefault
+          # Not tied to the server's own node affinity the way the backup
+          # job is -- this job never mounts the world PVC, so there is no
+          # volume it must co-locate with. Kept on the same two nodes anyway
+          # for consistency with the rest of the workload rather than
+          # because anything here requires it.
+          affinity:
+            nodeAffinity:
+{{- toYaml (index .Values "minecraft-bedrock" "affinity" "nodeAffinity") | nindent 14 }}
+          containers:
+            - name: restore
+              image: {{ .Values.restore.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: 128Mi
+                  cpu: 100m
+                limits:
+                  memory: 512Mi
+                  cpu: "1"
+              env:
+                - name: SERVER_POD
+                  value: {{ include "backup.serverPod" . }}
+                - name: SERVER_STS
+                  value: {{ include "backup.serverStatefulSet" . }}
+                - name: LEVEL_NAME
+                  value: {{ index .Values "minecraft-bedrock" "minecraftServer" "levelName" | quote }}
+                - name: ARCHIVE_NAME
+                  value: {{ .Values.restore.archiveName | quote }}
+                - name: OVERWRITE_SCRATCH
+                  value: {{ .Values.restore.overwriteScratch | quote }}
+                - name: SCRATCH_PVC
+                  value: {{ include "restore.scratchPVC.name" . }}
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+                  # No default flows through from the chart for ARCHIVE_NAME,
+                  # so an operator who forgot to set it gets a clear refusal
+                  # naming what is actually on the backup claim, rather than
+                  # a job that runs and restores nothing.
+                  if [[ -z "$ARCHIVE_NAME" ]]; then
+                    echo "FATAL: restore.archiveName is empty -- refusing to guess which backup to use." >&2
+                    echo "Archives available on the backup claim:" >&2
+                    ls -1 /backup/fwb-*.tar.gz >&2 2>/dev/null || echo "  (none found)" >&2
+                    exit 1
+                  fi
+                  ARCHIVE_PATH="/backup/${ARCHIVE_NAME}"
+                  if [[ ! -f "$ARCHIVE_PATH" ]]; then
+                    echo "FATAL: $ARCHIVE_PATH does not exist." >&2
+                    echo "Archives available on the backup claim:" >&2
+                    ls -1 /backup/fwb-*.tar.gz >&2 2>/dev/null || echo "  (none found)" >&2
+                    exit 1
+                  fi
+
+                  # Same guard the backup job's cold_copy uses: an empty
+                  # LEVEL_NAME would turn the rm -rf below into wiping the
+                  # scratch PVC's root instead of one level directory inside
+                  # it.
+                  if [[ -z "$LEVEL_NAME" ]]; then
+                    echo "FATAL: LEVEL_NAME is empty, refusing to guess what to restore." >&2
+                    exit 1
+                  fi
+
+                  TARGET="/scratch/${LEVEL_NAME}"
+                  if [[ -e "$TARGET" && "$OVERWRITE_SCRATCH" != "true" ]]; then
+                    echo "FATAL: $TARGET already exists on the scratch PVC ($SCRATCH_PVC)." >&2
+                    echo "Set restore.overwriteScratch=true to replace it, or point restore.scratchPVC" >&2
+                    echo "at a clean claim -- this job never overwrites a prior scratch restore by default." >&2
+                    exit 1
+                  fi
+
+                  # Never restore into a running server: Bedrock's LevelDB
+                  # assumes it owns its files exclusively, and a restore
+                  # extracting under a live process is the same corruption
+                  # shape the backup job's truncation logic exists to avoid
+                  # on the write side. This scales the *live* StatefulSet,
+                  # which is why this job is invoked deliberately by a human
+                  # (see the restore runbook) and never on a schedule.
+                  echo "scaling $SERVER_STS to 0 replicas before touching anything"
+                  kubectl patch statefulset -n "$NS" "$SERVER_STS" --type=merge -p '{"spec":{"replicas":0}}'
+
+                  echo "waiting for $SERVER_POD to terminate"
+                  GONE=""
+                  for _ in $(seq 1 60); do
+                    if ! kubectl get pod -n "$NS" "$SERVER_POD" >/dev/null 2>&1; then
+                      GONE="yes"
+                      break
+                    fi
+                    sleep 5
+                  done
+                  if [[ -z "$GONE" ]]; then
+                    echo "FATAL: $SERVER_POD is still present after 5 minutes." >&2
+                    echo "Refusing to extract anything while the server pod might still be terminating." >&2
+                    exit 1
+                  fi
+                  echo "$SERVER_POD is gone"
+
+                  # Everything below writes only to the scratch PVC. Nothing
+                  # in this script ever mounts, or has RBAC to touch, the
+                  # world PVC (datadir-${SERVER_STS}-0).
+                  rm -rf "${TARGET:?}"
+                  mkdir -p /scratch
+                  tar xzf "$ARCHIVE_PATH" -C /scratch
+
+                  COUNT="$(find "$TARGET" -type f 2>/dev/null | wc -l)"
+                  if [[ ! -d "$TARGET" || "$COUNT" -lt 3 ]]; then
+                    echo "FATAL: extraction produced $COUNT files under $TARGET, expected a real level directory." >&2
+                    exit 1
+                  fi
+
+                  echo "restored $COUNT files from $ARCHIVE_NAME onto $SCRATCH_PVC, under $TARGET"
+                  echo
+                  echo "This job wrote only to $SCRATCH_PVC. It never touched datadir-${SERVER_STS}-0,"
+                  echo "the live world PVC."
+                  echo
+                  echo "$SERVER_STS is left scaled to 0. It stays that way until a human decides what"
+                  echo "happens next -- verify the scratch copy, then either promote it or scale the"
+                  echo "server back up unchanged. See the restore runbook for both procedures."
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                  readOnly: true
+                - name: scratch
+                  mountPath: /scratch
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ include "backup.name" . }}
+                readOnly: true
+            - name: scratch
+              persistentVolumeClaim:
+                claimName: {{ include "restore.scratchPVC.name" . }}
+{{- end }}
