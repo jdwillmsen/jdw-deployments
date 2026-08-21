@@ -203,7 +203,7 @@ bot:
   #
   # Turning it on is the deliberate second half of a two-step bootstrap, not
   # something to flip alongside an unrelated change.
-  enabled: false
+  enabled: true
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
