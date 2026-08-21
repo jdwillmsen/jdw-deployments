@@ -73,11 +73,13 @@ minecraft-bedrock:
     # 12 is the server's own hard ceiling (property range is 4-12) — needed for
     # the AFK bot's mob farm to tick reliably, not just render further.
     tickDistance: 12
-    # 96 chunks: the highest render distance Bedrock clients currently
-    # negotiate for, so the server won't hold chunks past what any client
-    # will ever request. Costs client bandwidth/server chunk-cache memory,
-    # not simulation — that's tickDistance's job.
-    viewDistance: 96
+    # 64 chunks: a common "safe max" most Bedrock platforms can actually
+    # exercise (weaker mobile/console clients cap well below the ~96 ceiling
+    # some high-end Windows clients can ask for), so it avoids reserving
+    # chunk-cache memory for requests that will never come from those
+    # devices. Costs client bandwidth/server chunk-cache memory, not
+    # simulation — that's tickDistance's job.
+    viewDistance: 64
     maxPlayers: 20
     playerIdleTimeout: 0
 
