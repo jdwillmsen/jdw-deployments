@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-mc-monitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-mc-monitor
+spec:
+  # The mc-monitor sidecar lives in the server's own StatefulSet pod
+  # (minecraft-bedrock chart's sidecarContainers), so this selects that pod
+  # by its existing app label rather than one this chart owns.
+  selector:
+    app: {{ include "backup.serverStatefulSet" . }}
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-mc-monitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-mc-monitor
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-mc-monitor
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s
