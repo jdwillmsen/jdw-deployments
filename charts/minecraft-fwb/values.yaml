@@ -24,17 +24,21 @@ minecraft-bedrock:
   # reference. The namespace's quota tier (tenant.yaml) caps requests/limits
   # in total, and the backup CronJob has to be able to schedule alongside this.
   #
-  # cpu bumped 1/2 -> 4/8 after raising tick-distance/view-distance for the mob
+  # cpu bumped 1/2 -> 3/7 after raising tick-distance/view-distance for the mob
   # farm pushed the old 2-core limit into throttling (cgroup stats: ~34% of
   # periods throttled) — the quota tier moved standard -> large alongside this
-  # to make room. Memory left as-is; usage stayed well under the old 4Gi limit.
+  # to make room. Not the tier's full 4/8: the backup-exporter Deployment is
+  # always-on and holds a sliver of the same quota (100m limit/10m request),
+  # so asking for the full ceiling here leaves the pod permanently unschedulable
+  # (hit exactly this — FailedCreate, quota exceeded by that same sliver).
+  # Memory left as-is; usage stayed well under the old 4Gi limit.
   resources:
     requests:
       memory: 2Gi
-      cpu: "4"
+      cpu: "3"
     limits:
       memory: 4Gi
-      cpu: "8"
+      cpu: "7"
 
   # Bedrock ticks on a single core and uses others for chunk loading, so these
   # two nodes are chosen for headroom rather than core count; every other node
