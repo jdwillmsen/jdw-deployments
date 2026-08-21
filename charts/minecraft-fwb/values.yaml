@@ -61,7 +61,15 @@ minecraft-bedrock:
     levelName: FWB
     serverName: "FWB Server"
     allowCheats: false
-    tickDistance: 8
+    # 12 is the server's own hard ceiling (property range is 4-12) — needed for
+    # the AFK bot's mob farm to tick reliably, not just render further.
+    tickDistance: 12
+    # 96 chunks: the highest render distance Bedrock clients currently
+    # negotiate for, so the server won't hold chunks past what any client
+    # will ever request. Costs client bandwidth/server chunk-cache memory,
+    # not simulation — that's tickDistance's job.
+    viewDistance: 96
+    maxPlayers: 20
     playerIdleTimeout: 0
 
     # LAN-only. HAProxy terminates every frontend in TCP mode and cannot proxy
