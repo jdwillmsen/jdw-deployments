@@ -259,16 +259,29 @@ bot:
   # ticking.
   viewDistance: 4
 
-  # A single idle UDP session and a JSON log line per chat message. The
-  # namespace quota caps total requests, and the server's 2Gi plus the backup
-  # job have to fit alongside this.
+  # A single idle UDP session and a JSON log line per chat message — 500m was
+  # never load-driven, and it silently ate the CPU headroom the bedrock
+  # resources comment above already reasoned through (7-core bedrock + the
+  # exporter's 100m sliver = 7100m, meant to leave room for the 1-core backup
+  # CronJob and the 500m volume-recovery CronJob alongside it). This bot was
+  # added after that budget was set and nothing revisited it: steady-state
+  # usage hit 7700m/8000m, leaving only 300m — not enough for volume-recovery
+  # (500m) to ever schedule, and it failed every 5-minute run until this
+  # fixed it (observed live 2026-08-21, JDWLABS-334).
+  #
+  # 150m matches the bot's actual idle-client workload with real margin, and
+  # restores ~600m of headroom at steady state. Does not fully cover the rare
+  # case of the backup CronJob (1000m) and a volume-recovery tick (500m)
+  # landing in the same few seconds — that residual gap needs either a
+  # larger quota tier or shrinking bedrock's own limit, both bigger tradeoffs
+  # than this ticket's scope.
   resources:
     requests:
       memory: 256Mi
       cpu: 100m
     limits:
       memory: 512Mi
-      cpu: 500m
+      cpu: 150m
 
   persistence:
     # File tier, not block: the cache is a few small JSON files with none of
