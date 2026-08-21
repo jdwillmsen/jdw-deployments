@@ -41,6 +41,14 @@ account:
 The bot's XUID then goes on the server allowlist. It appears in the server log
 on first connect.
 
+### Restoring a backup
+
+The chart also carries a restore mechanism alongside the backup CronJob:
+[docs/minecraft-fwb-restore-runbook.md](docs/minecraft-fwb-restore-runbook.md)
+is the runbook, and covers what runs automatically (scaling the server down,
+extracting onto a scratch PVC) versus what stays a manual, deliberate step
+(promoting a verified restore onto the live world).
+
 ## Working on a chart
 
 Dependencies are declared in `Chart.yaml`, pinned by `Chart.lock`, and the

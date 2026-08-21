@@ -230,6 +230,45 @@ volumeRecovery:
   # concurrencyPolicy is Forbid, so one stuck job means no further attempts.
   timeoutSeconds: 120
 
+restore:
+  # On by default so the mechanism -- CronJob, RBAC, scratch PVC -- exists
+  # alongside the workload rather than being something a human has to
+  # remember to add when disaster strikes. It never runs on its own: the
+  # CronJob's own manifest hardcodes suspend: true independent of this flag,
+  # so nothing set here can make it fire on a schedule. Disabling it removes
+  # the mechanism entirely, including the idle scratch PVC's NAS footprint.
+  enabled: true
+
+  # No default. A restore names which archive it wants back, and a
+  # chart-supplied default would let `kubectl create job --from=cronjob`
+  # silently restore whatever this file last said on some unrelated run. The
+  # job refuses to start while this is empty.
+  archiveName: ""
+
+  # Same image family as the other two jobs in this chart, and the same
+  # kubectl-skew reasoning the backup CronJob documents -- this job also
+  # drives the server StatefulSet through the API.
+  image: alpine/k8s:1.36.2
+
+  # Refuses to overwrite an existing level directory on the scratch PVC
+  # unless a human sets this for a second attempt. A restore that silently
+  # clobbers a scratch copy someone was still comparing against is the same
+  # failure shape as a backup that silently overwrites a good archive.
+  overwriteScratch: false
+
+  # Generous against extracting a ~700 MB archive plus up to five minutes
+  # spent waiting for the server pod to terminate; a run that hangs past
+  # this is wedged, not slow.
+  timeoutSeconds: 1800
+
+  scratchPVC:
+    # Block, matching the world's own class. A restore that lands on a
+    # different storage family cannot be promoted onto the world PVC by a
+    # plain copy later -- that conversion has never been exercised, and nothing
+    # here should be read as a claim that it would work.
+    storageClass: truenas-iscsi
+    size: 5Gi
+
 bot:
   # Off until the account behind it exists. Enabling this before the one-time
   # device-code login has been completed gets a pod that cannot authenticate
