@@ -27,18 +27,28 @@ minecraft-bedrock:
   # cpu bumped 1/2 -> 3/7 after raising tick-distance/view-distance for the mob
   # farm pushed the old 2-core limit into throttling (cgroup stats: ~34% of
   # periods throttled) — the quota tier moved standard -> large alongside this
-  # to make room. Not the tier's full 4/8: the backup-exporter Deployment is
-  # always-on and holds a sliver of the same quota (100m limit/10m request),
-  # so asking for the full ceiling here leaves the pod permanently unschedulable
-  # (hit exactly this — FailedCreate, quota exceeded by that same sliver).
+  # to make room. That 7-core limit was never revisited against real usage,
+  # and it silently starved the backup CronJob: steady-state limits.cpu usage
+  # sat at 7350-7850m against the 8000m quota cap, so the backup's own 1000m
+  # request always exceeded it. Confirmed live 2026-08-25 — every scheduled
+  # backup for 3 straight days failed with FailedCreate/exceeded-quota, and
+  # that day's job retried for 41 minutes straight before this fix landed.
+  #
+  # cpu dropped 3/7 -> 1500m/4000m against measured reality: `kubectl top`
+  # showed 550m actual usage, and the highest this container has ever been
+  # observed pegged at is the old 2000m limit (the throttling incident above,
+  # before tick/view-distance were raised further). 4000m is 2x that observed
+  # peak — real headroom, not a guess — and frees enough quota for the backup
+  # (1000m) and volume-recovery (500m) CronJobs to schedule even if both land
+  # at once alongside both AFK bots and the mc-monitor sidecar.
   # Memory left as-is; usage stayed well under the old 4Gi limit.
   resources:
     requests:
       memory: 2Gi
-      cpu: "3"
+      cpu: 1500m
     limits:
       memory: 4Gi
-      cpu: "7"
+      cpu: "4"
 
   # Bedrock ticks on a single core and uses others for chunk loading, so these
   # two nodes are chosen for headroom rather than core count; every other node
