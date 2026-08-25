@@ -289,6 +289,12 @@ bot:
   # something to flip alongside an unrelated change.
   enabled: true
 
+  # Set to 0 (not `enabled: false`) to take the bot offline for a manual
+  # account takeover without deleting its PVC/token cache — see README's
+  # "Relocating a bot". Explicit rather than templated-default: Sprig's
+  # `default` coerces 0 back to 1.
+  replicas: 1
+
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
     # Pinned for the same reason the server version is: this image bakes in the
@@ -347,6 +353,9 @@ bot2:
   # Same two-step bootstrap as `bot`: off until the account exists and the
   # image tag is published, then flipped on for the device-code login.
   enabled: true
+
+  # See bot.replicas above — same take-offline-without-losing-cache mechanism.
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot

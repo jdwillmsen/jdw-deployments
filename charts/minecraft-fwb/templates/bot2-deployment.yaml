@@ -7,7 +7,16 @@ metadata:
   labels:
     app: {{ include "bot2.name" . }}
 spec:
-  replicas: 1
+  # Overridable so scaling to 0 for a manual account takeover — see README's
+  # "Relocating a bot" — goes through git rather than a raw `kubectl scale`,
+  # which selfHeal would revert on its next resync. Only this Deployment is
+  # gated on replicas; the PVC stays gated on `enabled` alone so the token
+  # cache survives a scale-to-0.
+  #
+  # No `| default 1` here deliberately: Sprig's `default` treats 0 as unset
+  # and would silently coerce a real 0 back to 1, defeating the override it
+  # exists for. values.yaml sets replicas: 1 explicitly instead.
+  replicas: {{ .Values.bot2.replicas }}
   # No rollback history worth keeping for a single-container bot image — the
   # chart pins the tag anyway, so a prior ReplicaSet buys nothing.
   revisionHistoryLimit: 0
