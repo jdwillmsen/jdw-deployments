@@ -8,6 +8,9 @@ metadata:
     app: {{ include "bot.name" . }}
 spec:
   replicas: 1
+  # No rollback history worth keeping for a single-container bot image — the
+  # chart pins the tag anyway, so a prior ReplicaSet buys nothing.
+  revisionHistoryLimit: 0
   # Recreate, not RollingUpdate: the token cache is ReadWriteOnce, and two bots
   # signed in as the same account would fight over both the volume and the
   # server session.
