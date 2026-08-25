@@ -1,0 +1,15 @@
+{{- if .Values.bot2.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "bot2.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # File tier, not block — see bot.persistence above for why.
+  storageClassName: {{ .Values.bot2.persistence.storageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.bot2.persistence.size }}
+{{- end }}
