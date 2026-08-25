@@ -308,22 +308,56 @@ bot:
   # (500m) to ever schedule, and it failed every 5-minute run until this
   # fixed it (observed live 2026-08-21, JDWLABS-334).
   #
-  # 150m matches the bot's actual idle-client workload with real margin, and
-  # restores ~600m of headroom at steady state. Does not fully cover the rare
-  # case of the backup CronJob (1000m) and a volume-recovery tick (500m)
-  # landing in the same few seconds — that residual gap needs either a
-  # larger quota tier or shrinking bedrock's own limit, both bigger tradeoffs
-  # than this ticket's scope.
+  # Tightened again 2026-08-25 against live usage rather than estimate: the
+  # running bot measured 46m CPU / 89Mi memory (kubectl top). 100m/256Mi still
+  # carries real margin over that. Freed room for a second bot (bot2 below)
+  # without making the pre-existing backup/volume-recovery quota gap worse —
+  # that gap (documented above as of the 150m tuning) is a quota-tier-or-
+  # bedrock-limit problem, still not addressed here.
   resources:
     requests:
+      memory: 128Mi
+      cpu: 50m
+    limits:
       memory: 256Mi
       cpu: 100m
-    limits:
-      memory: 512Mi
-      cpu: 150m
 
   persistence:
     # File tier, not block: the cache is a few small JSON files with none of
     # the locking semantics that put the world on iSCSI.
+    storageClass: truenas-nfs
+    size: 1Gi
+
+# Second, independent AFK bot — its own account, its own token cache, its own
+# player slot. Mirrors `bot` above rather than a generic list: this chart
+# already keeps backup/recovery/restore as separate named blocks with their
+# own templates, and a real list would rename the first bot's Deployment/PVC
+# (currently unsuffixed) and orphan its already-authenticated token cache.
+bot2:
+  # Same two-step bootstrap as `bot`: off until the account exists and the
+  # image tag is published, then flipped on for the device-code login.
+  enabled: false
+
+  image:
+    repository: ghcr.io/jdwillmsen/minecraft-afk-bot
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  # Distinct from bot.username so the two token caches never collide.
+  username: fwb-afk-bot-2
+
+  viewDistance: 4
+
+  # Sized from bot's live-measured usage (46m CPU / 89Mi, see above) rather
+  # than guessed — same workload shape, same numbers.
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 100m
+
+  persistence:
     storageClass: truenas-nfs
     size: 1Gi

@@ -34,6 +34,10 @@
 {{ .Release.Name }}-afk-bot
 {{- end -}}
 
+{{- define "bot2.name" -}}
+{{ .Release.Name }}-afk-bot-2
+{{- end -}}
+
 {{- define "bot.serverHost" -}}
 {{ .Release.Name }}-minecraft-bedrock.{{ .Release.Namespace }}.svc.cluster.local
 {{- end -}}
