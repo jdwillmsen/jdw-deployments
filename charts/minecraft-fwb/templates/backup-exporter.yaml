@@ -27,6 +27,10 @@ metadata:
     app: {{ include "backup.exporter.name" . }}
 spec:
   replicas: 1
+  # No rollback history worth keeping for a single-container static-file
+  # exporter — the chart pins the tag anyway, so a prior ReplicaSet buys
+  # nothing.
+  revisionHistoryLimit: 0
   selector:
     matchLabels:
       app: {{ include "backup.exporter.name" . }}
