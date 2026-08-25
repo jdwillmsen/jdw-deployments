@@ -336,7 +336,7 @@ bot:
 bot2:
   # Same two-step bootstrap as `bot`: off until the account exists and the
   # image tag is published, then flipped on for the device-code login.
-  enabled: false
+  enabled: true
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
