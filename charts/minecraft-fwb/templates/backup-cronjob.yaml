@@ -133,7 +133,7 @@ spec:
 
                   # Always resume, even if the copy fails partway. Leaving the
                   # server held would silently stop it persisting anything.
-                  resume() { kubectl exec -n "$NS" "$SERVER_POD" -- send-command save resume >/dev/null 2>&1 || true; }
+                  resume() { timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save resume >/dev/null 2>&1 || true; }
 
                   server_ready() {
                     local phase ready
@@ -180,14 +180,19 @@ spec:
                     trap resume RETURN
                     trap resume EXIT
                     echo "holding saves"
-                    kubectl exec -n "$NS" "$SERVER_POD" -- send-command save hold || return 1
+                    # `kubectl exec` has no built-in call timeout: if the pod
+                    # is unresponsive the command blocks until the job's
+                    # activeDeadlineSeconds kills the whole run an hour later
+                    # (JDWLABS-392). A bounded exec turns that into a fast
+                    # fall-through to cold_copy instead.
+                    timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save hold || return 1
 
                     # save query reports "ready to be copied" followed by a
                     # comma-separated file:length manifest. Poll until it does.
                     local manifest="" entry f len count=0
                     for _ in $(seq 1 30); do
                       sleep 3
-                      kubectl exec -n "$NS" "$SERVER_POD" -- send-command save query >/dev/null || return 1
+                      timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save query >/dev/null || return 1
                       sleep 2
                       manifest="$(kubectl logs -n "$NS" "$SERVER_POD" --tail=20 \
                         | grep -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
