@@ -238,7 +238,16 @@ volumeRecovery:
   # Ceiling for a single run, which normally finishes in about three seconds.
   # Exists so a run that hangs fails visibly instead of suspending recovery:
   # concurrencyPolicy is Forbid, so one stuck job means no further attempts.
-  timeoutSeconds: 120
+  #
+  # 120 -> 240 after a live DeadlineExceeded (JDWLABS-411): the server pod was
+  # healthy and the job never reached its delete logic, but two nodes
+  # (kubelet not posting status, conditions Unknown) show the job's kubectl
+  # calls can stall on transient cluster/API flakiness rather than the ~3s
+  # happy path. 240s doubles the prior margin without approaching the
+  # five-minute schedule below -- a run that ate the full budget still leaves
+  # room before the next trigger, so one slow-but-real run cannot also cost
+  # the following scheduled attempt under concurrencyPolicy: Forbid.
+  timeoutSeconds: 240
 
 restore:
   # On by default so the mechanism -- CronJob, RBAC, scratch PVC -- exists
