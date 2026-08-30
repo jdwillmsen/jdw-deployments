@@ -51,6 +51,17 @@ spec:
                   value: {{ include "mcMonitor.host" . }}
                 - name: CANDIDATE_IMAGE
                   value: "{{ index .Values "minecraft-bedrock" "image" "repository" }}:{{ index .Values "minecraft-bedrock" "image" "tag" }}"
+{{- if .Values.versionCheck.bot.enabled }}
+                - name: BOT_REPOSITORY
+                  value: {{ .Values.versionCheck.bot.repository | quote }}
+                - name: BOT_WORKFLOW_FILE
+                  value: {{ .Values.versionCheck.bot.workflowFile | quote }}
+                - name: BOT_DISPATCH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.versionCheck.bot.tokenSecretName }}
+                      key: {{ .Values.versionCheck.bot.tokenSecretKey }}
+{{- end }}
               command: ["/bin/bash", "-c"]
               args:
                 - |
@@ -69,6 +80,26 @@ spec:
                     emit skipped "could not read production's current version from $METRICS_HOST"
                     exit 0
                   fi
+
+{{- if .Values.versionCheck.bot.enabled }}
+                  # Best-effort and independent of everything below: this
+                  # cluster is the only thing that can see production's
+                  # version (the bot repo's GitHub-hosted runner has no route
+                  # to a LAN-only NodePort server), so it hands that version
+                  # off every run. Whether it actually implies a protocol
+                  # bump is the bot repo's own call -- it holds the
+                  # minecraft-data protocol table this job does not.
+                  if ! curl -fsS --max-time 10 -X POST \
+                      -H "Authorization: Bearer $BOT_DISPATCH_TOKEN" \
+                      -H "Accept: application/vnd.github+json" \
+                      "https://api.github.com/repos/$BOT_REPOSITORY/actions/workflows/$BOT_WORKFLOW_FILE/dispatches" \
+                      -d "{\"ref\":\"main\",\"inputs\":{\"production_version\":\"$current\"}}" \
+                      >/dev/null 2>&1; then
+                    emit bot_dispatch_failed "could not notify $BOT_REPOSITORY of production version $current"
+                  else
+                    emit bot_dispatched "notified $BOT_REPOSITORY of production version $current"
+                  fi
+{{- end }}
 
                   # --wait=false for the same reason recovery-cronjob.yaml
                   # documents on its own delete: this role holds no list verb,
