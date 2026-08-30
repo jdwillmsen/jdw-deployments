@@ -10,8 +10,12 @@ on:
   workflow_dispatch:
 
 # Every job here only reads the tree; nothing writes back to the repo.
+# pull-requests: read is for smoke-test's paths-filter step -- the shallow
+# checkout leaves it no local diff to compare against, so it falls back to
+# the GitHub API to list changed files, which needs this scope or it 403s.
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.ref }}
