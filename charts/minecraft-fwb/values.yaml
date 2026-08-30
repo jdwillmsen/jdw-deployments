@@ -74,7 +74,7 @@ minecraft-bedrock:
     #
     # To update: change this value, merge, done. The rolling update strategy
     # above applies it on the next sync with no manual step.
-    version: "1.26.43.1"
+    version: "1.26.45.1"
     difficulty: hard
     gameMode: survival
     levelName: FWB
