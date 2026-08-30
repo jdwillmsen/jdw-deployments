@@ -41,3 +41,15 @@
 {{- define "bot.serverHost" -}}
 {{ .Release.Name }}-minecraft-bedrock.{{ .Release.Namespace }}.svc.cluster.local
 {{- end -}}
+
+{{- define "versionCheck.name" -}}
+{{ .Release.Name }}-version-check
+{{- end -}}
+
+{{- define "versionCheck.candidatePod" -}}
+{{ .Release.Name }}-version-check-candidate
+{{- end -}}
+
+{{- define "mcMonitor.host" -}}
+{{ .Release.Name }}-mc-monitor.{{ .Release.Namespace }}.svc.cluster.local
+{{- end -}}

@@ -1,0 +1,52 @@
+{{- if .Values.versionCheck.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "versionCheck.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "versionCheck.name" . }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # The only actor in this chart that creates a Pod rather than acting on one
+  # that already exists -- there is no way to learn what LATEST resolves to
+  # right now without booting a real copy of the image to ask it. `create`
+  # cannot be scoped by resourceName in Kubernetes RBAC, so this is a
+  # deliberately broader grant than every other role here; get/delete/exec
+  # below stay scoped to the one deterministic name this actor ever creates.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["{{ include "versionCheck.candidatePod" . }}"]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: ["{{ include "versionCheck.candidatePod" . }}"]
+    verbs: ["create"]
+  # Same shape as restore's role: read the workload to confirm it exists, then
+  # patch it. `kubectl rollout restart` is a patch to the pod template's
+  # annotations, nothing more privileged than that.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    resourceNames: ["{{ include "backup.serverStatefulSet" . }}"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "versionCheck.name" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "versionCheck.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "versionCheck.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
