@@ -149,6 +149,69 @@ jobs:
           done
           exit $exit_code
 
+  # Runs unconditionally (the file-change check gates steps, not the job) so
+  # this stays a satisfiable required check on every PR, not just ones that
+  # touch the Bedrock tag -- a job skipped entirely via a job-level `if`
+  # never reports back, and GitHub then blocks merge on a required check that
+  # can never pass.
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Detect Bedrock image change
+        id: changed
+        uses: dorny/paths-filter@v4.0.3
+        with:
+          filters: |
+            bedrock:
+              - 'charts/minecraft-fwb/values.yaml'
+
+      - name: Extract image repository/tag
+        if: steps.changed.outputs.bedrock == 'true'
+        id: image
+        run: |
+          repo=$(yq '.["minecraft-bedrock"].image.repository' charts/minecraft-fwb/values.yaml)
+          tag=$(yq '.["minecraft-bedrock"].image.tag' charts/minecraft-fwb/values.yaml)
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # Boots the real image and waits for it to answer a Bedrock status
+      # query -- lint/template only check that the manifest renders, not that
+      # the tag Renovate wants to auto-merge actually starts. mc-monitor is
+      # bundled in the image already (same tool the chart's own sidecar
+      # runs), so this needs no extra image to pull.
+      #
+      # Confirmed live against 2026.8.2: cold pull to "Server started" took
+      # ~6s and `mc-monitor status-bedrock -host 127.0.0.1 -port 19132`
+      # exits 0 once up, 1 (FATAL, connection refused) while it isn't -- the
+      # 3-minute budget below is generous margin over that, well inside the
+      # chart's own 10-minute production startupProbe allowance.
+      - name: Boot smoke test
+        if: steps.changed.outputs.bedrock == 'true'
+        run: |
+          image="${{ steps.image.outputs.repo }}:${{ steps.image.outputs.tag }}"
+          echo "Booting $image..."
+          docker run -d --name smoke-test -e EULA=TRUE "$image"
+
+          ready=false
+          for _ in $(seq 1 90); do
+            if docker exec smoke-test mc-monitor status-bedrock -host 127.0.0.1 -port 19132 -retry-limit 0 2>/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+
+          docker logs smoke-test
+          docker rm -f smoke-test
+
+          if [ "$ready" != "true" ]; then
+            echo "::error::$image never reported ready via mc-monitor status-bedrock"
+            exit 1
+          fi
+
   tools-tests:
     runs-on: ubuntu-latest
     steps:
