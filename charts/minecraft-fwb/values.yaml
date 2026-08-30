@@ -66,15 +66,19 @@ minecraft-bedrock:
 
   minecraftServer:
     eula: "TRUE"
-    # Pinned, and bumped deliberately rather than tracking LATEST. Bedrock
-    # upgrades a world in place on first load and an older server cannot reopen
-    # it afterwards, so every bump is a one-way door — which is exactly why it
-    # should be a reviewed one-line change here rather than something that
-    # happens on its own overnight. The nightly backup is the safety net.
+    # LATEST rather than a reviewed pin: Bedrock clients only connect within a
+    # narrow protocol window of their own build, so a version that goes stale
+    # between reviews breaks connectivity outright -- worse than the one-way
+    # world-upgrade risk a pin was guarding against. The image checks Mojang
+    # for the current version and upgrades on every container start (README:
+    # "the Bedrock server software is not bundled into this image... VERSION
+    # default is LATEST"), independently of the image.tag above, which only
+    # versions the container tooling (mc-monitor etc.), not the server binary.
     #
-    # To update: change this value, merge, done. The rolling update strategy
-    # above applies it on the next sync with no manual step.
-    version: "1.26.45.1"
+    # The nightly backup and the volume-recovery CronJob are what make this
+    # safe to leave unreviewed: a bad Mojang release corrupting the world on
+    # restart is restorable from the last backup rather than un-upgradable.
+    version: "LATEST"
     difficulty: hard
     gameMode: survival
     levelName: FWB
@@ -306,9 +310,14 @@ bot:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
-    # Pinned for the same reason the server version is: this image bakes in the
-    # protocol data for exactly one Bedrock version, so the tag and the server
-    # version move together rather than independently.
+    # This image bakes in the protocol data for exactly one Bedrock version,
+    # so it needs a deliberate re-bump whenever that data goes stale.
+    #
+    # minecraftServer.version above tracks LATEST and can move on any pod
+    # restart -- there is no longer a single reviewed commit that bumps both
+    # together, so this tag's protocol data can silently drift behind the
+    # running server. Nothing here detects that drift; watch for the bot
+    # failing to authenticate/connect as the first symptom.
     tag: "0.1.0"
     pullPolicy: IfNotPresent
 
