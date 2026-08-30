@@ -5,7 +5,7 @@ minecraft-bedrock:
     # default rolling tag, which upgrades the server binary underneath a live
     # world; for a GitOps workload whose state is the whole point, that is a
     # silent-change hazard rather than a convenience.
-    tag: "2026.8.1"
+    tag: "2026.8.2"
     pullPolicy: IfNotPresent
 
   # RollingUpdate is safe here despite the ReadWriteOnce volume: a StatefulSet
