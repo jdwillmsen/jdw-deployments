@@ -46,11 +46,16 @@ spec:
           # to, and co-location with the server is only a preference. Both
           # volumes are ReadWriteOnce: when the server is running its node
           # already holds the world, and the weight makes the scheduler pick
-          # that node out of the two. If pressure pushes the job to the other
-          # node anyway the volume cannot attach, and activeDeadlineSeconds
-          # above is what turns that into a failure rather than a pod wedged
-          # in ContainerCreating — still a far better outcome than never being
-          # scheduled at all.
+          # that node out of the two.
+          #
+          # A preference is all this can be, but ReadWriteOnce does NOT make
+          # the losing case safe on its own: the CSI driver behind
+          # truenas-iscsi will happily attach the world volume to a second
+          # node while the server still holds it on the first, and the job
+          # then reads a world being written underneath it through a second
+          # ext4 mount. That silently cost 11 .ldb files. The scheduler is
+          # therefore only the first line; RUNTIME_NODE_GUARD below is what
+          # actually refuses to touch the world from the wrong node.
           affinity:
             # Taken from the server's own values rather than restated, so the
             # two cannot drift apart into a job that is pinned away from the
@@ -80,6 +85,10 @@ spec:
                   memory: 512Mi
                   cpu: "1"
               env:
+                - name: MY_NODE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
                 - name: SERVER_POD
                   value: {{ include "backup.serverPod" . }}
                 - name: SERVER_STS
@@ -104,6 +113,42 @@ spec:
                 - |
                   set -euo pipefail
                   NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+                  # RUNTIME_NODE_GUARD. The podAffinity above is a preference,
+                  # so this job can land on the node the server is not on. The
+                  # world PVC is ReadWriteOnce, but that does not stop the
+                  # attach: this driver mounts it on the second node too, and
+                  # copying a live LevelDB through a second ext4 mount loses
+                  # files rather than erroring. Refuse instead.
+                  #
+                  # Only a *running* server contends for the volume. With the
+                  # StatefulSet scaled to zero there is no second writer and
+                  # the backup must still run, which is the case the affinity
+                  # comment above exists to protect.
+                  # "No server pod" and "could not ask the API" must not
+                  # collapse into the same empty string: the first is safe to
+                  # back up through, the second is the Cilium endpoint race
+                  # that returns "no route to host" for the first few seconds
+                  # of a pod's life. Treating that as "no server" would open
+                  # the volume from the wrong node precisely when the guard is
+                  # needed, so anything but a clean NotFound refuses.
+                  if SERVER_NODE="$(kubectl get pod -n "$NS" "$SERVER_POD" \
+                       -o jsonpath='{.spec.nodeName}' 2>/tmp/node-lookup.err)"; then
+                    :
+                  elif grep -q 'NotFound' /tmp/node-lookup.err; then
+                    SERVER_NODE=""
+                  else
+                    echo "FATAL: could not determine the node holding the world:" >&2
+                    cat /tmp/node-lookup.err >&2
+                    exit 1
+                  fi
+
+                  if [[ -n "$SERVER_NODE" && "$SERVER_NODE" != "$MY_NODE" ]]; then
+                    echo "FATAL: backup scheduled on $MY_NODE but $SERVER_POD holds the world on $SERVER_NODE." >&2
+                    echo "Copying the world across a second attach of a ReadWriteOnce volume loses data." >&2
+                    exit 1
+                  fi
+
                   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
                   STAGE="$(mktemp -d)"
 
