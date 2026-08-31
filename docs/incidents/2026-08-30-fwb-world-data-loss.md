@@ -7,7 +7,7 @@
 | **Reported** | 2026-08-30 23:47 UTC (player noticed missing builds) |
 | **Service restored** | 2026-08-31 00:33 UTC |
 | **Data loss** | 11 `.ldb` files; ~29 MB of world data; ~16 h of play rolled back to restore |
-| **User impact** | Builds and terrain missing; ~16 min total server downtime during recovery |
+| **User impact** | Builds and terrain missing; ~9 min server downtime during recovery, in two windows |
 
 ## Summary
 
