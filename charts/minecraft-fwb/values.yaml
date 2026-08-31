@@ -231,7 +231,7 @@ versionCheck:
   image: alpine/k8s:1.36.2
   # Generous against the CI smoke test's confirmed ~6s cold-pull-to-ready for
   # this same image, plus two 60s poll loops (candidate Running, then
-  # mc-monitor reporting) the script itself allows, plus notice.leadSeconds
+  # mc-monitor reporting) the script itself allows, plus the 600s notice
   # below when a restart is actually due.
   #
   # This is a backstop rather than the primary guard against a wedged run:
@@ -247,12 +247,13 @@ versionCheck:
     # Best-effort by design: a chat failure must never block the restart. A
     # server left on a stale protocol is one clients cannot join at all, which
     # is worse for players than an unannounced restart.
-    enabled: true
     # Marks at 10m, 5m, 2m30s, 1m, 30s, then a per-second countdown for the
-    # last ten. The ladder is deliberately not configurable -- it is a fixed
-    # sequence of messages, and a knob for it would only invite a schedule
-    # whose sleeps no longer sum to leadSeconds.
-    leadSeconds: 600
+    # last ten, totalling 600s. That ladder lives in the script rather than
+    # here on purpose: the messages and the sleeps between them have to stay
+    # in step, and a lead-time knob could not keep them so -- it would read as
+    # authoritative while changing nothing. Adjusting the notice means editing
+    # the sequence, and timeoutSeconds above with it.
+    enabled: true
 
   bot:
     # The AFK bot's image bakes in protocol data for exactly one Bedrock
