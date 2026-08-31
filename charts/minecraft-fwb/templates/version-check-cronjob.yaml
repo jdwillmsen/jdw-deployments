@@ -241,7 +241,12 @@ spec:
                   }
 
                   if [[ "$NOTICE_ENABLED" == "true" ]]; then
-                    announce "Update available. Restarting in 10 minutes."
+                    # Both versions are in scope here, so say which: "an
+                    # update" is a reason to log off, "1.26.43.1 to 1.26.45.1"
+                    # also tells a player whose client already updated why
+                    # they currently cannot join. Version strings are digits
+                    # and dots, so nothing here needs escaping for `say`.
+                    announce "Update available: $current to $latest. Restarting in 10 minutes."
                     sleep 300
                     announce "Restarting in 5 minutes."
                     sleep 150
@@ -253,10 +258,13 @@ spec:
                     sleep 20
 
                     # The last ten seconds run as one exec looping inside the
-                    # container rather than ten separate ones. A kubectl exec
-                    # round trip costs roughly as long as the one-second
-                    # interval it would be counting, so ten of them would
-                    # drift past the restart they are announcing.
+                    # container rather than ten separate ones. Measured against
+                    # this server, an exec round trip is ~0.10s, so ten of them
+                    # would land the countdown around 11s -- the drift is
+                    # visible rather than fatal. This form measured 10.14s, and
+                    # keeps the whole notice to six exec calls instead of
+                    # sixteen, which is the larger reason: see
+                    # "bound kubectl exec calls in backup quiesce path".
                     timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -- sh -c \
                       'for i in 10 9 8 7 6 5 4 3 2 1; do send-command say "Restarting in $i..."; sleep 1; done' \
                       >/dev/null 2>&1 || emit announce_failed "final countdown"
