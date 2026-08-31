@@ -143,7 +143,37 @@ iSCSI path", so an unreliable iSCSI path is the leading explanation, but
 confirming it needs node kernel logs (`talosctl dmesg`) and TrueNAS-side
 evidence that were not available during this investigation.
 
-Why the pod migrated nodes at 20:16 is also not established.
+### Why the pod migrated nodes
+
+Established from git. `a054f03`, bumping `image.tag` from `2026.8.1` to
+`2026.8.2`, landed on `main` at **20:15:47 UTC**. ArgoCD auto-synced it, the
+image tag is part of the StatefulSet's pod template, and `RollingUpdate`
+therefore deleted the pod — **50 seconds later, at 20:16:37**. All three pod
+recreations that evening line up the same way:
+
+| Commit landed (UTC) | Change | Restart |
+|---|---|---|
+| 20:15:47 `a054f03` | image tag `2026.8.1` → `2026.8.2` | 20:16:37 SIGTERM — the one that lost data |
+| 21:03:22 `4280433` | pinned version `1.26.43.1` → `1.26.45.1` | 21:06:48 shutdown, 21:07:30 restart |
+| 21:29:03 `72dba50` | track `LATEST` | 21:30:02 sync, pod restarts |
+
+Which node it landed on is explained by the scheduler's default
+`LeastAllocated` scoring. Reconstructed from Prometheus at 20:15:
+
+```
+talos-lx0-6a4   cpu 19.9% free, mem 75.2% free   score 47.6
+talos-4h8-zy6   cpu 66.6% free, mem 64.1% free   score 65.4   ← chosen
+```
+
+`talos-lx0-6a4` is CPU-saturated, so the replacement was placed on the other
+permitted node and the volume had to follow. Note this is CPU-driven: an
+earlier reading of this incident blamed the 08-29 memory resize of
+`talos-4h8-zy6`, but the counterfactual disproves it — pre-resize that node
+still scores ~58.6 against 47.6 and would have won anyway.
+
+The version-check CronJob was **not** involved. It did not exist: `cac6851`
+landed at 2026-08-31 00:33:37 UTC, four hours and eighteen minutes after the
+damage, while the restore was in progress.
 
 ## Contributing factors
 
@@ -152,6 +182,14 @@ Why the pod migrated nodes at 20:16 is also not established.
   a migration path that is unsafe on this storage.
 - **`RollingUpdate` applies chart changes without a human present**, so the
   migration can happen unattended.
+- **Renovate auto-merges the very image whose bump triggered this.**
+  `renovate.json` sets `automerge: true` and `platformAutomerge: true` for
+  `itzg/minecraft-bedrock-server`. Its justification names `RollingUpdate` and
+  the nightly backup as the safety net — but `RollingUpdate` is the mechanism
+  that migrated the volume, and the backup is a recovery path, not a guard.
+  Enabled by `6a891f5` at 21:53 UTC the same evening: after the damage,
+  before anyone understood it. This makes the path that caused the incident
+  both unattended and the most frequent pod-template change this workload has.
 - **`version: "LATEST"`** meant an unrelated Bedrock upgrade landed 50 minutes
   after the damage, supplying a highly plausible false cause.
 - **Daily backups** put the blast radius at up to 24 hours.
