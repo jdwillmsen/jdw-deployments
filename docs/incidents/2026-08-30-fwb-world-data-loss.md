@@ -177,6 +177,40 @@ Detected by a player noticing missing builds, roughly 3.5 hours after the
 damage. The machine-readable signal — `LevelDB ... Corruption: N missing files.
 Trying repair.` — had been present since 08-25 and was not alerted on.
 
+Reviewing why afterwards turned up something worse than a missing alert. The
+right alert already exists. `loki-rules-node-kernel` in the `monitoring`
+namespace carries `NodeKernelISCSISessionRecovery`, whose own description
+reads:
+
+> Left unrecovered this aborts the filesystem journal on any volume the
+> session backs.
+
+That is this incident, written down in advance. It did not fire because it
+queries `{job="integrations/talos/kernel"}` and that stream is almost entirely
+absent:
+
+```
+talos streams, last 7d:  series: 1
+   {'node': 'talos-g1i-e3h', 'job': 'integrations/talos/kernel'}
+```
+
+One node out of eight, it is neither node the server runs on
+(`talos-lx0-6a4`, `talos-4h8-zy6`), and even that one stopped at
+2026-08-26 04:32 — four days before the incident. The two sibling alerts,
+`NodeKernelFilesystemFault` and `NodeKernelBlockIOError`, are blind for the
+same reason.
+
+So the gap is not "nobody thought of this". Someone did, wrote the alert, and
+it has been evaluating against an empty stream. Coverage was assumed from the
+alert's existence rather than from its data.
+
+What is genuinely missing on the workload side: nothing alerts on
+`Level corruption detected` or `Corruption: N missing files` from the server's
+own log, nothing alerts on the server being down (the 08-19 and 08-25
+crash-shutdowns were silent), and nothing alerts on a backup archive coming
+back materially smaller than its predecessor — which is the one signal that
+would have caught the data loss itself rather than its cause.
+
 ## Resolution
 
 1. Took an off-cycle backup of the damaged world before any recovery action.
@@ -196,6 +230,9 @@ Trying repair.` — had been present since 08-25 and was not alerted on.
 | 1 | Establish why the ext4 journal was dirty after a successful unstage — needs `talosctl` access and TrueNAS logs | detect | open |
 | 2 | Pin the server to a single node, removing the migration path entirely | prevent | open |
 | 3 | Alert on `Corruption: .* missing files` and `Level corruption detected` in the server log | detect | open |
+| 3a | Restore Talos kernel log shipping — one node of eight reports, neither of them the server's, and that one stopped 2026-08-26. Unblocks the three existing kernel-fault alerts, which are the ones that name this failure | detect | open, `jdwlabs/platform` |
+| 3b | Alert on the server being unreachable, using the mc-monitor metrics already scraped | detect | open, `jdwlabs/platform` |
+| 3c | Alert when a backup archive is materially smaller than its predecessor. `backup_last_artifact_bytes` is already exported; the 08-30 drop was 29 MB against a series that had only ever grown | detect | open, `jdwlabs/platform` |
 | 4 | Correct the two invalidated safety comments in the chart | prevent | open |
 | 5 | Increase backup frequency to reduce the 24 h blast radius | mitigate | open |
 | 6 | Evaluate moving the world to Longhorn, already installed and replicated | prevent | open |
@@ -212,3 +249,5 @@ Added to the register in [README.md](README.md):
 - `RollingUpdate` is safe with a ReadWriteOnce volume because a StatefulSet
   never runs two writers.
 - A clean application shutdown means the filesystem was left clean.
+- An alert existing means the failure it names is covered.
+- A workload's logs reaching Loki means they are queryable where you look.
