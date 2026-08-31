@@ -246,15 +246,25 @@ spec:
                     # also tells a player whose client already updated why
                     # they currently cannot join. Version strings are digits
                     # and dots, so nothing here needs escaping for `say`.
-                    announce "Update available: $current to $latest. Restarting in 10 minutes."
+                    #
+                    # Section-sign formatting, confirmed rendering in-game on
+                    # 1.26.45.1 rather than assumed: the codes survive the
+                    # exec stdin path (U+00A7 is c2a7 in UTF-8) and the client
+                    # interprets them. Colour carries the urgency so a player
+                    # can judge the remaining time from the line's colour
+                    # without reading it -- yellow while it is only news, gold
+                    # at the halfway mark, red once it is close. §l bolds the
+                    # duration alone, and §r closes each line so no formatting
+                    # leaks into whatever chat message follows.
+                    announce "§eUpdate available: §7$current §fto §a$latest§e. Restarting in §l10 minutes§r"
                     sleep 300
-                    announce "Restarting in 5 minutes."
+                    announce "§eRestarting in §l5 minutes§r"
                     sleep 150
-                    announce "Restarting in 2 minutes 30 seconds."
+                    announce "§6Restarting in §l2 minutes 30 seconds§r"
                     sleep 90
-                    announce "Restarting in 1 minute."
+                    announce "§cRestarting in §l1 minute§r"
                     sleep 30
-                    announce "Restarting in 30 seconds."
+                    announce "§cRestarting in §l30 seconds§r"
                     sleep 20
 
                     # The last ten seconds run as one exec looping inside the
@@ -266,7 +276,7 @@ spec:
                     # sixteen, which is the larger reason: see
                     # "bound kubectl exec calls in backup quiesce path".
                     timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -- sh -c \
-                      'for i in 10 9 8 7 6 5 4 3 2 1; do send-command say "Restarting in $i..."; sleep 1; done' \
+                      'for i in 10 9 8 7 6 5 4 3 2 1; do send-command say "§c§lRestarting in $i...§r"; sleep 1; done' \
                       >/dev/null 2>&1 || emit announce_failed "final countdown"
                   fi
 
