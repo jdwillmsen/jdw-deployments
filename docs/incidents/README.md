@@ -39,6 +39,8 @@ has since disproved. Check this list before relying on a similar argument.
 | A ReadWriteOnce volume cannot attach to a second node, so a misplaced pod fails safe | `charts/minecraft-fwb/templates/backup-cronjob.yaml` | The attach is refused only transiently; the scheduler and attach/detach controller resolve it by moving the volume, not by failing the pod | 2026-08-30 |
 | `RollingUpdate` is safe with a ReadWriteOnce volume because a StatefulSet never runs two writers | `charts/minecraft-fwb/values.yaml` | Correct about writers, wrong about the volume. Pod deletion is not volume detach, and a replacement scheduled onto a different node races the unstage | 2026-08-30 |
 | A clean application shutdown means the filesystem was left clean | implicit, several places | `NodeUnstageVolume` returned success while the ext4 journal was still dirty; `fsck` on the receiving node then recovered the journal and corrected errors | 2026-08-30 |
+| An alert existing means the failure it names is covered | `loki-rules-node-kernel`, `monitoring` namespace | The three kernel-fault alerts query `{job="integrations/talos/kernel"}`. Exactly one of eight nodes has ever shipped that stream, it is not either node the server runs on, and it stopped on 2026-08-26. The alerts were correct, deployed, and blind | 2026-08-30 |
+| A workload's logs reaching Loki means they are queryable where you look | implicit | Tenant workload logs land under the per-tenant Loki tenant (`jdwillmsen`), not `platform`. Querying `platform` returns only `kubernetes-events` and reads as "logs are not collected at all" | 2026-08-30 |
 
 ## Conventions
 
