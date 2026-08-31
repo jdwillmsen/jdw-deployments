@@ -212,6 +212,59 @@ backup:
     # simply restate the schedule and double-page every failure.
     maxAgeSeconds: 172800
 
+versionCheck:
+  # Bedrock clients only connect within a narrow protocol window of their own
+  # build. minecraftServer.version above tracks LATEST, but that only gets
+  # re-resolved when the container restarts -- nothing else forces a restart
+  # on any particular cadence, so staleness was otherwise bounded only by
+  # whatever next happens to restart the pod (an image.tag Renovate merge, a
+  # crash), which could be weeks.
+  #
+  # Hourly, this boots a throwaway copy of the server to see what LATEST
+  # currently resolves to, compares that against what production already
+  # reports (via the mc-monitor sidecar's existing metrics), and only
+  # restarts the real StatefulSet -- and only disconnects players/AFK bots --
+  # when the two actually differ. Bounds staleness to at most the schedule
+  # below, without paying an unconditional restart every run.
+  enabled: true
+  schedule: "0 * * * *"
+  image: alpine/k8s:1.36.2
+  # Generous against the CI smoke test's confirmed ~6s cold-pull-to-ready for
+  # this same image, plus two 60s poll loops (candidate Running, then
+  # mc-monitor reporting) the script itself allows.
+  timeoutSeconds: 180
+
+  bot:
+    # The AFK bot's image bakes in protocol data for exactly one Bedrock
+    # version (see bot.image's comment below), and the server no longer moves
+    # on a reviewed, human-visible schedule -- it can now restart hourly via
+    # this same CronJob. A GitHub-hosted runner has no route to this LAN-only
+    # server to check for itself (NodePort only, no LoadBalancer -- see
+    # minecraft-bedrock.minecraftServer.serviceType's comment), so this
+    # cluster is the only place that can learn production's current version
+    # and hand it off. It does exactly that and nothing more: every run,
+    # regardless of whether production needed a restart, this dispatches the
+    # bot repo's own workflow with that version as input. The bot repo -- not
+    # this job -- decides whether that actually implies a protocol bump: it
+    # has minecraft-data's protocol table and this alpine/k8s image does not,
+    # and reusing that table instead of duplicating it here is the same
+    # reasoning that puts LATEST-resolution behind the real image above
+    # rather than a hand-maintained guess at Mojang's release feed.
+    #
+    # Best-effort: a failure here is logged, never fails the job. Production
+    # staying current must not depend on this repo's GitHub API being
+    # reachable, and there is nothing here worth retrying inside the same
+    # run -- next hour's dispatch carries the same information again.
+    enabled: true
+    repository: jdwillmsen/minecraft-afk-bot
+    workflowFile: protocol-check.yml
+    # A fine-grained PAT scoped to the bot repo with Actions:write, created by
+    # hand (`kubectl create secret generic mc-bot-dispatch-token
+    # --from-literal=token=<PAT> -n <namespace>`) -- not something this chart
+    # can generate for you.
+    tokenSecretName: mc-bot-dispatch-token
+    tokenSecretKey: token
+
 volumeRecovery:
   # The server's volume has twice remounted read-only underneath a running pod
   # after a transient error on the iSCSI path. Kubernetes cannot recover from

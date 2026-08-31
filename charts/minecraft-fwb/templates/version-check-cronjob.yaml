@@ -1,0 +1,215 @@
+{{- if .Values.versionCheck.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "versionCheck.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.versionCheck.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Generous against the CI smoke test's confirmed ~6s cold-pull-to-ready
+      # time for this same image, plus the 60s this script itself budgets for
+      # each of the two poll loops below. A run that eats the whole budget is
+      # wedged, not slow -- with concurrencyPolicy Forbid a stuck run would
+      # otherwise suspend every future check silently.
+      activeDeadlineSeconds: {{ .Values.versionCheck.timeoutSeconds }}
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "versionCheck.name" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: version-check
+              image: {{ .Values.versionCheck.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: 64Mi
+                  cpu: 50m
+                limits:
+                  memory: 256Mi
+                  cpu: 500m
+              env:
+                - name: CANDIDATE_POD
+                  value: {{ include "versionCheck.candidatePod" . }}
+                - name: SERVER_STATEFULSET
+                  value: {{ include "backup.serverStatefulSet" . }}
+                - name: METRICS_HOST
+                  value: {{ include "mcMonitor.host" . }}
+                - name: CANDIDATE_IMAGE
+                  value: "{{ index .Values "minecraft-bedrock" "image" "repository" }}:{{ index .Values "minecraft-bedrock" "image" "tag" }}"
+{{- if .Values.versionCheck.bot.enabled }}
+                - name: BOT_REPOSITORY
+                  value: {{ .Values.versionCheck.bot.repository | quote }}
+                - name: BOT_WORKFLOW_FILE
+                  value: {{ .Values.versionCheck.bot.workflowFile | quote }}
+                - name: BOT_DISPATCH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.versionCheck.bot.tokenSecretName }}
+                      key: {{ .Values.versionCheck.bot.tokenSecretKey }}
+{{- end }}
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+                  emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
+
+                  # Production's currently-running version, read from the
+                  # mc-monitor sidecar's own Prometheus metrics -- already
+                  # scraped, so this needs no exec into the live pod.
+                  current="$(curl -fsS --max-time 10 "http://$METRICS_HOST:8080/metrics" 2>/dev/null \
+                    | grep -m1 '^minecraft_status_healthy{' \
+                    | grep -oE 'server_version="[^"]+"' | cut -d'"' -f2 || true)"
+                  if [[ -z "$current" ]]; then
+                    emit skipped "could not read production's current version from $METRICS_HOST"
+                    exit 0
+                  fi
+
+{{- if .Values.versionCheck.bot.enabled }}
+                  # Best-effort and independent of everything below: this
+                  # cluster is the only thing that can see production's
+                  # version (the bot repo's GitHub-hosted runner has no route
+                  # to a LAN-only NodePort server), so it hands that version
+                  # off every run. Whether it actually implies a protocol
+                  # bump is the bot repo's own call -- it holds the
+                  # minecraft-data protocol table this job does not.
+                  if ! curl -fsS --max-time 10 -X POST \
+                      -H "Authorization: Bearer $BOT_DISPATCH_TOKEN" \
+                      -H "Accept: application/vnd.github+json" \
+                      "https://api.github.com/repos/$BOT_REPOSITORY/actions/workflows/$BOT_WORKFLOW_FILE/dispatches" \
+                      -d "{\"ref\":\"main\",\"inputs\":{\"production_version\":\"$current\"}}" \
+                      >/dev/null 2>&1; then
+                    emit bot_dispatch_failed "could not notify $BOT_REPOSITORY of production version $current"
+                  else
+                    emit bot_dispatched "notified $BOT_REPOSITORY of production version $current"
+                  fi
+{{- end }}
+
+                  # --wait=false for the same reason recovery-cronjob.yaml
+                  # documents on its own delete: this role holds no list verb,
+                  # and kubectl's default wait polls with one, which would
+                  # hang forever rather than error.
+                  cleanup() {
+                    kubectl delete pod -n "$NS" "$CANDIDATE_POD" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+                  }
+                  trap cleanup EXIT
+
+                  # A disposable copy of the exact image production runs, with
+                  # no volume and VERSION left at its default (LATEST) --
+                  # asking it to boot is the only way to learn what LATEST
+                  # resolves to right now. Same node affinity as the real
+                  # server: every other node in the fleet is too memory-tight
+                  # to take this pod's request.
+                  kubectl apply -f - <<-PODSPEC
+                  apiVersion: v1
+                  kind: Pod
+                  metadata:
+                    name: $CANDIDATE_POD
+                    namespace: $NS
+                  spec:
+                    restartPolicy: Never
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: 1000
+                      runAsGroup: 3000
+                      fsGroup: 2000
+                      seccompProfile:
+                        type: RuntimeDefault
+                    affinity:
+                      nodeAffinity:
+{{- toYaml (index .Values "minecraft-bedrock" "affinity" "nodeAffinity") | nindent 24 }}
+                    containers:
+                      - name: candidate
+                        image: "$CANDIDATE_IMAGE"
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          readOnlyRootFilesystem: true
+                          capabilities:
+                            drop: ["ALL"]
+                        env:
+                          - name: EULA
+                            value: "TRUE"
+                        # Same two mounts the real server container needs
+                        # under readOnlyRootFilesystem -- both emptyDir here
+                        # rather than a PVC, since this pod is thrown away
+                        # (cleanup trap below) as soon as its version answer
+                        # is read, never resumed.
+                        volumeMounts:
+                          - name: tmp
+                            mountPath: /tmp
+                          - name: datadir
+                            mountPath: /data
+                        resources:
+                          requests:
+                            memory: 1Gi
+                            cpu: 250m
+                          limits:
+                            memory: 2Gi
+                            cpu: "1"
+                    volumes:
+                      - name: tmp
+                        emptyDir: {}
+                      - name: datadir
+                        emptyDir: {}
+                  PODSPEC
+
+                  ready=""
+                  for _ in $(seq 1 30); do
+                    phase="$(kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                    if [[ "$phase" == "Running" ]]; then
+                      ready="yes"
+                      break
+                    fi
+                    sleep 2
+                  done
+                  if [[ -z "$ready" ]]; then
+                    emit failed "candidate pod never reached Running (phase: ${phase:-unknown})"
+                    exit 1
+                  fi
+
+                  # mc-monitor is already bundled in this image (the same
+                  # binary the production sidecar runs), so this needs no
+                  # second tool. Flags/exit-code behavior confirmed live
+                  # against this image before ci.yml's smoke-test shipped:
+                  # `status-bedrock -host -port`, not the `-bedrock-servers`
+                  # flag that belongs to export-for-prometheus mode only.
+                  latest=""
+                  for _ in $(seq 1 30); do
+                    out="$(timeout 15s kubectl exec -n "$NS" "$CANDIDATE_POD" -- \
+                      mc-monitor status-bedrock -host 127.0.0.1 -port 19132 -retry-limit 0 2>/dev/null || true)"
+                    if [[ "$out" == *"version="* ]]; then
+                      latest="$(grep -oE 'version=[^ ]+' <<<"$out" | cut -d= -f2)"
+                      break
+                    fi
+                    sleep 2
+                  done
+                  if [[ -z "$latest" ]]; then
+                    emit failed "candidate never reported a version via mc-monitor"
+                    exit 1
+                  fi
+
+                  if [[ "$current" == "$latest" ]]; then
+                    emit current "production already on $current"
+                    exit 0
+                  fi
+
+                  emit restarting "production on $current, latest is $latest"
+                  kubectl rollout restart statefulset -n "$NS" "$SERVER_STATEFULSET"
+                  emit restarted "rollout triggered, production moving from $current to $latest"
+{{- end }}
