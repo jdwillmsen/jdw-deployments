@@ -45,8 +45,12 @@ spec:
               env:
                 - name: CANDIDATE_POD
                   value: {{ include "versionCheck.candidatePod" . }}
+                - name: SERVER_POD
+                  value: {{ include "backup.serverPod" . }}
                 - name: SERVER_STATEFULSET
                   value: {{ include "backup.serverStatefulSet" . }}
+                - name: NOTICE_ENABLED
+                  value: {{ .Values.versionCheck.notice.enabled | quote }}
                 - name: METRICS_HOST
                   value: {{ include "mcMonitor.host" . }}
                 - name: CANDIDATE_IMAGE
@@ -210,6 +214,54 @@ spec:
                   fi
 
                   emit restarting "production on $current, latest is $latest"
+
+                  # Warn players before disconnecting them.
+                  #
+                  # Two things about `send-command` learned by testing it
+                  # against the live server, both of which shape this:
+                  #
+                  #   - `say` rejects square brackets. A "[Server] ..." prefix
+                  #     comes back as `Syntax error: Unexpected "["` and the
+                  #     message is never delivered. It is also redundant:
+                  #     `say` already renders as "[Server] <message>" in chat,
+                  #     which is why none of these repeat the word.
+                  #     Avoid '@' too: it opens a target selector.
+                  #   - send-command exits 0 even when the server rejects the
+                  #     command, because it only writes the server's stdin and
+                  #     never reads the reply. Its exit code says the pipe was
+                  #     writable, not that anything was said, so failures below
+                  #     can only be reported, never detected.
+                  #
+                  # Every failure here is non-fatal on purpose: see
+                  # versionCheck.notice's comment in values.yaml.
+                  announce() {
+                    timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- \
+                      send-command say "$1" >/dev/null 2>&1 \
+                      || emit announce_failed "$1"
+                  }
+
+                  if [[ "$NOTICE_ENABLED" == "true" ]]; then
+                    announce "Update available. Restarting in 10 minutes."
+                    sleep 300
+                    announce "Restarting in 5 minutes."
+                    sleep 150
+                    announce "Restarting in 2 minutes 30 seconds."
+                    sleep 90
+                    announce "Restarting in 1 minute."
+                    sleep 30
+                    announce "Restarting in 30 seconds."
+                    sleep 20
+
+                    # The last ten seconds run as one exec looping inside the
+                    # container rather than ten separate ones. A kubectl exec
+                    # round trip costs roughly as long as the one-second
+                    # interval it would be counting, so ten of them would
+                    # drift past the restart they are announcing.
+                    timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -- sh -c \
+                      'for i in 10 9 8 7 6 5 4 3 2 1; do send-command say "Restarting in $i..."; sleep 1; done' \
+                      >/dev/null 2>&1 || emit announce_failed "final countdown"
+                  fi
+
                   kubectl rollout restart statefulset -n "$NS" "$SERVER_STATEFULSET"
                   emit restarted "rollout triggered, production moving from $current to $latest"
 {{- end }}

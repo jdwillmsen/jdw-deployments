@@ -28,6 +28,19 @@ rules:
     resources: ["pods/exec"]
     resourceNames: ["{{ include "versionCheck.candidatePod" . }}"]
     verbs: ["create"]
+  # Announcing the restart in-game means driving the live server's console,
+  # which is a wider grant than the candidate-only exec above and the only
+  # reason this actor touches production's pod at all. Scoped to that one
+  # pod by name, and read-only apart from the exec itself -- the restart is
+  # still a patch to the StatefulSet below, not anything done through this.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["create"]
   # Same shape as restore's role: read the workload to confirm it exists, then
   # patch it. `kubectl rollout restart` is a patch to the pod template's
   # annotations, nothing more privileged than that.
