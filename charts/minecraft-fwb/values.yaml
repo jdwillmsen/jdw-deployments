@@ -234,10 +234,17 @@ versionCheck:
   # mc-monitor reporting) the script itself allows, plus the 600s notice
   # below when a restart is actually due.
   #
-  # This is a backstop rather than the primary guard against a wedged run:
-  # both poll loops are independently bounded at 60s, so a run cannot hang in
-  # them. It is sized for the branch that announces and waits, which is why it
-  # is far larger than the work itself.
+  # Sized for the branch that announces and waits, which is why it is far
+  # larger than the work itself.
+  #
+  # An earlier version of this comment claimed both poll loops were bounded at
+  # 60s and that the deadline was therefore only a backstop. That was wrong:
+  # the mc-monitor loop is 30 iterations of `timeout 15s` plus `sleep 2`, so
+  # its worst case is ~510s, and the candidate-Running loop adds ~65s. Against
+  # the 600s notice that is ~1175s of worst case under a 900s deadline -- a run
+  # that stopped the server successfully could still be marked Failed. The loop
+  # is bounded by wall clock below rather than by iteration count, which is
+  # what makes this number hold.
   timeoutSeconds: 900
 
   notice:

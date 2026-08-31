@@ -41,6 +41,8 @@ has since disproved. Check this list before relying on a similar argument.
 | A clean application shutdown means the filesystem was left clean | implicit, several places | `NodeUnstageVolume` returned success while the ext4 journal was still dirty; `fsck` on the receiving node then recovered the journal and corrected errors | 2026-08-30 |
 | An alert existing means the failure it names is covered | `loki-rules-node-kernel`, `monitoring` namespace | The three kernel-fault alerts query `{job="integrations/talos/kernel"}`. Exactly one of eight nodes has ever shipped that stream, it is not either node the server runs on, and it stopped on 2026-08-26. The alerts were correct, deployed, and blind | 2026-08-30 |
 | A workload's logs reaching Loki means they are queryable where you look | implicit | Tenant workload logs land under the per-tenant Loki tenant (`jdwillmsen`), not `platform`. Querying `platform` returns only `kubernetes-events` and reads as "logs are not collected at all" | 2026-08-30 |
+| `RollingUpdate` plus the nightly backup make an auto-merged image bump safe | `renovate.json` | `RollingUpdate` is the mechanism that recreates the pod and migrates the volume — it is the hazard, not the guard. A backup is a recovery path, not a safety net | 2026-08-30 |
+| Both of version-check's poll loops are bounded at 60s | `charts/minecraft-fwb/values.yaml` | The mc-monitor loop is `30 × (timeout 15s + sleep 2)` — up to 510s. Written into this repo *while* documenting this incident, which is how easily it happens | 2026-08-30 |
 
 ## Conventions
 

@@ -173,9 +173,13 @@ spec:
                         emptyDir: {}
                   PODSPEC
 
+                  # Wall-clock bounded for the same reason as the version poll
+                  # below: an unbounded kubectl call inside a counted loop makes
+                  # the loop's real ceiling unknowable from reading it.
                   ready=""
-                  for _ in $(seq 1 30); do
-                    phase="$(kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                  ready_deadline=$(( SECONDS + 60 ))
+                  while (( SECONDS < ready_deadline )); do
+                    phase="$(timeout 10s kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
                     if [[ "$phase" == "Running" ]]; then
                       ready="yes"
                       break
@@ -193,8 +197,15 @@ spec:
                   # against this image before ci.yml's smoke-test shipped:
                   # `status-bedrock -host -port`, not the `-bedrock-servers`
                   # flag that belongs to export-for-prometheus mode only.
+                  # Bounded by wall clock, not iteration count. Counting
+                  # iterations looks bounded and is not: each pass can cost the
+                  # full `timeout 15s` plus the sleep, so 30 passes is ~510s
+                  # rather than the ~60s the count suggests. That gap is what
+                  # made this job's deadline arithmetic wrong when the notice
+                  # ladder was added.
                   latest=""
-                  for _ in $(seq 1 30); do
+                  poll_deadline=$(( SECONDS + 60 ))
+                  while (( SECONDS < poll_deadline )); do
                     out="$(timeout 15s kubectl exec -n "$NS" "$CANDIDATE_POD" -- \
                       mc-monitor status-bedrock -host 127.0.0.1 -port 19132 -retry-limit 0 2>/dev/null || true)"
                     if [[ "$out" == *"version="* ]]; then
