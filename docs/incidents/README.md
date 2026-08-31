@@ -10,6 +10,7 @@ new code.
 | Date | Incident | Workload | Data loss | Status |
 |------|----------|----------|-----------|--------|
 | 2026-08-30 | [FWB world data loss on node migration](2026-08-30-fwb-world-data-loss.md) | minecraft-fwb | ~29 MB world data, 11 `.ldb` files | Root cause identified, mitigations open |
+| 2026-08-31 | [Bedrock server crashes when a player joins](2026-08-31-bedrock-crash-on-player-join.md) | minecraft-fwb | none | Open — upstream defect, no local fix |
 
 ## Recording an incident
 
