@@ -390,9 +390,13 @@ bot:
     # minecraftServer.version above tracks LATEST and can move on any pod
     # restart -- there is no longer a single reviewed commit that bumps both
     # together, so this tag's protocol data can silently drift behind the
-    # running server. Nothing here detects that drift; watch for the bot
-    # failing to authenticate/connect as the first symptom.
-    tag: "0.1.0"
+    # running server. Since 0.2.0 the bot rides out protocol-number-only
+    # bumps on its own (it pings the server each attempt and announces the
+    # advertised number -- the loop that took both bots down when 1.26.45
+    # shipped as protocol 2169 over unchanged packets); a release that
+    # actually changes the packet schema still needs this tag re-bumped,
+    # surfacing as a protocol_spoofed log line followed by session failures.
+    tag: "0.2.0"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -451,7 +455,7 @@ bot2:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
-    tag: "0.1.0"
+    tag: "0.2.0"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
