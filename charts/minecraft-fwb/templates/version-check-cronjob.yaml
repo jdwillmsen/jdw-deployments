@@ -47,7 +47,11 @@ spec:
                   value: {{ include "versionCheck.candidatePod" . }}
                 - name: SERVER_POD
                   value: {{ include "backup.serverPod" . }}
-                - name: SERVER_STATEFULSET
+                # The subchart names the server container after the workload,
+                # so this is the same string as the StatefulSet -- but it is
+                # the *container* this job needs, to pick a status by name
+                # rather than by index.
+                - name: SERVER_CONTAINER
                   value: {{ include "backup.serverStatefulSet" . }}
                 - name: NOTICE_ENABLED
                   value: {{ .Values.versionCheck.notice.enabled | quote }}
@@ -291,6 +295,64 @@ spec:
                       >/dev/null 2>&1 || emit announce_failed "final countdown"
                   fi
 
-                  kubectl rollout restart statefulset -n "$NS" "$SERVER_STATEFULSET"
-                  emit restarted "rollout triggered, production moving from $current to $latest"
+                  # Restart the container in place instead of recreating the
+                  # pod. `kubectl rollout restart` deletes the pod, and pod
+                  # deletion is what unstages the world volume and hands the
+                  # scheduler a fresh placement decision -- the migration that
+                  # cost 11 .ldb files on 2026-08-30. Stopping the server over
+                  # its own console exits the process; restartPolicy: Always
+                  # brings the container back inside the same pod, on the same
+                  # node, with the volume never unmounted. The entrypoint runs
+                  # again on that restart and re-resolves LATEST, which is what
+                  # actually performs the upgrade.
+                  #
+                  # Confirmed against this deployment: an unclean crash on
+                  # 2026-08-31 03:43 restarted the container in place and the
+                  # world reopened with no LevelDB repair, while the clean
+                  # shutdown on 08-30 that recreated the pod lost data. The
+                  # process stopping is not the hazard; the volume moving is.
+                  #
+                  # Unlike `say`, send-command's exit code carries information
+                  # here: it exits 2 with "unable to find bedrock server
+                  # process" when the write never reached the server. A stop
+                  # that was never delivered must fail the run rather than fall
+                  # through to a restart poll that cannot succeed.
+                  server_state() {
+                    timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" \
+                      -o jsonpath="{.metadata.uid} {.status.containerStatuses[?(@.name=='$SERVER_CONTAINER')].restartCount}" 2>/dev/null || true
+                  }
+
+                  before="$(server_state)"
+                  if ! timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -- send-command stop >/dev/null 2>&1; then
+                    emit failed "could not deliver stop to $SERVER_POD"
+                    exit 1
+                  fi
+
+                  # Observation, not exit code. The compared value pairs the
+                  # pod UID with the restart count so both shapes of "it
+                  # restarted" register: the count increments on an in-place
+                  # restart, and the UID changes if something recreated the pod
+                  # instead -- where the count resets to 0 and would otherwise
+                  # read as "never restarted" for a restart that plainly
+                  # happened.
+                  restarted=""
+                  restart_deadline=$(( SECONDS + 120 ))
+                  while (( SECONDS < restart_deadline )); do
+                    now="$(server_state)"
+                    if [[ -n "$now" && "$now" != "$before" ]]; then
+                      restarted="yes"
+                      break
+                    fi
+                    sleep 3
+                  done
+                  if [[ -z "$restarted" ]]; then
+                    emit failed "stop was delivered but $SERVER_POD never restarted"
+                    exit 1
+                  fi
+
+                  # Deliberately does not wait for the new version to be
+                  # serving. The next hourly run re-reads production and will
+                  # try again if the upgrade did not take, which is the same
+                  # decision this run would make an extra minute later.
+                  emit restarted "restarted in place, $current -> $latest"
 {{- end }}

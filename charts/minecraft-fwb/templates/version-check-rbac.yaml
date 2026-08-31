@@ -41,13 +41,11 @@ rules:
     resources: ["pods/exec"]
     resourceNames: ["{{ include "backup.serverPod" . }}"]
     verbs: ["create"]
-  # Same shape as restore's role: read the workload to confirm it exists, then
-  # patch it. `kubectl rollout restart` is a patch to the pod template's
-  # annotations, nothing more privileged than that.
-  - apiGroups: ["apps"]
-    resources: ["statefulsets"]
-    resourceNames: ["{{ include "backup.serverStatefulSet" . }}"]
-    verbs: ["get", "patch"]
+  # No statefulsets grant. This job used to restart production by patching the
+  # pod template's annotations, which recreates the pod and migrates the world
+  # volume. It now stops the server over its console instead and lets the
+  # kubelet restart the container in place, so it needs nothing on the
+  # workload itself -- only the pod exec above.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

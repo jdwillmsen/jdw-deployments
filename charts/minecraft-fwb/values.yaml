@@ -273,7 +273,13 @@ versionCheck:
   # that stopped the server successfully could still be marked Failed. The loop
   # is bounded by wall clock below rather than by iteration count, which is
   # what makes this number hold.
-  timeoutSeconds: 900
+  #
+  # Budget with both loops wall-clock bounded: 60s waiting for the candidate to
+  # run, 60s for it to report a version, 600s of notice, then up to 120s
+  # confirming the server actually restarted -- 840s of bounded work, plus the
+  # candidate apply, the metrics read and cleanup. 1200s leaves real margin
+  # over that without being so loose the deadline stops meaning anything.
+  timeoutSeconds: 1200
 
   notice:
     # Players get warned before they are disconnected. Only reached when the
