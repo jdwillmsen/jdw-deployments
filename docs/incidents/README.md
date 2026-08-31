@@ -1,0 +1,49 @@
+# Incident knowledge base
+
+Post-incident records for workloads in this repository. The point is not
+ceremony — it is that the same failure should not be diagnosed from scratch
+twice, and that assumptions proven false in production stop being repeated in
+new code.
+
+## Index
+
+| Date | Incident | Workload | Data loss | Status |
+|------|----------|----------|-----------|--------|
+| 2026-08-30 | [FWB world data loss on node migration](2026-08-30-fwb-world-data-loss.md) | minecraft-fwb | ~29 MB world data, 11 `.ldb` files | Root cause identified, mitigations open |
+
+## Recording an incident
+
+One file per incident, named `YYYY-MM-DD-short-slug.md`, added to the index
+above in the same PR. Copy [`_template.md`](_template.md).
+
+Two rules that matter more than the format:
+
+**Separate what was observed from what was inferred.** Every claim in the
+timeline should be traceable to a log line, an event, or a command output that
+is quoted in the document. If something is a hypothesis, label it as one. The
+2026-08-30 incident had two confident root causes proposed and discarded before
+the third was actually evidenced; the discarded ones are recorded there
+deliberately, because the reasoning errors are the reusable part.
+
+**Record invalidated assumptions in the register below.** A comment in the code
+saying "this is safe because X" is worth nothing once X is disproved, and the
+comment will outlive everyone's memory of the incident.
+
+## Register of invalidated assumptions
+
+Assumptions that were written into this repository as fact, and that production
+has since disproved. Check this list before relying on a similar argument.
+
+| Assumption | Where it was stated | Reality | Incident |
+|------------|---------------------|---------|----------|
+| A ReadWriteOnce volume cannot attach to a second node, so a misplaced pod fails safe | `charts/minecraft-fwb/templates/backup-cronjob.yaml` | The attach is refused only transiently; the scheduler and attach/detach controller resolve it by moving the volume, not by failing the pod | 2026-08-30 |
+| `RollingUpdate` is safe with a ReadWriteOnce volume because a StatefulSet never runs two writers | `charts/minecraft-fwb/values.yaml` | Correct about writers, wrong about the volume. Pod deletion is not volume detach, and a replacement scheduled onto a different node races the unstage | 2026-08-30 |
+| A clean application shutdown means the filesystem was left clean | implicit, several places | `NodeUnstageVolume` returned success while the ext4 journal was still dirty; `fsck` on the receiving node then recovered the journal and corrected errors | 2026-08-30 |
+
+## Conventions
+
+- Times are UTC, matching what the logs emit.
+- Quote log lines verbatim in fenced blocks. Do not paraphrase an error.
+- Link to the PR that carries each remediation, so the fix and the reasoning
+  stay connected.
+- Prefer naming the mechanism over naming a culprit.
