@@ -8,10 +8,17 @@ minecraft-bedrock:
     tag: "2026.8.2"
     pullPolicy: IfNotPresent
 
-  # RollingUpdate is safe here despite the ReadWriteOnce volume: a StatefulSet
-  # terminates its pod and waits for it to go before creating the replacement,
-  # unlike a Deployment which would start the new one alongside. There is never
-  # a moment with two writers on the world.
+  # RollingUpdate never runs two writers: a StatefulSet terminates its pod and
+  # waits for it to go before creating the replacement, unlike a Deployment
+  # which would start the new one alongside.
+  #
+  # That is true of *writers* and was previously written here as though it made
+  # RollingUpdate safe for the volume. It does not. Pod deletion is not volume
+  # detach, and the replacement is scheduled freely, so a rolling update is
+  # exactly how the world PVC migrates between nodes -- which on this CSI driver
+  # loses data (docs/incidents/2026-08-30-fwb-world-data-loss.md). What makes
+  # the strategy safe is the single-node affinity below, not the strategy
+  # itself.
   #
   # OnDelete was the earlier choice and made every version bump a two-step
   # manual chore — merge, then remember to delete the pod. Rolling means a
@@ -50,9 +57,31 @@ minecraft-bedrock:
       memory: 4Gi
       cpu: "4"
 
-  # Bedrock ticks on a single core and uses others for chunk loading, so these
-  # two nodes are chosen for headroom rather than core count; every other node
-  # in the fleet is too memory-tight to take a 2 GiB request.
+  # Bedrock ticks on a single core and uses others for chunk loading, so nodes
+  # are chosen for headroom rather than core count; most of the fleet is too
+  # memory-tight to take a 2 GiB request at all.
+  #
+  # One node, not two. Permitting two let the scheduler move this pod on any
+  # pod recreation, and moving it drags a ReadWriteOnce iSCSI volume with it.
+  # democratic-csi's unstage reports success while the ext4 journal is still
+  # dirty, so the receiving node's fsck recovers the journal and *corrects*
+  # errors -- discarding inodes. That cost 11 .ldb files and ~29 MB of world on
+  # 2026-08-30, and 5 more files on 08-25.
+  #
+  # Single-node affinity is normally an anti-pattern because it forfeits
+  # failover. It does not here: this is one process owning one world with no
+  # clustering, so there is no failover to forfeit. What the second node
+  # actually bought was an automatic volume migration onto a driver that
+  # corrupts during migration -- downtime traded for silent data loss, which is
+  # the wrong way round.
+  #
+  # talos-4h8-zy6 because that is where the volume already is, so adopting this
+  # costs no migration. It is also the node the scheduler prefers on its own:
+  # measured 2026-08-31, LeastAllocated scores it 65.4 against talos-lx0-6a4's
+  # 47.6, since lx0-6a4 sits at ~20% free CPU.
+  #
+  # Revisit when the world moves off democratic-csi to the official TrueNAS CSI
+  # driver -- the migration hazard is that driver's, not Kubernetes'.
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -61,7 +90,6 @@ minecraft-bedrock:
               - key: kubernetes.io/hostname
                 operator: In
                 values:
-                  - talos-lx0-6a4
                   - talos-4h8-zy6
 
   minecraftServer:
