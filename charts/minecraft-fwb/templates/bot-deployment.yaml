@@ -60,6 +60,29 @@ spec:
               value: {{ .Values.bot.username | quote }}
             - name: MC_VIEW_DISTANCE
               value: {{ .Values.bot.viewDistance | quote }}
+            - name: MC_ANSWER_ENABLED
+              value: {{ .Values.bot.answer.enabled | quote }}
+            - name: MC_ANSWER_COOLDOWN_MS
+              value: {{ mul .Values.bot.answer.cooldownSeconds 1000 | quote }}
+            - name: MC_ANSWER_MAX_PER_MINUTE
+              value: {{ .Values.bot.answer.maxPerMinute | quote }}
+            - name: MC_LLM_BASE_URL
+              value: {{ .Values.bot.llm.baseUrl | quote }}
+            - name: MC_LLM_MODEL
+              value: {{ .Values.bot.llm.model | quote }}
+            - name: MC_LLM_TIMEOUT_MS
+              value: {{ .Values.bot.llm.timeoutMs | quote }}
+            - name: MC_LLM_MAX_TOKENS
+              value: {{ .Values.bot.llm.maxTokens | quote }}
+            - name: MC_BOT_NAMES
+              value: {{ join "," .Values.bot.botNames | quote }}
+            {{- if .Values.bot.llm.apiKeySecret.create }}
+            - name: MC_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.bot.llm.apiKeySecret.name }}
+                  key: {{ .Values.bot.llm.apiKeySecret.key }}
+            {{- end }}
           resources:
             {{- toYaml .Values.bot.resources | nindent 12 }}
           volumeMounts:

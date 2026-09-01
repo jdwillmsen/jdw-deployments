@@ -481,6 +481,39 @@ bot:
     storageClass: truenas-nfs
     size: 1Gi
 
+  # Real Xbox Live gamertags of sibling bots on this server — NOT the
+  # `username`/cache-key values above (same distinction as that field's own
+  # comment). Read them off this bot's `joined` log line or the server's own
+  # `Player connected: <name>, xuid:` output. Feeds MC_BOT_NAMES so this bot
+  # can never answer a sibling bot's chat into a loop.
+  botNames: []
+
+  # Chat-question answering (see minecraft-afk-bot's README for the full env
+  # var reference). Inert until the image tag above is bumped past 0.2.0 to
+  # a build that understands these vars at all.
+  answer:
+    # Enable on at most one bot per server — two answering bots answer each
+    # other's replies forever.
+    enabled: false
+    cooldownSeconds: 30
+    maxPerMinute: 6
+
+  llm:
+    # Cluster's own vLLM instance: unmetered, free, no auth needed. See
+    # apiKeySecret below for a hosted backend that does need one.
+    baseUrl: http://192.168.1.50:8000/v1
+    model: qwen/qwen3-coder-30b-a3b
+    timeoutMs: 8000
+    maxTokens: 96
+    apiKeySecret:
+      # Inert today — the default local-vLLM backend needs no key. Flip to
+      # true only after `vault kv put` has populated the property below for
+      # a hosted backend (Groq/Gemini/LiteLLM); this just wires the plumbing
+      # ahead of time so that switch is values-only.
+      create: false
+      name: minecraft-fwb-bot-llm
+      key: llm_api_key
+
 # Second, independent AFK bot — its own account, its own token cache, its own
 # player slot. Mirrors `bot` above rather than a generic list: this chart
 # already keeps backup/recovery/restore as separate named blocks with their
@@ -517,3 +550,10 @@ bot2:
   persistence:
     storageClass: truenas-nfs
     size: 1Gi
+
+  # A second answering bot on the same server is a chat loop, not just a
+  # duplicate: bot would answer bot2's answer, bot2 would answer that reply,
+  # forever. This bot only holds a slot and mirrors chat — see bot.answer
+  # above for the one that answers.
+  answer:
+    enabled: false

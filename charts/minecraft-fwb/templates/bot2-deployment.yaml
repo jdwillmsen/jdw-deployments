@@ -64,6 +64,10 @@ spec:
               value: {{ .Values.bot2.username | quote }}
             - name: MC_VIEW_DISTANCE
               value: {{ .Values.bot2.viewDistance | quote }}
+            # See values.yaml's bot2.answer comment — this bot never answers,
+            # so it needs no MC_LLM_* / MC_BOT_NAMES wiring at all.
+            - name: MC_ANSWER_ENABLED
+              value: {{ .Values.bot2.answer.enabled | quote }}
           resources:
             {{- toYaml .Values.bot2.resources | nindent 12 }}
           volumeMounts:
