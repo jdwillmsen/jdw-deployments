@@ -40,7 +40,11 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: bot
+        # bot2, not bot: the Loki pipeline ships no pod label, so the
+        # container name is the only stream label separating the two bots'
+        # otherwise-identical chat logs — with both named "bot" every chat
+        # line appears twice in any log query and nothing can tell them apart.
+        - name: bot2
           image: "{{ .Values.bot2.image.repository }}:{{ .Values.bot2.image.tag }}"
           imagePullPolicy: {{ .Values.bot2.image.pullPolicy }}
           securityContext:
