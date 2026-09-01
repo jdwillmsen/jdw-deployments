@@ -4,7 +4,8 @@
 |---|---|
 | **Workload** | `minecraft-fwb` (`jdwillmsen-prd`) |
 | **First observed** | 2026-08-25 03:19:02 UTC |
-| **Most recent** | 2026-08-31 04:32:48 UTC |
+| **Most recent** | 2026-09-01 01:10:54 UTC |
+| **Occurrences** | 4 |
 | **Data loss** | None |
 | **User impact** | ~60s outage per occurrence; players and AFK bots reconnect on their own |
 | **Status** | Open. Upstream defect, no local fix |
@@ -45,6 +46,11 @@ second:
 08-31 04:32:47:918  Player connected: LightKing0221, xuid: 2535466479459975
 08-31 04:32:48:428  Crash                                    (+510ms)
                     Version: 1.26.45.1
+
+09-01 01:10:54:364  Player connected: LightKing0221, xuid: 2535466479459975
+09-01 01:10:54:840  mc-server-runner: server failed          (+476ms)
+                    {"exitCode": -1}
+09-01 01:11:25:728  same account reconnects, spawns 01:11:27 -- fine
 ```
 
 Only the first captured an exception type. The later two emitted just
@@ -65,12 +71,31 @@ counted here.
   string-length fault, not a memory or world-data fault.
 - It is self-healing: `restartPolicy: Always` restarts the container in place,
   the volume never unmounts, and the world reopens clean.
-- Base rate is low: 72 player connects in 14 days, three crashes.
+- Base rate is low, and it is intermittent rather than deterministic. Four
+  crashes against many successful connects, and in every case the immediate
+  retry succeeded — including retries by the same account, seconds later,
+  under the same name.
 
-## Unconfirmed: the gamertag correlation
+## The account correlation
 
-For one account, both of its crashes coincide exactly with the server seeing a
-**new (xuid, gamertag) pair**:
+**Three of the four crashes are the same account**, xuid `2535466479459975`
+(`JoshLSorenson21`, since renamed `LightKing0221`). The fourth, on 08-31 03:43,
+was `Dotablaze` (xuid `2535473803383948`).
+
+The 09-01 occurrence is what moved this from coincidence to the leading
+explanation. It was not a first connect and not a rename — the account had
+already joined and played under the new name several times, including 40
+minutes earlier the same evening. So whatever is wrong is a **persistent
+property of that account's data**, not a one-time transition, and it fires
+only sometimes: the immediate retry succeeded, as it has every time.
+
+The original reading below is kept because the shape of the evidence changed,
+and how it changed is the useful part.
+
+### Superseded: the "new (xuid, gamertag) pair" reading
+
+With only two occurrences, both for this account coincided exactly with the
+server seeing a new (xuid, gamertag) pair:
 
 ```
 08-25 03:19:01  JoshLSorenson21   first sighting of xuid 2535466479459975  -> crash
@@ -83,20 +108,18 @@ its size moved 668 -> 666 bytes across the rename, exactly the difference
 between the two gamertags. A string-length exception while reconciling a
 changed name is a plausible mechanism.
 
-Against it: the 08-31 03:43 crash was a long-known account with no rename, and
-an 08-17 backup shows `JoshLSorenson21` already carried an xuid before its
-first connect — so "writes the xuid on first join" is not the mechanism. Treat
-the correlation as a lead, not a cause.
+Against it even then: the 08-31 03:43 crash was a long-known account with no
+rename, and an 08-17 backup shows `JoshLSorenson21` already carried an xuid
+before its first connect — so "writes the xuid on first join" was never the
+mechanism.
 
-**A prediction worth watching.** `allowlist.json` contains one entry with no
-`xuid` at all:
+The 09-01 crash retires this reading outright. That connect was neither a first
+sighting nor a rename, so a transition cannot be what triggers it.
 
-```json
-{"ignoresPlayerLimit":false,"name":"ShadowFr33z3"}
-```
-
-That account has never connected. If the correlation is real, its first
-connect is a candidate to reproduce the crash.
+The `ShadowFr33z3` allowlist entry — the one with no `xuid`, for an account
+that has never connected — was offered here as a way to reproduce the crash.
+It no longer follows from the evidence, and remains only as an oddity in the
+allowlist worth tidying on its own merits.
 
 ## Detection
 
@@ -116,7 +139,7 @@ reconnect — is the correct response and already works.
 | # | Action | Type | Status |
 |---|--------|------|--------|
 | 1 | Alert on the server being unreachable, so these stop being found by eye | detect | open, `jdwlabs/platform#399` |
-| 2 | Watch whether `ShadowFr33z3`'s first connect reproduces it | detect | open |
+| 2 | Establish what is specific to xuid `2535466479459975` — three of four crashes are that account, across a rename and on ordinary repeat connects | prevent | open |
 | 3 | Capture a full crash dump — the later crashes lost the exception type, so raise the container's crash output if the image allows | detect | open |
 | 4 | Report upstream if a fourth occurrence sharpens the trigger. No matching public report was found for `std::length_error` on join in BDS 1.26.x | prevent | open |
 
