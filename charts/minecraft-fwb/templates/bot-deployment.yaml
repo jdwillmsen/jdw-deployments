@@ -62,18 +62,24 @@ spec:
               value: {{ .Values.bot.viewDistance | quote }}
             - name: MC_ANSWER_ENABLED
               value: {{ .Values.bot.answer.enabled | quote }}
+            # `max ... 1` floors each of these at 1: the bot's own config.ts
+            # loads them with a positive-int validator that throws on 0,
+            # unconditionally — before MC_ANSWER_ENABLED is even checked — so
+            # an 0 override here would crash-loop the whole pod, not just the
+            # answer feature (same class of footgun replicas' `default`
+            # comment above already documents for a different field).
             - name: MC_ANSWER_COOLDOWN_MS
-              value: {{ mul .Values.bot.answer.cooldownSeconds 1000 | quote }}
+              value: {{ mul (max .Values.bot.answer.cooldownSeconds 1) 1000 | quote }}
             - name: MC_ANSWER_MAX_PER_MINUTE
-              value: {{ .Values.bot.answer.maxPerMinute | quote }}
+              value: {{ max .Values.bot.answer.maxPerMinute 1 | quote }}
             - name: MC_LLM_BASE_URL
               value: {{ .Values.bot.llm.baseUrl | quote }}
             - name: MC_LLM_MODEL
               value: {{ .Values.bot.llm.model | quote }}
             - name: MC_LLM_TIMEOUT_MS
-              value: {{ .Values.bot.llm.timeoutMs | quote }}
+              value: {{ max .Values.bot.llm.timeoutMs 1 | quote }}
             - name: MC_LLM_MAX_TOKENS
-              value: {{ .Values.bot.llm.maxTokens | quote }}
+              value: {{ max .Values.bot.llm.maxTokens 1 | quote }}
             - name: MC_BOT_NAMES
               value: {{ join "," .Values.bot.botNames | quote }}
             {{- if .Values.bot.llm.apiKeySecret.create }}

@@ -64,8 +64,12 @@ spec:
               value: {{ .Values.bot2.username | quote }}
             - name: MC_VIEW_DISTANCE
               value: {{ .Values.bot2.viewDistance | quote }}
+            {{- if .Values.bot2.answer.enabled }}
+            {{ fail "bot2.answer.enabled must stay false: bot2 has none of bot's MC_LLM_*/MC_BOT_NAMES wiring, so enabling it here would answer bot's replies with no loop guard (see values.yaml's bot2.answer comment). A second answering bot needs its own real llm/botNames block, not this flag." }}
+            {{- end }}
             # See values.yaml's bot2.answer comment — this bot never answers,
-            # so it needs no MC_LLM_* / MC_BOT_NAMES wiring at all.
+            # so it needs no MC_LLM_* / MC_BOT_NAMES wiring at all. The guard
+            # above makes that a template-render failure, not just a default.
             - name: MC_ANSWER_ENABLED
               value: {{ .Values.bot2.answer.enabled | quote }}
           resources:
