@@ -437,7 +437,7 @@ bot:
     # shipped as protocol 2169 over unchanged packets); a release that
     # actually changes the packet schema still needs this tag re-bumped,
     # surfacing as a protocol_spoofed log line followed by session failures.
-    tag: "0.2.0"
+    tag: "0.3.1"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -529,7 +529,7 @@ bot2:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
-    tag: "0.2.0"
+    tag: "0.3.1"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
