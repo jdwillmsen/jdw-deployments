@@ -489,12 +489,12 @@ bot:
   botNames: []
 
   # Chat-question answering (see minecraft-afk-bot's README for the full env
-  # var reference). Inert until the image tag above is bumped past 0.2.0 to
-  # a build that understands these vars at all.
+  # var reference).
   answer:
-    # Enable on at most one bot per server — two answering bots answer each
-    # other's replies forever.
-    enabled: false
+    # Enabled on this bot only — never bot2, which has no MC_LLM_*/
+    # MC_BOT_NAMES wiring and would answer this bot's replies forever
+    # (structurally guarded in bot2-deployment.yaml, not just defaulted off).
+    enabled: true
     cooldownSeconds: 30
     maxPerMinute: 6
 
