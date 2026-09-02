@@ -437,7 +437,7 @@ bot:
     # shipped as protocol 2169 over unchanged packets); a release that
     # actually changes the packet schema still needs this tag re-bumped,
     # surfacing as a protocol_spoofed log line followed by session failures.
-    tag: "0.3.0"
+    tag: "0.2.0"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -491,10 +491,10 @@ bot:
   # Chat-question answering (see minecraft-afk-bot's README for the full env
   # var reference).
   answer:
-    # Enabled on this bot only — never bot2, which has no MC_LLM_*/
-    # MC_BOT_NAMES wiring and would answer this bot's replies forever
-    # (structurally guarded in bot2-deployment.yaml, not just defaulted off).
-    enabled: true
+    # Off pending a corrected 0.3.x re-release — see the hotfix that reverted
+    # the image tag alongside this: 0.3.0 was mistakenly built from a stale,
+    # pre-protocol-negotiation-fix commit and crash-looped both bots.
+    enabled: false
     cooldownSeconds: 30
     maxPerMinute: 6
 
@@ -529,7 +529,7 @@ bot2:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
-    tag: "0.3.0"
+    tag: "0.2.0"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
