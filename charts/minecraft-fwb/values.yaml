@@ -491,10 +491,12 @@ bot:
   # Chat-question answering (see minecraft-afk-bot's README for the full env
   # var reference).
   answer:
-    # Off pending a corrected 0.3.x re-release — see the hotfix that reverted
-    # the image tag alongside this: 0.3.0 was mistakenly built from a stale,
-    # pre-protocol-negotiation-fix commit and crash-looped both bots.
-    enabled: false
+    # Enabled on this bot only — never bot2, which has no MC_LLM_*/
+    # MC_BOT_NAMES wiring and would answer this bot's replies forever
+    # (structurally guarded in bot2-deployment.yaml, not just defaulted off).
+    # The 0.3.0 crash-loop that forced this off (#51) was a mistagged image,
+    # not a code issue — 0.3.1 (#52) has been stable in the cluster since.
+    enabled: true
     cooldownSeconds: 30
     maxPerMinute: 6
 
