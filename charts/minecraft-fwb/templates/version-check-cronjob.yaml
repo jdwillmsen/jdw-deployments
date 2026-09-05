@@ -12,11 +12,17 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
+      # A failed Job with no TTL is kept until failedJobsHistoryLimit above
+      # evicts it, which at one run an hour is days -- and KubeJobFailed reads
+      # the object, not the run, so one bad hour pages continuously until then.
+      # Deleting the Job on a timer bounds that to the window below, while a
+      # fault that is still real keeps re-firing every hour on its own.
+      ttlSecondsAfterFinished: {{ .Values.versionCheck.ttlSecondsAfterFinished }}
       # Generous against the CI smoke test's confirmed ~6s cold-pull-to-ready
-      # time for this same image, plus the 60s this script itself budgets for
-      # each of the two poll loops below. A run that eats the whole budget is
-      # wedged, not slow -- with concurrencyPolicy Forbid a stuck run would
-      # otherwise suspend every future check silently.
+      # time for this same image, plus the wall-clock budget the script below
+      # allows each of its two candidate attempts. A run that eats the whole
+      # budget is wedged, not slow -- with concurrencyPolicy Forbid a stuck run
+      # would otherwise suspend every future check silently.
       activeDeadlineSeconds: {{ .Values.versionCheck.timeoutSeconds }}
       template:
         spec:
@@ -113,10 +119,10 @@ spec:
                   # documents on its own delete: this role holds no list verb,
                   # and kubectl's default wait polls with one, which would
                   # hang forever rather than error.
-                  cleanup() {
+                  remove_candidate() {
                     kubectl delete pod -n "$NS" "$CANDIDATE_POD" --wait=false --ignore-not-found >/dev/null 2>&1 || true
                   }
-                  trap cleanup EXIT
+                  trap remove_candidate EXIT
 
                   # A disposable copy of the exact image production runs, with
                   # no volume and VERSION left at its default (LATEST) --
@@ -124,7 +130,12 @@ spec:
                   # resolves to right now. Same node affinity as the real
                   # server: every other node in the fleet is too memory-tight
                   # to take this pod's request.
-                  kubectl apply -f - <<-PODSPEC
+                  #
+                  # Held as text and fed to `create` inside the attempt loop
+                  # below rather than written there: a heredoc terminator has to
+                  # sit at column zero, so the block cannot be indented into
+                  # that loop's body without silently ceasing to terminate.
+                  podspec="$(cat <<-PODSPEC
                   apiVersion: v1
                   kind: Pod
                   metadata:
@@ -176,50 +187,129 @@ spec:
                       - name: datadir
                         emptyDir: {}
                   PODSPEC
+                  )"
 
-                  # Wall-clock bounded for the same reason as the version poll
-                  # below: an unbounded kubectl call inside a counted loop makes
-                  # the loop's real ceiling unknowable from reading it.
-                  ready=""
-                  ready_deadline=$(( SECONDS + 60 ))
-                  while (( SECONDS < ready_deadline )); do
-                    phase="$(timeout 10s kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
-                    if [[ "$phase" == "Running" ]]; then
-                      ready="yes"
-                      break
-                    fi
-                    sleep 2
-                  done
-                  if [[ -z "$ready" ]]; then
-                    emit failed "candidate pod never reached Running (phase: ${phase:-unknown})"
-                    exit 1
-                  fi
-
-                  # mc-monitor is already bundled in this image (the same
-                  # binary the production sidecar runs), so this needs no
-                  # second tool. Flags/exit-code behavior confirmed live
-                  # against this image before ci.yml's smoke-test shipped:
-                  # `status-bedrock -host -port`, not the `-bedrock-servers`
-                  # flag that belongs to export-for-prometheus mode only.
-                  # Bounded by wall clock, not iteration count. Counting
-                  # iterations looks bounded and is not: each pass can cost the
-                  # full `timeout 15s` plus the sleep, so 30 passes is ~510s
-                  # rather than the ~60s the count suggests. That gap is what
-                  # made this job's deadline arithmetic wrong when the notice
-                  # ladder was added.
+                  # Two candidate boots, not one longer wait. The image's
+                  # entrypoint resolves Mojang's version endpoint to learn what
+                  # LATEST is, and on a failed lookup it gives up rather than
+                  # retrying -- so a candidate that loses a DNS query has
+                  # already exited about twelve seconds in, and no deadline
+                  # reaches it. Both runs this guards against (2026-09-01 03:00
+                  # and 2026-09-04 12:00) sat out their whole 60s poll against a
+                  # pod that was dead before it started, then reported only that
+                  # no version arrived. A second candidate is the one thing a
+                  # transient resolver failure can be recovered from, and one is
+                  # enough: both blips lasted seconds.
+                  #
+                  # A literal rather than a values knob on purpose. It has to
+                  # stay in step with versionCheck.timeoutSeconds, and a knob
+                  # that invalidates another value when turned reads as
+                  # authoritative while being unsafe to use -- the same reason
+                  # versionCheck.notice records for its ladder.
                   latest=""
-                  poll_deadline=$(( SECONDS + 60 ))
-                  while (( SECONDS < poll_deadline )); do
-                    out="$(timeout 15s kubectl exec -n "$NS" "$CANDIDATE_POD" -- \
-                      mc-monitor status-bedrock -host 127.0.0.1 -port 19132 -retry-limit 0 2>/dev/null || true)"
-                    if [[ "$out" == *"version="* ]]; then
-                      latest="$(grep -oE 'version=[^ ]+' <<<"$out" | cut -d= -f2)"
+                  reason="candidate was never attempted"
+                  for attempt in 1 2; do
+                    # activeDeadlineSeconds kills this pod outright and a trap
+                    # does not run on SIGKILL, so a run that overran its deadline
+                    # leaves its candidate behind. This role holds create, get
+                    # and delete but no patch, so an apply could not replace that
+                    # leftover -- it would adopt it, and the pod this then polls
+                    # is one that answered for some previous hour. Remove first
+                    # and confirm it is gone, since `create` needs the name free.
+                    remove_candidate
+                    gone=""
+                    gone_deadline=$(( SECONDS + 45 ))
+                    while (( SECONDS < gone_deadline )); do
+                      if [[ -z "$(timeout 10s kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.metadata.name}' 2>/dev/null || true)" ]]; then
+                        gone="yes"
+                        break
+                      fi
+                      sleep 2
+                    done
+                    if [[ -z "$gone" ]]; then
+                      reason="a previous candidate pod was still terminating"
+                      emit candidate_failed "attempt $attempt: $reason"
+                      continue
+                    fi
+
+                    if ! printf '%s\n' "$podspec" | kubectl create -f -; then
+                      reason="candidate pod could not be created"
+                      emit candidate_failed "attempt $attempt: $reason"
+                      continue
+                    fi
+
+                    # Wall-clock bounded for the same reason as the version poll
+                    # below: an unbounded kubectl call inside a counted loop makes
+                    # the loop's real ceiling unknowable from reading it.
+                    ready=""
+                    ready_deadline=$(( SECONDS + 60 ))
+                    while (( SECONDS < ready_deadline )); do
+                      phase="$(timeout 10s kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                      if [[ "$phase" == "Running" ]]; then
+                        ready="yes"
+                        break
+                      fi
+                      if [[ "$phase" == "Failed" || "$phase" == "Succeeded" ]]; then
+                        break
+                      fi
+                      sleep 2
+                    done
+                    if [[ -z "$ready" ]]; then
+                      reason="candidate pod never reached Running (phase: ${phase:-unknown})"
+                      emit candidate_failed "attempt $attempt: $reason"
+                      continue
+                    fi
+
+                    # mc-monitor is already bundled in this image (the same
+                    # binary the production sidecar runs), so this needs no
+                    # second tool. Flags/exit-code behavior confirmed live
+                    # against this image before ci.yml's smoke-test shipped:
+                    # `status-bedrock -host -port`, not the `-bedrock-servers`
+                    # flag that belongs to export-for-prometheus mode only.
+                    # Bounded by wall clock, not iteration count. Counting
+                    # iterations looks bounded and is not: each pass can cost the
+                    # full `timeout 15s` plus the sleep, so 30 passes is ~510s
+                    # rather than the ~60s the count suggests. That gap is what
+                    # made this job's deadline arithmetic wrong when the notice
+                    # ladder was added.
+                    #
+                    # The phase re-read is what ends this loop at the candidate
+                    # rather than at its own deadline: restartPolicy Never leaves
+                    # a pod whose entrypoint exited in Failed, and every further
+                    # exec into it can only fail. Sitting out the rest of the
+                    # budget learned nothing and cost the run its witness, since
+                    # the cleanup above removes the pod on the way out.
+                    poll_deadline=$(( SECONDS + 60 ))
+                    while (( SECONDS < poll_deadline )); do
+                      out="$(timeout 15s kubectl exec -n "$NS" "$CANDIDATE_POD" -- \
+                        mc-monitor status-bedrock -host 127.0.0.1 -port 19132 -retry-limit 0 2>/dev/null || true)"
+                      if [[ "$out" == *"version="* ]]; then
+                        latest="$(grep -oE 'version=[^ ]+' <<<"$out" | cut -d= -f2)"
+                        break
+                      fi
+                      phase="$(timeout 10s kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                      if [[ "$phase" != "Running" ]]; then
+                        break
+                      fi
+                      sleep 2
+                    done
+                    if [[ -n "$latest" ]]; then
                       break
                     fi
-                    sleep 2
+
+                    # The candidate's own log, read while the pod still exists.
+                    # Every failure this job has had was legible there and
+                    # nowhere else, and the next loop pass deletes the pod -- so
+                    # a reason not carried out here is a reason nobody gets.
+                    # Quotes and backslashes are stripped because this lands
+                    # inside emit's JSON.
+                    candidate_log="$(timeout 10s kubectl logs -n "$NS" "$CANDIDATE_POD" --tail=3 2>/dev/null | tr -d '"\\' | tr '\n' ' ' || true)"
+                    reason="candidate never reported a version via mc-monitor (phase: ${phase:-unknown}); candidate log: ${candidate_log:-<empty>}"
+                    emit candidate_failed "attempt $attempt: $reason"
                   done
+
                   if [[ -z "$latest" ]]; then
-                    emit failed "candidate never reported a version via mc-monitor"
+                    emit failed "$reason"
                     exit 1
                   fi
 
