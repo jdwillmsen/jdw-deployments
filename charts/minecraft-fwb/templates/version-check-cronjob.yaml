@@ -118,11 +118,28 @@ spec:
                   # --wait=false for the same reason recovery-cronjob.yaml
                   # documents on its own delete: this role holds no list verb,
                   # and kubectl's default wait polls with one, which would
-                  # hang forever rather than error.
+                  # hang forever rather than error. --wait=false bounds the
+                  # waiting, not the call: the request itself still has to reach
+                  # an apiserver that may not answer, and this runs twice per
+                  # attempt plus once from the trap, so it carries its own
+                  # timeout like every other kubectl call here.
                   remove_candidate() {
-                    kubectl delete pod -n "$NS" "$CANDIDATE_POD" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+                    timeout 15s kubectl delete pod -n "$NS" "$CANDIDATE_POD" --wait=false --ignore-not-found >/dev/null 2>&1 || true
                   }
                   trap remove_candidate EXIT
+
+                  # Read while the candidate still exists -- the next loop pass
+                  # and the exit trap both delete it, so a reason not carried out
+                  # here is a reason nobody gets. Every failure this job has had
+                  # was legible in this log and nowhere else. Quotes and
+                  # backslashes are stripped because this lands inside emit's
+                  # JSON; a pod that never started a container has none to give,
+                  # which is itself worth saying rather than omitting.
+                  candidate_log() {
+                    local out
+                    out="$(timeout 10s kubectl logs -n "$NS" "$CANDIDATE_POD" --tail=3 2>/dev/null | tr -d '"\\' | tr '\n' ' ' || true)"
+                    printf '%s' "${out:-<none>}"
+                  }
 
                   # A disposable copy of the exact image production runs, with
                   # no volume and VERSION left at its default (LATEST) --
@@ -232,7 +249,7 @@ spec:
                       continue
                     fi
 
-                    if ! printf '%s\n' "$podspec" | kubectl create -f -; then
+                    if ! printf '%s\n' "$podspec" | timeout 15s kubectl create -f - >/dev/null; then
                       reason="candidate pod could not be created"
                       emit candidate_failed "attempt $attempt: $reason"
                       continue
@@ -255,7 +272,7 @@ spec:
                       sleep 2
                     done
                     if [[ -z "$ready" ]]; then
-                      reason="candidate pod never reached Running (phase: ${phase:-unknown})"
+                      reason="candidate pod never reached Running (phase: ${phase:-unknown}); candidate log: $(candidate_log)"
                       emit candidate_failed "attempt $attempt: $reason"
                       continue
                     fi
@@ -297,14 +314,7 @@ spec:
                       break
                     fi
 
-                    # The candidate's own log, read while the pod still exists.
-                    # Every failure this job has had was legible there and
-                    # nowhere else, and the next loop pass deletes the pod -- so
-                    # a reason not carried out here is a reason nobody gets.
-                    # Quotes and backslashes are stripped because this lands
-                    # inside emit's JSON.
-                    candidate_log="$(timeout 10s kubectl logs -n "$NS" "$CANDIDATE_POD" --tail=3 2>/dev/null | tr -d '"\\' | tr '\n' ' ' || true)"
-                    reason="candidate never reported a version via mc-monitor (phase: ${phase:-unknown}); candidate log: ${candidate_log:-<empty>}"
+                    reason="candidate never reported a version via mc-monitor (phase: ${phase:-unknown}); candidate log: $(candidate_log)"
                     emit candidate_failed "attempt $attempt: $reason"
                   done
 

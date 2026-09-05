@@ -33,6 +33,15 @@ mkdir -p "$work/sa"
 echo -n "test-ns" > "$work/sa/namespace"
 sed -i "s|/var/run/secrets/kubernetes.io/serviceaccount/namespace|$work/sa/namespace|" "$work/version-check.sh"
 
+# The wait for a previous candidate to go is the one bound a case here has to
+# sit out, so the copy under test gets a shorter one. Rewritten in the copy
+# rather than made a chart value: a knob that exists only for this suite would
+# ship to production too. The count is asserted so that moving the literal
+# fails the suite instead of silently restoring the 45s wait.
+found="$(grep -c 'SECONDS + 45' "$work/version-check.sh" || true)"
+[ "$found" = "1" ] || fail "expected one 45s gone-wait to shorten, found $found"
+sed -i 's/SECONDS + 45 /SECONDS + 3 /' "$work/version-check.sh"
+
 mkdir -p "$work/bin"
 
 # Production reports a version and the bot dispatch succeeds, so every case
@@ -77,24 +86,43 @@ case "$1" in
       echo 'pods is forbidden: cannot list resource "pods"' >&2
       sleep 3600
     fi
-    rm -f "$state/exists"
     echo "DELETE" >> "$trace"
+    # --wait=false returns before the pod is gone, so how long it lingers is
+    # the shim's to decide: immediately by default, after a few reads when a
+    # case wants the gone loop to actually iterate, never when it wants that
+    # loop to give up.
+    case "${FAKE_LINGER_GETS:-0}" in
+      forever) : ;;
+      0)       rm -f "$state/exists" ;;
+      *)       echo "$FAKE_LINGER_GETS" > "$state/lingers" ;;
+    esac
     exit 0
     ;;
   get)
     [[ -f "$state/exists" ]] || exit 1
     if [[ "$*" == *"metadata.name"* ]]; then
+      if [[ -f "$state/lingers" ]]; then
+        left=$(( $(cat "$state/lingers") - 1 ))
+        if (( left <= 0 )); then
+          rm -f "$state/lingers" "$state/exists"
+          exit 1
+        fi
+        echo "$left" > "$state/lingers"
+      fi
       printf '%s' "$CANDIDATE_POD"
       exit 0
     fi
     if [[ "$*" == *"status.phase"* ]]; then
       gets=$(( $(cat "$state/gets") + 1 ))
       echo "$gets" > "$state/gets"
-      # The first observation is always Running: a candidate that cannot
-      # resolve its download URL still starts its container, and only exits
-      # once the entrypoint gives up.
-      if [[ "$attempt" == "${FAKE_GOOD_ATTEMPT:-1}" || "$gets" -le 1 ]]; then
+      # A candidate that cannot resolve its download URL still starts its
+      # container and only exits once the entrypoint gives up, so the first
+      # observation is normally Running -- but a run that looks a moment later
+      # sees Failed straight away, and that is a case in its own right.
+      if [[ "$attempt" == "${FAKE_GOOD_ATTEMPT:-1}" ]]; then
         printf 'Running'
+      elif [[ "$gets" -le 1 ]]; then
+        printf '%s' "${FAKE_FIRST_PHASE:-Running}"
       else
         printf 'Failed'
       fi
@@ -129,6 +157,11 @@ run() {
   echo 0 > "$state/attempt"
   echo 0 > "$state/gets"
   : > "$state/trace"
+  # A candidate left behind by a run that hit its deadline: it is there before
+  # this run starts, and nothing in this run created it.
+  if [[ "$*" == *"FAKE_STALE=yes"* ]]; then
+    touch "$state/exists"
+  fi
   timeout 25 env PATH="$work/bin:$PATH" FAKE_STATE="$state" \
       CANDIDATE_POD=fwb-candidate SERVER_POD=server-0 SERVER_CONTAINER=server \
       NOTICE_ENABLED=false METRICS_HOST=metrics CANDIDATE_IMAGE=image:tag \
@@ -177,14 +210,39 @@ out="$(capture FAKE_GOOD_ATTEMPT=0 FAKE_CANDIDATE_LOGS='curl: (6) Could not reso
   || fail "candidate never boots: expected the candidate's own log in the output, got: $out"
 echo "  ok: a candidate that never boots fails the run and reports why"
 
+# A candidate that is already Failed the first time it is looked at leaves the
+# ready loop, not the version poll -- a different exit carrying the same need.
+# Reporting the phase without the log names the state and not the cause, which
+# is the whole of what was wrong before.
+out="$(capture FAKE_GOOD_ATTEMPT=0 FAKE_FIRST_PHASE=Failed \
+  FAKE_CANDIDATE_LOGS='curl: (6) Could not resolve host: net.web.minecraft-services.net')"
+[[ "$out" == *"never reached Running"* ]] \
+  || fail "candidate failed before first read: expected the ready-loop reason, got: $out"
+[[ "$out" == *"Could not resolve host"* ]] \
+  || fail "candidate failed before first read: expected the candidate's own log, got: $out"
+echo "  ok: a candidate that dies before it is first seen still reports why"
+
 # activeDeadlineSeconds kills the job pod outright, and a trap does not run on
 # SIGKILL, so a deadline-exceeded run leaves its candidate behind. This role
 # holds create/get/delete and no patch, so an apply over that leftover cannot
 # replace it -- the run has to remove it first or it polls a pod that answered
-# for a previous hour.
-out="$(capture FAKE_GOOD_ATTEMPT=1)"
+# for a previous hour. --wait=false means the delete returns before the pod
+# goes, so the run also has to watch it go rather than assume it has.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_STALE=yes FAKE_LINGER_GETS=2)"
+[[ "$out" == *'"event":"current"'* ]] || fail "stale candidate: expected the run to recover, got: $out"
 t="$(trace)"
 [[ "$t" == DELETE* ]] || fail "stale candidate: expected a delete before the first create, trace: $t"
-echo "  ok: a leftover candidate is removed before the next one is created"
+[[ "$t" == *"CREATE:1"* ]] || fail "stale candidate: expected a candidate to be created after it, trace: $t"
+echo "  ok: a leftover candidate is removed, waited out, and replaced"
+
+# The same leftover, never going. Creating over it is what this role cannot do,
+# so the run has to stop rather than poll whatever is still there.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_STALE=yes FAKE_LINGER_GETS=forever)"
+[[ "$out" == *'"event":"failed"'* ]] || fail "candidate will not terminate: expected a failed event, got: $out"
+[[ "$out" == *"still terminating"* ]] \
+  || fail "candidate will not terminate: expected the terminating reason, got: $out"
+[[ "$(trace)" != *"CREATE"* ]] \
+  || fail "candidate will not terminate: a candidate was created over the leftover, trace: $(trace)"
+echo "  ok: a leftover that will not go stops the run instead of being created over"
 
 echo "PASS"

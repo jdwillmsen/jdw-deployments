@@ -274,28 +274,51 @@ versionCheck:
   # is bounded by wall clock below rather than by iteration count, which is
   # what makes this number hold.
   #
-  # Budget with every loop wall-clock bounded, counted per candidate attempt
-  # and there are two: 45s confirming any previous candidate is gone, 60s
-  # waiting for this one to run, 60s for it to report a version, and 10s
-  # reading its log if it did not -- 350s across both. Then 695s of notice
-  # (590s of sleeps plus the six bounded exec calls that carry it) and 150s
-  # delivering the stop and confirming the restart, for 1195s of bounded work
-  # plus the metrics read, the dispatch and the creates.
+  # Budget counted per loop *ceiling*, not per deadline. A wall-clock deadline
+  # is where a loop stops starting work, not where it stops: the last iteration
+  # can begin a second before it and then costs a whole kubectl timeout plus a
+  # whole sleep on top. Summing the deadlines is the same arithmetic that put
+  # "both poll loops are bounded at 60s" in this file while the mc-monitor loop
+  # could run 510s -- see the register in docs/incidents/README.md, which
+  # records that one against this very value.
   #
-  # 1200 -> 1500 with the second attempt. The old number was already counting
-  # the notice as its 600s of sleeps and ignoring the exec timeouts around
-  # them, so it had less margin than it claimed; a run that had stopped the
-  # server could still have been marked Failed. 1500s restores real headroom
-  # and stays well inside the hourly schedule, so a run that eats its whole
-  # budget still cannot collide with the next one under concurrencyPolicy:
-  # Forbid.
+  # Per candidate attempt, and there are two:
+  #   gone wait    45 + 10 (get) + 2 (sleep) =  57
+  #   create                       timeout   =  15
+  #   ready wait   60 + 10 (get) + 2 (sleep) =  72
+  #   version poll 60 + 15 (exec) + 10 (get) + 2 (sleep) = 87
+  #   log read                     timeout   =  10
+  #                                            ---
+  #                                            241  -> 482 for both
+  #
+  # Then 695s of notice (590s of sleeps plus the six bounded exec calls that
+  # carry it), 173s delivering the stop and confirming the restart (10 reading
+  # state, 30 for the stop exec, 120 + 10 + 3 for the restart poll), and 20s
+  # for the metrics read and the bot dispatch. 1370s of ceiling against 1500.
+  #
+  # 130s of margin, and it is smaller than it looks safe to leave only because
+  # every term above is an independent worst case: reaching 1370 needs both
+  # candidates to fail, a restart to be due, and every kubectl call in the run
+  # to time out rather than answer. A real run that restarts production spends
+  # about 620s of it on the notice ladder's sleeps.
+  #
+  # 1200 -> 1500 with the second attempt. The old number counted the notice as
+  # its sleeps alone and ignored the exec timeouts around them, so it had less
+  # margin than it claimed; a run that had already stopped the server could
+  # still have been marked Failed. 1500s stays well inside the hourly schedule,
+  # so a run that eats its whole budget still cannot collide with the next one
+  # under concurrencyPolicy: Forbid.
   timeoutSeconds: 1500
 
   # How long a finished Job object outlives its run.
   #
-  # KubeJobFailed alerts on the object, not on the run, so a failed Job with no
-  # TTL keeps paging for as long as failedJobsHistoryLimit keeps it -- at one
-  # run an hour, days. Two transient candidate failures did exactly that.
+  # KubeJobFailed alerts on the object, not on the run, so a failed Job pages
+  # for as long as something removes it -- and failedJobsHistoryLimit is not
+  # that something. It counts failed Jobs only, so the case this exists for, a
+  # single bad hour among successful ones, never reaches the limit and is kept
+  # indefinitely. The limit does evict, in about five hours, when every run is
+  # failing: it clears the alert exactly when the alert is true and keeps it
+  # exactly when it is stale. A TTL is the mechanism that acts on age.
   #
   # Six hours is chosen to still be there in the morning for an overnight
   # failure, which is the case where the pod log is the only account of what
