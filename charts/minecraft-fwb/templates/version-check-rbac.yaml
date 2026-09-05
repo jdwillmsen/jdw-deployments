@@ -28,6 +28,14 @@ rules:
     resources: ["pods/exec"]
     resourceNames: ["{{ include "versionCheck.candidatePod" . }}"]
     verbs: ["create"]
+  # Why the candidate failed is only ever in the candidate's own log, and the
+  # job deletes that pod on its way out -- so without this the run reports that
+  # no version arrived and destroys the one record of the reason. Read-only,
+  # and scoped to the throwaway pod this actor created itself.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames: ["{{ include "versionCheck.candidatePod" . }}"]
+    verbs: ["get"]
   # Announcing the restart in-game means driving the live server's console,
   # which is a wider grant than the candidate-only exec above and the only
   # reason this actor touches production's pod at all. Scoped to that one

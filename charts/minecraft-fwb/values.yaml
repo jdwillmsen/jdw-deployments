@@ -274,12 +274,35 @@ versionCheck:
   # is bounded by wall clock below rather than by iteration count, which is
   # what makes this number hold.
   #
-  # Budget with both loops wall-clock bounded: 60s waiting for the candidate to
-  # run, 60s for it to report a version, 600s of notice, then up to 120s
-  # confirming the server actually restarted -- 840s of bounded work, plus the
-  # candidate apply, the metrics read and cleanup. 1200s leaves real margin
-  # over that without being so loose the deadline stops meaning anything.
-  timeoutSeconds: 1200
+  # Budget with every loop wall-clock bounded, counted per candidate attempt
+  # and there are two: 45s confirming any previous candidate is gone, 60s
+  # waiting for this one to run, 60s for it to report a version, and 10s
+  # reading its log if it did not -- 350s across both. Then 695s of notice
+  # (590s of sleeps plus the six bounded exec calls that carry it) and 150s
+  # delivering the stop and confirming the restart, for 1195s of bounded work
+  # plus the metrics read, the dispatch and the creates.
+  #
+  # 1200 -> 1500 with the second attempt. The old number was already counting
+  # the notice as its 600s of sleeps and ignoring the exec timeouts around
+  # them, so it had less margin than it claimed; a run that had stopped the
+  # server could still have been marked Failed. 1500s restores real headroom
+  # and stays well inside the hourly schedule, so a run that eats its whole
+  # budget still cannot collide with the next one under concurrencyPolicy:
+  # Forbid.
+  timeoutSeconds: 1500
+
+  # How long a finished Job object outlives its run.
+  #
+  # KubeJobFailed alerts on the object, not on the run, so a failed Job with no
+  # TTL keeps paging for as long as failedJobsHistoryLimit keeps it -- at one
+  # run an hour, days. Two transient candidate failures did exactly that.
+  #
+  # Six hours is chosen to still be there in the morning for an overnight
+  # failure, which is the case where the pod log is the only account of what
+  # happened. It bounds a one-off, and bounds nothing else: a fault that is
+  # still present simply fails the next hourly run and alerts again, so this
+  # shortens the noise from a fixed problem without quieting a live one.
+  ttlSecondsAfterFinished: 21600
 
   notice:
     # Players get warned before they are disconnected. Only reached when the
