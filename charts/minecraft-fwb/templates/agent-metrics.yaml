@@ -1,0 +1,37 @@
+# Same pattern as server-metrics.yaml / console-bridge-service.yaml, but
+# this one selects the agent's own Deployment pod rather than the server's.
+{{- if .Values.agent.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent.name" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "agent.name" . }}
+spec:
+  selector:
+    app: {{ include "agent.name" . }}
+  ports:
+    - name: metrics
+      port: {{ .Values.agent.metrics.port }}
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "agent.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "agent.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "agent.name" . }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s
+{{- end }}
