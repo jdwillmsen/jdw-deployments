@@ -89,57 +89,6 @@ account) and bringing it back after:
 A server restart alone does **not** need any of this: the bot reconnects on
 its own (`RECONNECT_MIN_MS`/`RECONNECT_MAX_MS`), no manual step required.
 
-### The server agent
-
-`minecraft-fwb` also carries `minecraft-server-agent` (a chat-reading,
-tool-calling assistant) and its sidecar `mc-console-bridge` (the only thing
-with write access to the server console — a fixed command allowlist, no free
-console access). Off by default, same `agent.enabled: false` pattern as the
-bots above, for the same reason: it signs in as a real Microsoft account too.
-
-Unlike the bots, the console-bridge half of this feature is **not gated** —
-`minecraft-bedrock.extraEnv` (which enables `WEBSOCKET_CONSOLE` on the server
-itself) and the console-bridge sidecar in `minecraft-bedrock.sidecarContainers`
-apply as soon as this chart change merges, regardless of `agent.enabled`.
-
-**Merging this alone restarts the live server pod.** The extraEnv and
-sidecarContainers changes go on the server's own StatefulSet, and Bedrock has
-no live-reload for either — ArgoCD's `selfHeal: true` will roll the pod on
-the next sync. Time the merge for low player activity, the same care any
-`minecraft-bedrock` chart change already warrants (see the incidents in
-`docs/incidents/`), and be aware of the open upstream crash-on-join defect
-(`docs/incidents/2026-08-31-bedrock-crash-on-player-join.md`) before doing so.
-
-Bootstrap, in order:
-
-1. **Populate the Vault secret this needs.** Run this yourself, in your own
-   terminal — not through an agent's shell, per this repo's credential-
-   minting rule (`AGENTS.md`):
-   ```bash
-   vault kv put kv/minecraft-fwb \
-     console_websocket_password=<generate a real value> \
-     console_bridge_token=<generate a different real value>
-   ```
-   (`llm_api_key`, if that secret is ever populated, lives in this same `kv/
-   minecraft-fwb` document — this adds two properties to it, not a new path.)
-2. Merge this chart change. The server pod restarts (see above); confirm it
-   comes back healthy (`tools/mc status`) before continuing.
-3. Publish the image tag named in `agent.image.tag`, then set
-   `agent.enabled: true` and merge/sync.
-4. Read the agent pod's log for a `device_code_required` event and complete
-   that login once, same caveats as the bots above — **a device code can
-   land on the wrong account**; confirm the gamertag that actually connects
-   in the server log, and if it's wrong, clear the cache
-   (`kubectl exec -n jdwillmsen-prd <agent-pod> -- sh -c 'rm -rf /data/auth/*'`,
-   `kubectl delete pod -n jdwillmsen-prd <agent-pod>`) and redo the login in
-   a fresh incognito window.
-5. Add the agent's gamertag to the server allowlist — it cannot join without
-   this, and the console-bridge only ever *reads* `allowlist.json`, never
-   writes it:
-   ```bash
-   tools/mc run allowlist add "<agent's gamertag>"
-   ```
-
 ### Restoring a backup
 
 The chart also carries a restore mechanism alongside the backup CronJob:

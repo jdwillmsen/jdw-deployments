@@ -53,15 +53,3 @@
 {{- define "mcMonitor.host" -}}
 {{ .Release.Name }}-mc-monitor.{{ .Release.Namespace }}.svc.cluster.local
 {{- end -}}
-
-{{- define "consoleBridge.name" -}}
-{{ .Release.Name }}-console-bridge
-{{- end -}}
-
-{{- define "consoleBridge.host" -}}
-{{ include "consoleBridge.name" . }}.{{ .Release.Namespace }}.svc.cluster.local
-{{- end -}}
-
-{{- define "agent.name" -}}
-{{ .Release.Name }}-server-agent
-{{- end -}}
