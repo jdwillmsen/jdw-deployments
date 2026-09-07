@@ -1,0 +1,55 @@
+# Wires the console bridge to the running server. NOT applied by default:
+# the ArgoCD Application lists values.yaml and values-prd.yaml only, and this
+# file is added to that list as a separate, revertible change.
+#
+# It is separate rather than a flag in values.yaml because of what the last
+# line in this file does. `minecraft-bedrock.extraEnv` is rendered by plain
+# toYaml inside the vendored subchart, never through tpl, so a secret
+# reference placed in it cannot be made conditional — it binds the game
+# server container's startup to that secret unconditionally, for every render.
+# On 2026-09-06 the secret did not exist and the server stayed down for 40
+# hours (docs/incidents/2026-09-06-fwb-console-bridge-secret.md). Keeping the
+# binding in a file that is not applied by default is the only way to make it
+# something you opt into, one commit at a time, with the server already up.
+#
+# Do not apply this file until the ExternalSecret it depends on is observed
+# healthy. The procedure, and why that order is not optional, is in the README
+# under "Enabling the console bridge".
+
+# Renders the console-bridge sidecar into the server pod. Under `global:`
+# because the sidecar list is tpl-rendered in the vendored subchart's own
+# scope, which nothing but `.Values.global.*` reaches.
+global:
+  consoleBridge:
+    enabled: true
+
+# Renders this chart's own console-bridge Service, which fronts the sidecar
+# above for the agent Deployment.
+consoleBridge:
+  enabled: true
+
+minecraft-bedrock:
+  # mc-server-runner (inside this image) reads these directly — no
+  # bedrock-entry.sh involvement, so none of the read-only-rootfs/HOME failure
+  # modes the remote-console (SSH) path would hit. Loopback-only address: the
+  # console is reachable from inside this pod alone, through the console-bridge
+  # sidecar, never from the pod network.
+  #
+  # WEBSOCKET_ALLOWED_ORIGINS is set to a fixed value rather than left empty
+  # (which rejects every origin) or disabled outright — the loopback binding
+  # already makes it unreachable from a browser, but a fixed allowed origin
+  # keeps the check meaningful instead of turned off.
+  #
+  # extraEnv is a map, so these keys merge into values.yaml's rather than
+  # replacing anything. The secret name is a literal because nothing here is
+  # templated: if global.consoleBridge.secret.name ever changes, this line must
+  # be changed by hand.
+  extraEnv:
+    WEBSOCKET_CONSOLE: "true"
+    WEBSOCKET_ADDRESS: "127.0.0.1:8765"
+    WEBSOCKET_ALLOWED_ORIGINS: "http://mc-console-bridge.internal"
+    WEBSOCKET_PASSWORD:
+      valueFrom:
+        secretKeyRef:
+          name: minecraft-fwb-console-bridge
+          key: console_websocket_password

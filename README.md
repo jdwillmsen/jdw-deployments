@@ -89,6 +89,86 @@ account) and bringing it back after:
 A server restart alone does **not** need any of this: the bot reconnects on
 its own (`RECONNECT_MIN_MS`/`RECONNECT_MAX_MS`), no manual step required.
 
+### The server agent
+
+`minecraft-fwb` also carries `minecraft-server-agent` (a chat-reading,
+tool-calling assistant) and its sidecar `mc-console-bridge` (the only thing
+with write access to the server console — a fixed command allowlist, no free
+console access). Off by default, same `agent.enabled: false` pattern as the
+bots above, for the same reason: it signs in as a real Microsoft account too.
+
+#### Enabling the console bridge
+
+The console-bridge half is gated by its own values file, `charts/minecraft-fwb/
+values-console-bridge.yaml`, which the ArgoCD Application does not list. Until
+it is listed, the chart renders the sidecar, the Service and the server's
+`WEBSOCKET_*` settings not at all.
+
+That gate exists because of one line. `minecraft-bedrock.extraEnv` sets
+`WEBSOCKET_PASSWORD` on the **game server container** from the same secret the
+sidecar uses, and the vendored subchart renders `extraEnv` through plain
+`toYaml`, never `tpl` — so nothing in it can be made conditional, and a secret
+reference there binds the server's own startup to that secret existing. On
+2026-09-06 it did not exist: the server would not start, the StatefulSet would
+not replace a pod that had never gone Ready, and the world was offline for 40
+hours (`docs/incidents/2026-09-06-fwb-console-bridge-secret.md`).
+
+**Enabling this restarts the live server pod.** The extraEnv and
+sidecarContainers changes go on the server's own StatefulSet, and Bedrock has
+no live-reload for either — ArgoCD's `selfHeal: true` will roll the pod on
+the next sync. Time the merge for low player activity, the same care any
+`minecraft-bedrock` chart change already warrants (see the incidents in
+`docs/incidents/`), and be aware of the open upstream crash-on-join defect
+(`docs/incidents/2026-08-31-bedrock-crash-on-player-join.md`) before doing so.
+
+Bootstrap, in order. Steps 1 and 2 are separated on purpose: the ExternalSecret
+renders by default precisely so that Vault can be proven *before* anything
+depends on it. Do not collapse them.
+
+1. **Populate the Vault secret this needs.** Run this yourself, in your own
+   terminal — not through an agent's shell, per this repo's credential-
+   minting rule (`AGENTS.md`):
+   ```bash
+   vault kv put kv/minecraft-fwb \
+     console_websocket_password=<generate a real value> \
+     console_bridge_token=<generate a different real value>
+   ```
+   (`llm_api_key`, if that secret is ever populated, lives in this same `kv/
+   minecraft-fwb` document — this adds two properties to it, not a new path.)
+2. **Confirm the secret actually materialised**, and do not proceed on any
+   weaker evidence than this command's output. A `kv put` you believe you ran
+   is not evidence; neither is another ExternalSecret in the chart naming the
+   same document, since `bot-llm-externalsecret.yaml` is gated off and has
+   never rendered:
+   ```bash
+   kubectl -n jdwillmsen-prd get externalsecret minecraft-fwb-console-bridge
+   ```
+   It must read `SecretSynced` / `True`. `SecretSyncedError` means the document
+   or a property is missing — fix that first; nothing is broken yet while
+   nothing consumes it.
+3. Add `values-console-bridge.yaml` to `valueFiles` for `minecraft-fwb-prd` in
+   `argocd/prd/config.yaml`, after `values.yaml` and `values-prd.yaml` (order
+   matters — it merges over both). The server pod restarts (see above);
+   confirm it comes back healthy (`tools/mc status`) before continuing. If it
+   does not, remove that line again — the revert only takes effect once the
+   wedged pod is deleted, which `volume-recovery` now does within five minutes
+   on its own.
+4. Publish the image tag named in `agent.image.tag`, then set
+   `agent.enabled: true` and merge/sync.
+5. Read the agent pod's log for a `device_code_required` event and complete
+   that login once, same caveats as the bots above — **a device code can
+   land on the wrong account**; confirm the gamertag that actually connects
+   in the server log, and if it's wrong, clear the cache
+   (`kubectl exec -n jdwillmsen-prd <agent-pod> -- sh -c 'rm -rf /data/auth/*'`,
+   `kubectl delete pod -n jdwillmsen-prd <agent-pod>`) and redo the login in
+   a fresh incognito window.
+6. Add the agent's gamertag to the server allowlist — it cannot join without
+   this, and the console-bridge only ever *reads* `allowlist.json`, never
+   writes it:
+   ```bash
+   tools/mc run allowlist add "<agent's gamertag>"
+   ```
+
 ### Restoring a backup
 
 The chart also carries a restore mechanism alongside the backup CronJob:

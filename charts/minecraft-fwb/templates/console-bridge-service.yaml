@@ -1,0 +1,25 @@
+# The console-bridge sidecar lives in the server's own StatefulSet pod
+# (minecraft-bedrock chart's sidecarContainers), so this selects that pod by
+# its existing app label rather than one this chart owns — same pattern as
+# server-metrics.yaml's mc-monitor Service.
+#
+# Gated with the sidecar rather than with the ExternalSecret: a Service whose
+# selector matches a sidecar that is not rendered would resolve to a port
+# nothing is listening on, which is a slower and more confusing failure than
+# not existing.
+{{- if .Values.consoleBridge.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "consoleBridge.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "consoleBridge.name" . }}
+spec:
+  selector:
+    app: {{ include "backup.serverStatefulSet" . }}
+  ports:
+    - name: bridge-http
+      port: {{ .Values.consoleBridge.service.port }}
+      targetPort: bridge-http
+{{- end }}
