@@ -45,6 +45,8 @@ spec:
               env:
                 - name: SERVER_POD
                   value: {{ include "backup.serverPod" . }}
+                - name: SERVER_STATEFULSET
+                  value: {{ include "backup.serverStatefulSet" . }}
                 - name: MIN_RESTARTS
                   value: {{ .Values.volumeRecovery.minRestarts | quote }}
                 - name: SIGNATURE
@@ -66,6 +68,32 @@ spec:
                     -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "")"
                   if [[ "$READY" == "true" ]]; then
                     emit healthy
+                    exit 0
+                  fi
+
+                  # A StatefulSet will not replace a pod that has never become
+                  # Ready, so a pod wedged on a revision the StatefulSet has
+                  # already moved past stays wedged forever and no controller
+                  # will ever act. Deleting it is the only way forward, and the
+                  # trigger is self-limiting: the replacement carries the
+                  # current revision, so this branch cannot fire on it again no
+                  # matter why it fails. That is what separates this from the
+                  # signature-gated branch below, which needs a restart count
+                  # precisely because the pod there is on the current revision.
+                  #
+                  # Restart count is not usable here. The wedge that motivated
+                  # this branch was CreateContainerConfigError against a secret
+                  # that never materialised, which never starts a container and
+                  # so never increments a restart -- it sat at zero for 40
+                  # hours while the threshold below waited for two.
+                  UPDATE_REV="$(kubectl get statefulset -n "$NS" "$SERVER_STATEFULSET" \
+                    -o jsonpath='{.status.updateRevision}' 2>/dev/null || echo "")"
+                  POD_REV="$(kubectl get pod -n "$NS" "$SERVER_POD" \
+                    -o jsonpath='{.metadata.labels.controller-revision-hash}' 2>/dev/null || echo "")"
+                  if [[ -n "$UPDATE_REV" && -n "$POD_REV" && "$UPDATE_REV" != "$POD_REV" ]]; then
+                    emit recovering "not ready on stale revision $POD_REV, StatefulSet wants $UPDATE_REV"
+                    kubectl delete pod -n "$NS" "$SERVER_POD" --wait=false
+                    emit deleted "StatefulSet will recreate it on the revision it already wants"
                     exit 0
                   fi
 

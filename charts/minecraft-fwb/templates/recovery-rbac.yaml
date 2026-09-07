@@ -32,6 +32,15 @@ rules:
     resources: ["pods/log"]
     resourceNames: ["{{ include "backup.serverPod" . }}"]
     verbs: ["get"]
+  # Read-only, and only the one StatefulSet: the revision the StatefulSet wants
+  # is the only way to tell a pod wedged on a superseded spec from one that is
+  # simply failing on the current spec. Nothing here ever writes to it -- the
+  # recovery action stays a pod delete, so the StatefulSet controller remains
+  # the only writer of its own spec.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    resourceNames: ["{{ include "backup.serverStatefulSet" . }}"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
