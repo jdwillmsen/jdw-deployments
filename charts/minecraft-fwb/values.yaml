@@ -383,6 +383,13 @@ volumeRecovery:
   #
   # A liveness probe cannot substitute. Probes restart containers, which is
   # precisely the action that does not work here.
+  #
+  # The same actor also clears a second deadlock that only a pod delete can
+  # break: a pod that never became Ready is never replaced by its StatefulSet,
+  # so once the StatefulSet moves to a new revision the old pod holds the
+  # server down until someone deletes it by hand. That branch is gated on the
+  # revision mismatch alone -- see the comment on it -- and needs neither the
+  # signature nor the restart threshold below.
   enabled: true
 
   # Five minutes bounds the outage without polling hard. The last occurrence
