@@ -11,6 +11,7 @@ new code.
 |------|----------|----------|-----------|--------|
 | 2026-08-30 | [FWB world data loss on node migration](2026-08-30-fwb-world-data-loss.md) | minecraft-fwb | ~29 MB world data, 11 `.ldb` files | Root cause identified, mitigations open |
 | 2026-08-31 | [Bedrock server crashes when a player joins](2026-08-31-bedrock-crash-on-player-join.md) | minecraft-fwb | none | Open — upstream defect, no local fix |
+| 2026-09-06 | [FWB offline 40 hours on a Vault secret that never existed](2026-09-06-fwb-console-bridge-secret.md) | minecraft-fwb | none | Resolved; Vault document still to be created |
 
 ## Recording an incident
 
@@ -44,6 +45,10 @@ has since disproved. Check this list before relying on a similar argument.
 | A workload's logs reaching Loki means they are queryable where you look | implicit | Tenant workload logs land under the per-tenant Loki tenant (`jdwillmsen`), not `platform`. Querying `platform` returns only `kubernetes-events` and reads as "logs are not collected at all" | 2026-08-30 |
 | `RollingUpdate` plus the nightly backup make an auto-merged image bump safe | `renovate.json` | `RollingUpdate` is the mechanism that recreates the pod and migrates the volume — it is the hazard, not the guard. A backup is a recovery path, not a safety net | 2026-08-30 |
 | Both of version-check's poll loops are bounded at 60s | `charts/minecraft-fwb/values.yaml` | The mc-monitor loop is `30 × (timeout 15s + sleep 2)` — up to 510s. Written into this repo *while* documenting this incident, which is how easily it happens | 2026-08-30 |
+| A sidecar's missing secret can only break the sidecar | `charts/minecraft-fwb/values.yaml` | `minecraft-bedrock.extraEnv` is rendered by plain `toYaml`, never `tpl`, so a secret reference placed there is an unconditional startup dependency for the *game server* container | 2026-09-06 |
+| Merging a revert resolves the outage it reverts | implicit | A StatefulSet never replaces a pod that has not become Ready, so a revert of a change that broke pod startup does not apply itself. The revert landed 40 hours before the cluster acted on it | 2026-09-06 |
+| An ArgoCD Application with auto-sync converges eventually | implicit | A sync blocked on resource health reports `Running`, never times out, and blocks every later reconcile with `Skipping auto-sync: another operation is in progress` | 2026-09-06 |
+| A commit message asserting a manual prerequisite was done is evidence it was done | `44bf487` | It was not, and the corroboration it cited (another ExternalSecret naming the same Vault document) came from a template gated off and never rendered | 2026-09-06 |
 
 ## Conventions
 

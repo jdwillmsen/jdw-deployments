@@ -1,3 +1,36 @@
+# Helm merges `global:` into every subchart's own .Values automatically —
+# this is the one value that genuinely needs to cross the boundary from this
+# umbrella chart into the vendored minecraft-bedrock subchart's own template
+# scope (minecraft-bedrock.sidecarContainers below, which is tpl-rendered in
+# that subchart's context and cannot otherwise see this file's other
+# top-level keys). Everything else lives in its own section as normal.
+global:
+  consoleBridge:
+    # Off by default, and flipped only by values-console-bridge.yaml. This
+    # gates the sidecar itself; the ExternalSecret below is deliberately not
+    # gated on it, so the secret can be made to exist and be *seen* to sync
+    # before anything is wired to depend on it. See README, "Enabling the
+    # console bridge".
+    enabled: false
+
+    secret:
+      # Two properties under this one name — console_websocket_password and
+      # console_bridge_token. See console-secret-externalsecret.yaml.
+      #
+      # These live in the Vault kv document `minecraft-fwb`. That document was
+      # once described here as one "the bot LLM secret already uses", which was
+      # wrong in the way that matters: bot-llm-externalsecret.yaml is gated off
+      # and has never rendered, so nothing had ever proved the document exists.
+      # It did not, and the server stayed down for 40 hours
+      # (docs/incidents/2026-09-06-fwb-console-bridge-secret.md). Treat the
+      # document as unproven until an ExternalSecret is observed Synced.
+      name: minecraft-fwb-console-bridge
+
+      # Renders the ExternalSecret on its own, without wiring anything to the
+      # secret it produces. A failing ExternalSecret in this state is inert —
+      # that is the whole point of being able to turn it on first.
+      create: true
+
 minecraft-bedrock:
   image:
     repository: itzg/minecraft-bedrock-server
@@ -164,6 +197,12 @@ minecraft-bedrock:
   # without checking `mc-monitor help`, and it crash-looped the sidecar
   # (confirmed live: `mc-monitor` prints its usage banner and exits non-zero
   # on an unrecognized subcommand). `export-for-prometheus` is the real name.
+  #
+  # console-bridge is the second sidecar: the only thing with write access to
+  # the server console (see mc-console-bridge's own README for the allowlist
+  # it enforces). It dials the WEBSOCKET_CONSOLE endpoint below over
+  # loopback, so it never needs a port of its own opened to the pod network —
+  # only its own HTTP API port, which the agent-facing Service targets.
   sidecarContainers: |
     - name: mc-monitor
       image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -189,6 +228,73 @@ minecraft-bedrock:
         readOnlyRootFilesystem: true
         capabilities:
           drop: ["ALL"]
+    {{- if .Values.global.consoleBridge.enabled }}
+    - name: console-bridge
+      # sidecarContainers is tpl-rendered inside the minecraft-bedrock
+      # subchart's own template scope, which cannot see this umbrella
+      # chart's other top-level values — only `.Values.global.*` crosses
+      # that boundary, which is exactly why the secret name lives under
+      # `global:` at the top of this file rather than under `consoleBridge:`.
+      # The image ref has no such value to reach for at all (this sidecar
+      # has no separate image/tag value — see consoleBridge's own comment
+      # below) and is a literal for that reason.
+      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.1.0"
+      env:
+        - name: CONSOLE_ADDRESS
+          value: "127.0.0.1:8765"
+        - name: CONSOLE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.global.consoleBridge.secret.name }}
+              key: console_websocket_password
+        - name: BRIDGE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.global.consoleBridge.secret.name }}
+              key: console_bridge_token
+        - name: DATA_DIR
+          value: /data
+        - name: HTTP_ADDR
+          value: ":8766"
+      ports:
+        - name: bridge-http
+          containerPort: 8766
+      volumeMounts:
+        # Read-only: the bridge only ever reads permissions.json/allowlist.json
+        # from the world volume, never writes to it. It is the same PVC the
+        # main container already mounts at /data — Kubernetes allows the same
+        # volume mounted multiple times within one pod.
+        - name: datadir
+          mountPath: /data
+          readOnly: true
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+    {{- end }}
+
+  # The server's own websocket-console settings, including the secret its
+  # password comes from, deliberately do NOT live here. They are in
+  # values-console-bridge.yaml, which is not applied by default.
+  #
+  # extraEnv is rendered via plain toYaml in the subchart's deployment.yaml
+  # (confirmed by reading it), never passed through tpl — so unlike
+  # sidecarContainers above, nothing in it can be conditional, and a secret
+  # reference placed in it binds the *game server* container's startup to that
+  # secret existing. When the secret did not exist, the server would not start
+  # at all: the bridge's dependency became the server's, and a sidecar feature
+  # that was never load-bearing took the world offline for 40 hours
+  # (docs/incidents/2026-09-06-fwb-console-bridge-secret.md). A separate values
+  # file is the only way to keep that binding out of the default render, since
+  # the value itself cannot carry a condition.
 
   persistence:
     storageClass: truenas-iscsi
@@ -612,3 +718,75 @@ bot2:
   # above for the one that answers.
   answer:
     enabled: false
+
+# The console-bridge sidecar (see minecraft-bedrock.sidecarContainers above)
+# — the only thing in this deployment with write access to the server
+# console. Lives inside the server's own StatefulSet pod, so this section is
+# just the Service that exposes its HTTP API to the agent Deployment below.
+# The secret name is under `global:` at the top of this file, not here —
+# both this chart's own templates and the vendored subchart's
+# sidecarContainers need it, and only `global:` crosses that boundary.
+# There is no separate image/tag value for this sidecar either: the literal
+# image ref lives directly in minecraft-bedrock.sidecarContainers (see the
+# comment there for why).
+consoleBridge:
+  # Gates this chart's own console-bridge resources (the Service below). The
+  # sidecar the Service selects is gated separately by
+  # global.consoleBridge.enabled, because only `global:` reaches the vendored
+  # subchart's template scope — values-console-bridge.yaml sets both, and
+  # nothing else should set either.
+  enabled: false
+
+  service:
+    port: 8766
+
+# The chat-reading, tool-calling server agent (minecraft-server-agent). Off
+# until the account behind it exists — same two-step bootstrap as `bot`
+# above: land this chart change first (it only adds the console-bridge
+# sidecar and this Deployment gated off), then complete the one-time
+# device-code login and the in-game allowlist add, then flip this on.
+agent:
+  enabled: false
+  replicas: 1
+
+  image:
+    repository: ghcr.io/jdwillmsen/minecraft-server-agent
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  # Same distinction as bot.username: the token-cache key, not the gamertag
+  # other players see.
+  username: fwb-server-agent
+
+  # No viewDistance value here unlike the bots: the agent's Stage 1 config
+  # has no MC_VIEW_DISTANCE wiring at all — it doesn't need to render or
+  # track chunks, only read/send chat, so there is nothing yet for this
+  # value to configure. Add it here only alongside real code that reads it.
+
+  # Sized from bot's live-measured usage (46m CPU / 89Mi) as a starting
+  # point — the agent does more per chat message (plugin dispatch, an HTTP
+  # call to the bridge) but nothing CPU-heavy yet at this stage. Revisit
+  # once Stage 4's LLM tool-calling loop lands.
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 200m
+
+  persistence:
+    storageClass: truenas-nfs
+    size: 1Gi
+
+  bridge:
+    # CONSOLE_BRIDGE_TIMEOUT_MS: how long the agent waits on a single call to
+    # the console-bridge's HTTP API before giving up. The bridge's own URL
+    # isn't a value here — agent-deployment.yaml builds it directly from the
+    # consoleBridge.host helper (_helpers.tpl) and consoleBridge.service.port
+    # below, the same way bot-deployment.yaml builds MC_HOST from
+    # bot.serverHost.
+    timeoutMs: 5000
+
+  metrics:
+    port: 9090
