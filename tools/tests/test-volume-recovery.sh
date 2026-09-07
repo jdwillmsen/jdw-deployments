@@ -49,6 +49,11 @@ if [[ "$1" == "get" ]]; then
   [[ "${FAKE_EXISTS:-yes}" == "no" ]] && exit 1
   [[ "$*" == *"containerStatuses[0].ready"* ]] && { printf '%s' "${FAKE_READY:-true}"; exit 0; }
   [[ "$*" == *"restartCount"* ]] && { printf '%s' "${FAKE_RESTARTS:-0}"; exit 0; }
+  # Default both revisions to the same value: unless a case says otherwise the
+  # StatefulSet is fully rolled out, so the revision branch never fires and the
+  # cases that predate it stage exactly what they always did.
+  [[ "$*" == *"updateRevision"* ]] && { printf '%s' "${FAKE_UPDATE_REV:-rev-current}"; exit 0; }
+  [[ "$*" == *"controller-revision-hash"* ]] && { printf '%s' "${FAKE_POD_REV:-rev-current}"; exit 0; }
   exit 0
 fi
 [[ "$1" == "logs" ]] && { printf '%s\n' "${FAKE_LOGS:-}"; exit 0; }
@@ -61,7 +66,7 @@ chmod +x "$work/bin/kubectl"
 # suite would hang instead of failing.
 run() {
   timeout 20 env PATH="$work/bin:$PATH" \
-      SERVER_POD=server-0 MIN_RESTARTS=2 SIGNATURE="Read-only file system" \
+      SERVER_POD=server-0 SERVER_STATEFULSET=server MIN_RESTARTS=2 SIGNATURE="Read-only file system" \
       "$@" bash "$work/recovery.sh" 2>&1
 }
 
@@ -106,5 +111,32 @@ assert_leaves_alone "slow first start" \
   FAKE_READY=false FAKE_RESTARTS=0 FAKE_LOGS="server.properties: Read-only file system"
 
 assert_leaves_alone "server pod absent" FAKE_EXISTS=no
+
+# The 2026-09-06 wedge. The StatefulSet has moved to a revision the pod is not
+# running and never will: the pod cannot start, so the controller will not
+# replace it, so that revision -- a revert that had already merged and synced
+# -- never arrives. Note the zero restarts and the absent signature: neither of
+# the branches above can see this, which is the whole reason this one exists.
+assert_deletes "wedged on a superseded revision" \
+  FAKE_READY=false FAKE_RESTARTS=0 FAKE_POD_REV=rev-old FAKE_UPDATE_REV=rev-new
+
+# The revision branch must not widen into "not ready means delete". A pod on
+# the revision the StatefulSet already wants is failing on the current spec,
+# and recreating it only reproduces the failure -- the recreate loop the
+# signature gate exists to prevent.
+assert_leaves_alone "not ready on the current revision" \
+  FAKE_READY=false FAKE_RESTARTS=0 FAKE_POD_REV=rev-current FAKE_UPDATE_REV=rev-current
+
+# A rollout in progress against a *working* pod is not a wedge. The pod is
+# serving on the old revision and the StatefulSet will replace it in its own
+# time; deleting it here would cut a live server over early, every five
+# minutes, for the length of any rollout.
+assert_leaves_alone "healthy pod mid-rollout" \
+  FAKE_READY=true FAKE_POD_REV=rev-old FAKE_UPDATE_REV=rev-new
+
+# Neither revision readable -- an RBAC gap, or a kubectl that failed. Acting on
+# half an answer would delete a pod on no evidence at all.
+assert_leaves_alone "revisions unreadable" \
+  FAKE_READY=false FAKE_RESTARTS=0 FAKE_POD_REV= FAKE_UPDATE_REV=
 
 echo "PASS"
