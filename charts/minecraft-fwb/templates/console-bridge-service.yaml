@@ -7,7 +7,12 @@
 # selector matches a sidecar that is not rendered would resolve to a port
 # nothing is listening on, which is a slower and more confusing failure than
 # not existing.
-{{- if .Values.consoleBridge.enabled }}
+#
+# Reads the same `global` flag the sidecar does rather than a switch of its
+# own. A second flag that merely has to agree with the first is a way to render
+# half of this feature, which is the shape of failure this whole change exists
+# to remove.
+{{- if .Values.global.consoleBridge.enabled }}
 apiVersion: v1
 kind: Service
 metadata:

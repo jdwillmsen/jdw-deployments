@@ -6,9 +6,12 @@
 # top-level keys). Everything else lives in its own section as normal.
 global:
   consoleBridge:
-    # Off by default, and flipped only by values-console-bridge.yaml. This
-    # gates the sidecar itself; the ExternalSecret below is deliberately not
-    # gated on it, so the secret can be made to exist and be *seen* to sync
+    # The one switch for the whole feature -- sidecar, Service and agent gate
+    # all read it -- off by default and flipped only by
+    # values-console-bridge.yaml.
+    #
+    # The ExternalSecret is the deliberate exception: it renders whether this
+    # is on or off, so the secret can be made to exist and be *seen* to sync
     # before anything is wired to depend on it. See README, "Enabling the
     # console bridge".
     enabled: false
@@ -730,13 +733,10 @@ bot2:
 # image ref lives directly in minecraft-bedrock.sidecarContainers (see the
 # comment there for why).
 consoleBridge:
-  # Gates this chart's own console-bridge resources (the Service below). The
-  # sidecar the Service selects is gated separately by
-  # global.consoleBridge.enabled, because only `global:` reaches the vendored
-  # subchart's template scope — values-console-bridge.yaml sets both, and
-  # nothing else should set either.
-  enabled: false
-
+  # No `enabled` here on purpose. This chart's own console-bridge templates
+  # read global.consoleBridge.enabled, the same flag the sidecar needs, so
+  # there is exactly one switch for the whole feature. A second flag beside it
+  # would only add a way to render half of this.
   service:
     port: 8766
 

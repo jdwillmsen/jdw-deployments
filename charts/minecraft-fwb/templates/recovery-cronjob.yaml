@@ -92,6 +92,9 @@ spec:
                     -o jsonpath='{.metadata.labels.controller-revision-hash}' 2>/dev/null || echo "")"
                   if [[ -n "$UPDATE_REV" && -n "$POD_REV" && "$UPDATE_REV" != "$POD_REV" ]]; then
                     emit recovering "not ready on stale revision $POD_REV, StatefulSet wants $UPDATE_REV"
+                    # --wait=false for the reason spelled out on the other
+                    # delete below: the default wait needs a list verb this
+                    # actor does not hold, and hangs forever without it.
                     kubectl delete pod -n "$NS" "$SERVER_POD" --wait=false
                     emit deleted "StatefulSet will recreate it on the revision it already wants"
                     exit 0

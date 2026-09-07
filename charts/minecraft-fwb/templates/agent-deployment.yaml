@@ -1,4 +1,4 @@
-{{- if and .Values.agent.enabled .Values.consoleBridge.enabled }}
+{{- if and .Values.agent.enabled .Values.global.consoleBridge.enabled }}
 # Both flags, not just agent.enabled: this Deployment's only reason to
 # exist is to call the console bridge, so enabling it against a chart
 # rendering no bridge would produce a workload that can only fail.

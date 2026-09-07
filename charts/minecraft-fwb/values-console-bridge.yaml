@@ -16,17 +16,15 @@
 # healthy. The procedure, and why that order is not optional, is in the README
 # under "Enabling the console bridge".
 
-# Renders the console-bridge sidecar into the server pod. Under `global:`
-# because the sidecar list is tpl-rendered in the vendored subchart's own
-# scope, which nothing but `.Values.global.*` reaches.
+# The single switch for the whole feature: the sidecar in the server pod, this
+# chart's own console-bridge Service, and the agent Deployment's second gate
+# all read it. Under `global:` because the sidecar list is tpl-rendered in the
+# vendored subchart's own scope, which nothing but `.Values.global.*` reaches
+# -- and this chart's own templates can read `global` too, so one flag serves
+# both sides.
 global:
   consoleBridge:
     enabled: true
-
-# Renders this chart's own console-bridge Service, which fronts the sidecar
-# above for the agent Deployment.
-consoleBridge:
-  enabled: true
 
 minecraft-bedrock:
   # mc-server-runner (inside this image) reads these directly — no
