@@ -20,7 +20,13 @@ cat > "$work/bin/kubectl" <<'SHIM'
 case "$1" in
   get)  printf '%s' "${FAKE_GET:-server-0}" ;;
   exec) shift; while [[ "$1" != "--" ]]; do shift; done; shift 2; printf '%s\n' "$*" >> "$CAPTURE" ;;
-  logs) printf '%s\n' "${FAKE_LOGS:-There are 0/10 players online:}" ;;
+  logs)
+    # FAKE_BINARY prepends a real NUL. It cannot come in through FAKE_LOGS:
+    # bash discards null bytes in command substitution, so a fixture built
+    # that way silently loses the very byte the test is about.
+    [[ -n "${FAKE_BINARY:-}" ]] && printf 'noise \x00\x1b[0m binary\n'
+    printf '%s\n' "${FAKE_LOGS:-There are 0/10 players online:}"
+    ;;
 esac
 exit 0
 SHIM
@@ -64,6 +70,19 @@ out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns \
        FAKE_LOGS="There are 0/10 players online:" bash "$mc" players)"
 grep -q "online: none" <<<"$out" || fail "an empty player list must say so rather than print nothing"
 echo "  ok: empty player list is explicit"
+
+# The Bedrock console log carries binary bytes. grep treats a stream with any
+# as binary and prints "binary file matches" instead of the matching lines, so
+# every parse built on it silently yields nothing -- observed live on
+# 2026-09-08 as `players: 0` while four people were online. Intermittent by
+# nature: it depends on whether the tail window happens to contain one, which
+# is exactly why it needs a deterministic test rather than a live check.
+out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns \
+       FAKE_BINARY=1 FAKE_LOGS="$(printf 'There are 3/10 players online:\nAlice, Bob, Carol')" \
+       bash "$mc" players)"
+grep -q "players: 3" <<<"$out" || fail "a log containing binary bytes must still parse the player count"
+grep -q "Alice" <<<"$out" || fail "a log containing binary bytes must still list players"
+echo "  ok: a binary-bearing console log still parses"
 
 # --- errors ---------------------------------------------------------------
 out="$(env PATH="$work/bin:$PATH" MC_NAMESPACE=test-ns bash "$mc" say 2>&1 || true)"

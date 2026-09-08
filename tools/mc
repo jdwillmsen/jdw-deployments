@@ -19,6 +19,14 @@ err() {
   exit 1
 }
 
+# Every grep below that reads `kubectl logs` passes -a.
+#
+# The Bedrock console log contains binary bytes, and grep treats a stream with
+# any as binary: it prints "binary file matches" and produces no matching
+# lines, so a parse built on it silently yields nothing. That made `mc players`
+# report 0 while four people were online, and `mc announce` unable to see the
+# server's own rejection of a malformed payload -- both observed on 2026-09-08.
+# The failure is silent by construction, so the flag belongs on every one.
 server_pod() {
   local pod
   pod="$(kubectl get pods -n "$NAMESPACE" -l "$SELECTOR" \
@@ -53,7 +61,7 @@ cmd_status() {
     send "$pod" list
     sleep 2
     online="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
-      | grep -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '[0-9]+/[0-9]+')"
+      | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '[0-9]+/[0-9]+')"
     echo "players: ${online:-unknown}"
   fi
 
@@ -71,9 +79,9 @@ cmd_players() {
   send "$pod" list
   sleep 2
   count="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
-    | grep -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
+    | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
   names="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
-    | grep -A1 'players online' | tail -1 | tr -d '\r')"
+    | grep -a -A1 'players online' | tail -1 | tr -d '\r')"
 
   # An empty result is stated rather than printed as nothing, so a caller can
   # tell "nobody online" apart from "the command did not work".
@@ -101,7 +109,7 @@ cmd_say() {
   sleep 2
   local online
   online="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
-    | grep -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '[0-9]+/[0-9]+')"
+    | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '[0-9]+/[0-9]+')"
   echo "delivered: unconfirmed"
   echo "recipients: ${online:-unknown}"
   echo
@@ -143,12 +151,12 @@ print(json.dumps({"rawtext": [{"text": "§e" + os.environ["MC_MSG"]}]}))
   tail="$(kubectl logs -n "$NAMESPACE" "$pod" --since-time="$since" 2>/dev/null)"
   echo "sent: tellraw"
   echo "message: $message"
-  if grep -q "Syntax error" <<<"$tail"; then
+  if grep -a -q "Syntax error" <<<"$tail"; then
     echo "delivered: no"
     echo "reason: the server rejected the payload"
-    echo "server: $(grep -o 'Syntax error.*' <<<"$tail" | tail -1)"
+    echo "server: $(grep -a -o 'Syntax error.*' <<<"$tail" | tail -1)"
     exit 1
-  elif grep -q "No targets matched selector" <<<"$tail"; then
+  elif grep -a -q "No targets matched selector" <<<"$tail"; then
     echo "delivered: no"
     echo "reason: nobody was online to receive it"
     echo
