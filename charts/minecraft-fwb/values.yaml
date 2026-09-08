@@ -740,11 +740,14 @@ consoleBridge:
   service:
     port: 8766
 
-# The chat-reading, tool-calling server agent (minecraft-server-agent). Off
-# until the account behind it exists — same two-step bootstrap as `bot`
-# above: land this chart change first (it only adds the console-bridge
-# sidecar and this Deployment gated off), then complete the one-time
-# device-code login and the in-game allowlist add, then flip this on.
+# The chat-reading, tool-calling server agent (minecraft-server-agent).
+#
+# The bootstrap order below is the reverse of `bot`'s and of what this comment
+# used to prescribe. It said to complete the device-code login before flipping
+# this on, which cannot work: the login is driven by a `device_code_required`
+# event that only the running agent emits, so the workload has to exist first.
+# The agent idles harmlessly until the account is authenticated, which is what
+# makes turning it on ahead of the login safe rather than premature.
 agent:
   # Enabled 2026-09-08 once every prerequisite was checked rather than assumed:
   # the image pulls (verified by a throwaway pod on the target node, not by a
