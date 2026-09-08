@@ -69,3 +69,24 @@
 {{- define "deployAnnounce.name" -}}
 {{ .Release.Name }}-deploy-announce
 {{- end -}}
+
+{{/*
+A digest of the values that determine the server StatefulSet.
+
+Used to tell a sync that will restart the server from one that only touches a
+bot, a CronJob or the agent. It hashes the minecraft-bedrock subchart's values
+rather than the rendered StatefulSet, because a parent chart cannot render its
+own subchart to inspect the result.
+
+That approximation is deliberate and has one known gap: bumping the vendored
+subchart version changes the rendered pod template without changing these
+values, so that one case would not warn. Every change made through this chart
+does.
+*/}}
+{{- define "deployAnnounce.serverSpecHash" -}}
+{{ index .Values "minecraft-bedrock" | toYaml | sha256sum | trunc 16 }}
+{{- end -}}
+
+{{- define "deployAnnounce.hashConfigMap" -}}
+{{ .Release.Name }}-server-spec-hash
+{{- end -}}

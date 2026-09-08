@@ -62,6 +62,10 @@ spec:
               value: {{ .Release.Name }}-minecraft-bedrock
             - name: LEAD_SECONDS
               value: {{ .Values.deployAnnounce.leadSeconds | quote }}
+            - name: EXPECTED_SPEC_HASH
+              value: {{ include "deployAnnounce.serverSpecHash" . | quote }}
+            - name: SPEC_HASH_CONFIGMAP
+              value: {{ include "deployAnnounce.hashConfigMap" . }}
           command: ["/bin/bash", "-c"]
           args:
             - |
@@ -94,6 +98,34 @@ spec:
               if [[ "$READY" != "true" ]]; then
                 emit skipped "server not ready, nobody is connected to warn"
                 exit 0
+              fi
+
+              # Warn only when this sync will actually restart the server.
+              #
+              # Without this the hook fired on every sync, including ones that
+              # only scaled a bot or changed a CronJob, and players were told a
+              # restart was coming that never came. Twice in fifteen minutes on
+              # 2026-09-08, which is how a warning system teaches people to
+              # ignore it. It also held every unrelated deployment for the full
+              # countdown, delaying changes that could not have disturbed
+              # anyone.
+              #
+              # The ConfigMap still holds the previous sync's digest at this
+              # point -- Argo applies hooks before manifests -- so a difference
+              # means the server's own values changed in the manifests about to
+              # be applied.
+              LIVE_HASH="$(kubectl get configmap -n "$NS" "$SPEC_HASH_CONFIGMAP" \
+                -o jsonpath='{.data.hash}' 2>/dev/null || echo "")"
+              if [[ -z "$LIVE_HASH" ]]; then
+                # First sync after this was introduced, or someone deleted it.
+                # Warn: an unknown previous state is not evidence of no change,
+                # and a spurious warning is cheaper than a silent restart.
+                emit unknown "no previous spec digest; warning rather than assuming no restart"
+              elif [[ "$LIVE_HASH" == "$EXPECTED_SPEC_HASH" ]]; then
+                emit skipped "server spec unchanged ($EXPECTED_SPEC_HASH); this sync does not restart the server"
+                exit 0
+              else
+                emit warning "server spec changing ($LIVE_HASH -> $EXPECTED_SPEC_HASH)"
               fi
 
               # Ask the server who is on. `grep -a` because the console log
