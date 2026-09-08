@@ -42,10 +42,16 @@ account:
 
 1. Publish the image tag named in `bot.image.tag` (or `bot2.image.tag`).
 2. Set `bot.enabled: true` (or `bot2.enabled: true`), then read the pod log
-   for a `device_code_required` event and complete that login once — in a
-   private/incognito browser window, or signed out of any account you don't
-   want to accidentally authenticate instead. The token caches to a volume,
-   so restarts are unattended afterwards.
+   for the device code and complete that login once — in a private/incognito
+   browser window, or signed out of any account you don't want to
+   accidentally authenticate instead. The token caches to a volume, so
+   restarts are unattended afterwards.
+
+   What to watch for depends on the implementation. The Go bot prints a plain
+   line, `Authenticate at https://www.microsoft.com/link using the code
+   XXXXXXXX.`; the TypeScript one emits a `device_code_required` JSON event
+   carrying `user_code` and `verification_uri`. Grepping for the JSON event
+   against a Go bot waits forever.
 
 The bot's XUID then goes on the server allowlist. It appears in the server log
 on first connect.
@@ -54,15 +60,21 @@ on first connect.
 authenticates whatever Microsoft account is already active in the browser
 that opens it — it does not prompt you to choose. If the wrong account ends
 up signed in (confirm by checking which gamertag connects in the server log,
-not by trusting what you intended to type): clear the cache and redo the
-login —
+not by trusting what you intended to type): the cache has to be cleared and
+the login redone.
 
-```bash
-kubectl exec -n jdwillmsen-prd <bot-pod> -- sh -c 'rm -rf /data/auth/*'
-kubectl delete pod -n jdwillmsen-prd <bot-pod>
-```
+Clearing it goes through git, by PRing `bot.enabled: false` (or
+`bot2.enabled: false`), letting ArgoCD sync, then setting it back to `true`.
+`enabled` gates the PVC as well as the Deployment and the Application prunes,
+so the cache goes with it — which is the one situation where wiping it is the
+point rather than an accident.
 
-— then repeat step 2 above, this time actually in a fresh incognito window.
+Then repeat step 2 above, this time actually in a fresh incognito window.
+
+Do **not** reach for `kubectl exec ... rm -rf /data/auth/*`. The Go bot's
+image is distroless and has no shell, so that fails with
+`exec: "sh": executable file not found in $PATH` — and reading a token cache
+out of a running pod is not something to reach for either.
 
 #### Relocating a bot
 
