@@ -807,7 +807,20 @@ agent:
   # README steps 5 and 6. Until then it runs, logs device_code_required, and
   # does nothing else.
   enabled: true
-  replicas: 1
+
+  # Temporarily 0 so a human can sign in to the agent's Microsoft account and
+  # drive it by hand: one account holds one Minecraft session, so the agent has
+  # to be off the server for that to be possible at all.
+  #
+  # Set here rather than with `kubectl scale`, which does not work: this
+  # Application syncs with selfHeal, and a scale done outside git was reverted
+  # within seconds (observed 2026-09-08). Same reason the bots' relocation
+  # procedure in the README goes through a PR.
+  #
+  # Restore to 1 when done. `replicas` rather than `enabled: false` on purpose
+  # -- disabling would delete the PVC holding the token cache and force another
+  # device-code login.
+  replicas: 0
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
