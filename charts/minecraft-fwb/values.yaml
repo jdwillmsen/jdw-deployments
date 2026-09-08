@@ -746,11 +746,13 @@ bot2:
 
   # See bot.replicas above — same take-offline-without-losing-cache mechanism.
   #
-  # 0 on 2026-09-08 so this bot's account (Dotablaze7321) can be signed in to
-  # by hand and the character moved. Restore to 1 afterwards. Do not use
-  # `kubectl scale`: selfHeal reverted one within 24 seconds, faster than the
-  # server registers the disconnect.
-  replicas: 0
+  # Taking this to 0 is how its account (Dotablaze7321) gets signed in to by
+  # hand so the character can be moved; done and restored on 2026-09-08. Do not
+  # use `kubectl scale`: selfHeal reverted one within 24 seconds, faster than
+  # the server registers the disconnect. Freeing the *account* also needs
+  # `tools/mc run kick <gamertag>` -- the server holds the session open for a
+  # while after the client is gone.
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
@@ -852,7 +854,8 @@ agent:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
-    tag: "0.1.0"
+    # 0.3.0 adds !online/!version/!backup (0.2.0) and @server answering (0.3.0).
+    tag: "0.3.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
@@ -891,3 +894,21 @@ agent:
 
   metrics:
     port: 9090
+
+  # @server chat answering. Off here rather than in the agent's own defaults so
+  # that turning it on is a reviewable change to this file.
+  #
+  # The backend is the cluster's own vLLM, which the AFK bot has been answering
+  # from since 2026-09-01 -- so this is a proven endpoint, not a new dependency.
+  # Once this is verified in game, bot.answer can be removed: the duplication
+  # between the two is the whole reason the bot strip-down was blocked.
+  llm:
+    enabled: true
+    baseUrl: http://192.168.1.50:8000/v1
+    model: qwen/qwen3-coder-30b-a3b
+    maxTokens: 96
+    timeoutMs: 8000
+
+    # Deliberately below the command limit (10/min). One answer costs an LLM
+    # call; one command costs a console round trip.
+    maxPerMinute: 4

@@ -58,6 +58,26 @@ spec:
               value: {{ .Values.agent.bridge.timeoutMs | quote }}
             - name: HTTP_ADDR
               value: ":{{ .Values.agent.metrics.port }}"
+            # !online, !version and !backup read these two exporters directly.
+            # Full paths, not hosts: the backup exporter serves /metrics.txt
+            # while mc-monitor serves /metrics, and assembling that in code
+            # would bake one exporter's quirk into the agent.
+            - name: MC_MONITOR_URL
+              value: "http://{{ include "mcMonitor.host" . }}:8080/metrics"
+            - name: BACKUP_EXPORTER_URL
+              value: "http://{{ include "backup.exporter.name" . }}.{{ .Release.Namespace }}.svc.cluster.local:9101/metrics.txt"
+            {{- if .Values.agent.llm.enabled }}
+            - name: LLM_BASE_URL
+              value: {{ .Values.agent.llm.baseUrl | quote }}
+            - name: LLM_MODEL
+              value: {{ .Values.agent.llm.model | quote }}
+            - name: LLM_MAX_TOKENS
+              value: {{ .Values.agent.llm.maxTokens | quote }}
+            - name: LLM_TIMEOUT_MS
+              value: {{ .Values.agent.llm.timeoutMs | quote }}
+            - name: ANSWER_MAX_PER_MINUTE
+              value: {{ .Values.agent.llm.maxPerMinute | quote }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.agent.metrics.port }}
