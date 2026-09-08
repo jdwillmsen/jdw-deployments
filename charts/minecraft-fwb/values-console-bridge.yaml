@@ -33,10 +33,21 @@ minecraft-bedrock:
   # console is reachable from inside this pod alone, through the console-bridge
   # sidecar, never from the pod network.
   #
-  # WEBSOCKET_ALLOWED_ORIGINS is set to a fixed value rather than left empty
-  # (which rejects every origin) or disabled outright — the loopback binding
-  # already makes it unreachable from a browser, but a fixed allowed origin
-  # keeps the check meaningful instead of turned off.
+  # The origin check is disabled rather than pointed at an allowed origin.
+  # This was the other way round on first deploy and the bridge could not
+  # connect at all: mc-server-runner answered every dial with 403 and logged
+  # `origin not allowed`, because the bridge sends no Origin header, so an
+  # allow-list naming one can never match. mc-console-bridge's README states
+  # that contract directly -- "WEBSOCKET_ALLOWED_ORIGINS covering the Origin
+  # this bridge sends, which by default is none".
+  #
+  # The comment this replaces argued a fixed origin "keeps the check
+  # meaningful instead of turned off". It reads well and was never true: it
+  # kept the check meaningful by making it reject the only client there is.
+  #
+  # Disabling it costs no exposure. WEBSOCKET_ADDRESS binds the console to
+  # 127.0.0.1, so the only things that can reach it are the containers sharing
+  # this pod's network namespace; there is no browser and no other origin.
   #
   # extraEnv is a map, so these keys merge into values.yaml's rather than
   # replacing anything. The secret name is a literal because nothing here is
@@ -45,7 +56,7 @@ minecraft-bedrock:
   extraEnv:
     WEBSOCKET_CONSOLE: "true"
     WEBSOCKET_ADDRESS: "127.0.0.1:8765"
-    WEBSOCKET_ALLOWED_ORIGINS: "http://mc-console-bridge.internal"
+    WEBSOCKET_DISABLE_ORIGIN_CHECK: "true"
     WEBSOCKET_PASSWORD:
       valueFrom:
         secretKeyRef:
