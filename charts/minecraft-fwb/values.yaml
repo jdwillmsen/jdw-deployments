@@ -879,10 +879,21 @@ agent:
     #     the fleet offline over unchanged packets, and until this tag the
     #     agent would not have survived a repeat.
     #
-    # On top of respawn-on-death and liveness-based readiness (0.5.0),
-    # profiles/playtime (0.4.0), !online/!version/!backup (0.2.0) and @server
-    # answering (0.3.0).
-    tag: "0.7.0"
+    # 0.8.0 makes the persistence added in 0.4.0 actually record anything.
+    # plugin.Context.Profiles was declared and never assigned, so the welcome
+    # plugin never called RecordJoin and no arrival was ever written; nothing
+    # reported it, because the only branch that would log is the error path of
+    # a call that was not being made. minecraft.players and minecraft.sessions
+    # both held zero rows the entire time while the agent read as healthy.
+    #
+    # Needs the grants migration that landed alongside it: the runtime role had
+    # no privileges on any table in the minecraft schema, so even a wired call
+    # would have failed. Both halves are in as of this bump.
+    #
+    # On top of the skin, pkg/ export and protocol negotiation (0.7.0),
+    # respawn-on-death and liveness-based readiness (0.5.0), profiles/playtime
+    # (0.4.0), !online/!version/!backup (0.2.0) and @server answering (0.3.0).
+    tag: "0.8.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
