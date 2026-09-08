@@ -815,8 +815,9 @@ agent:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
-    # 0.3.0 adds !online/!version/!backup (0.2.0) and @server answering (0.3.0).
-    tag: "0.3.0"
+    # 0.4.0 adds player profiles, playtime and welcome variants (Stage 3), on
+    # top of !online/!version/!backup (0.2.0) and @server answering (0.3.0).
+    tag: "0.4.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
@@ -867,10 +868,16 @@ agent:
       # 2026-09-06 outage happened, and why that order is now the house style.
       create: true
 
-    # Not wired into the agent yet: it has no persistence layer, so passing
-    # these would be configuring a feature that does not exist. Flipped on in
-    # the change that adds the code, once the secret above is observed Synced.
-    enabled: false
+    # On as of 2026-09-08, in this order: the database and its minecraft schema
+    # were created, the credentials were observed SecretSynced, the Flyway
+    # migration ran and recorded V1 successfully, and only then was this
+    # flipped. Each step was verified before the next assumed it -- the
+    # opposite of the ordering that caused
+    # docs/incidents/2026-09-06-fwb-console-bridge-secret.md.
+    #
+    # Turning this back off is safe at any time: the agent falls back to the
+    # plain greeting it used before Stage 3 and keeps answering commands.
+    enabled: true
 
     host: platform-postgresql-cluster-prd-rw.database.svc.cluster.local
     port: 5432
