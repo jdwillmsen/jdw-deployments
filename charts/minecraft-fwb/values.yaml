@@ -179,6 +179,10 @@ minecraft-bedrock:
     # client's LAN list is wanted rather than a leak.
     enableLanVisibility: true
 
+    # Opts into Mojang's own usage telemetry for this server. No operational
+    # benefit to us either way; on by deliberate choice, not a default.
+    emitServerTelemetry: true
+
   # The container downloads the pinned server binary on first start, so the
   # chart's default liveness probe — 30s delay, then three 10s failures —
   # kills it mid-download and the pod never gets far enough to persist the
@@ -298,6 +302,22 @@ minecraft-bedrock:
   # (docs/incidents/2026-09-06-fwb-console-bridge-secret.md). A separate values
   # file is the only way to keep that binding out of the default render, since
   # the value itself cannot carry a condition.
+  #
+  # This extraEnv, unlike that one, is safe to keep here: plain string values,
+  # no secretKeyRef, so there is nothing in it that can fail to resolve and
+  # take the server down. content-log-console-output-enabled surfaces
+  # resource/behavior-pack errors (moot today — "Pack Stack - None" in the
+  # live log — but harmless to leave on ahead of ever adding one).
+  #
+  # Not emit-server-telemetry here: the subchart already has a dedicated
+  # minecraftServer.emitServerTelemetry field (see below) wired to this same
+  # env var. Setting it again here would render EMIT_SERVER_TELEMETRY twice
+  # in the container spec — technically valid Kubernetes (last one wins by
+  # order) but confusing and fragile. Confirmed by rendering both
+  # values-console-bridge.yaml and this file together and inspecting the
+  # actual output, not assumed.
+  extraEnv:
+    CONTENT_LOG_CONSOLE_OUTPUT_ENABLED: "true"
 
   persistence:
     storageClass: truenas-iscsi
