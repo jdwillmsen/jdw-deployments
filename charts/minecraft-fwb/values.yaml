@@ -856,6 +856,27 @@ agent:
   metrics:
     port: 9090
 
+  # Postgres, for the Stage 3 work: player profiles, playtime and the state
+  # behind welcome variants. The database and its `minecraft` schema are
+  # declared in jdwlabs/platform (tenants/platform/services/postgresql-cluster-prd).
+  database:
+    credentials:
+      # On before anything reads it, on purpose. A credential object nothing
+      # consumes is inert: if it cannot sync, it fails alone and visibly,
+      # rather than taking a workload down with it -- which is exactly how the
+      # 2026-09-06 outage happened, and why that order is now the house style.
+      create: true
+
+    # Not wired into the agent yet: it has no persistence layer, so passing
+    # these would be configuring a feature that does not exist. Flipped on in
+    # the change that adds the code, once the secret above is observed Synced.
+    enabled: false
+
+    host: platform-postgresql-cluster-prd-rw.database.svc.cluster.local
+    port: 5432
+    name: jdwillmsen_prd
+    schema: minecraft
+
   # @server chat answering. Off here rather than in the agent's own defaults so
   # that turning it on is a reviewable change to this file.
   #

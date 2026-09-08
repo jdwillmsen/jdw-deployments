@@ -90,3 +90,7 @@ does.
 {{- define "deployAnnounce.hashConfigMap" -}}
 {{ .Release.Name }}-server-spec-hash
 {{- end -}}
+
+{{- define "agent.dbSecret.name" -}}
+{{ .Release.Name }}-server-agent-db
+{{- end -}}
