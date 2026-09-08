@@ -650,6 +650,9 @@ bot:
   # credentials and forces another interactive login.
   username: fwb-afk-bot
 
+  # See bot2.gamertag for why this is recorded. Documentation only.
+  gamertag: LightBlaz3
+
   # Only governs how many chunks the server sends this client. Simulation is
   # bounded by the server's own tickDistance, so a small value costs bandwidth
   # and nothing else — it does not shrink the area the bot's presence keeps
@@ -691,7 +694,17 @@ bot:
   # comment). Read them off this bot's `joined` log line or the server's own
   # `Player connected: <name>, xuid:` output. Feeds MC_BOT_NAMES so this bot
   # can never answer a sibling bot's chat into a loop.
-  botNames: []
+  # Populated 2026-09-08, having been empty since this field was introduced.
+  # Empty meant the loop guard it feeds was inert: the only thing preventing a
+  # bot-answering-a-bot loop was that bot2 has no answering wiring at all.
+  #
+  # JDWServerAgent is listed for the same reason and is the more pressing one.
+  # The server agent now replies in chat, so without this the answering bot has
+  # an interlocutor that talks back -- two automated speakers and a 6/minute
+  # rate limit between them and a loop.
+  botNames:
+    - Dotablaze7321
+    - JDWServerAgent
 
   # Chat-question answering (see minecraft-afk-bot's README for the full env
   # var reference).
@@ -732,7 +745,12 @@ bot2:
   enabled: true
 
   # See bot.replicas above — same take-offline-without-losing-cache mechanism.
-  replicas: 1
+  #
+  # 0 on 2026-09-08 so this bot's account (Dotablaze7321) can be signed in to
+  # by hand and the character moved. Restore to 1 afterwards. Do not use
+  # `kubectl scale`: selfHeal reverted one within 24 seconds, faster than the
+  # server registers the disconnect.
+  replicas: 0
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
@@ -741,6 +759,17 @@ bot2:
 
   # Distinct from bot.username so the two token caches never collide.
   username: fwb-afk-bot-2
+
+  # The gamertag this account actually appears as in game. Recorded because
+  # nothing else in the system maps a Deployment to a player: `username` above
+  # is only the token-cache key, the bot never logs its own identity, and the
+  # gamertag lives inside an encoded JWT in the token cache. Working it out on
+  # 2026-09-08 took correlating this pod's spawn timestamp against the server's
+  # "Player connected" line three seconds earlier.
+  #
+  # Documentation only -- nothing reads it. It is here so the next person
+  # asked to move a specific bot can answer "which one is that" in one grep.
+  gamertag: Dotablaze7321
 
   viewDistance: 4
 
