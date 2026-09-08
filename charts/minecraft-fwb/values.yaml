@@ -808,19 +808,18 @@ agent:
   # does nothing else.
   enabled: true
 
-  # Temporarily 0 so a human can sign in to the agent's Microsoft account and
-  # drive it by hand: one account holds one Minecraft session, so the agent has
-  # to be off the server for that to be possible at all.
+  # Taking this to 0 is how a human signs in to the agent's account and moves
+  # the character by hand: one Microsoft account holds one Minecraft session,
+  # so the agent has to be off the server first. Done on 2026-09-08 to park it
+  # somewhere safe -- it is a real player with no death or respawn handling, so
+  # where it stands is the difference between a stable agent and one that dies
+  # to a mob and goes quiet with nothing alerting.
   #
-  # Set here rather than with `kubectl scale`, which does not work: this
-  # Application syncs with selfHeal, and a scale done outside git was reverted
-  # within seconds (observed 2026-09-08). Same reason the bots' relocation
-  # procedure in the README goes through a PR.
-  #
-  # Restore to 1 when done. `replicas` rather than `enabled: false` on purpose
-  # -- disabling would delete the PVC holding the token cache and force another
-  # device-code login.
-  replicas: 0
+  # Use this value, not `kubectl scale`: the Application syncs with selfHeal
+  # and reverted a direct scale within seconds (observed). Use `replicas`, not
+  # `enabled: false`: disabling deletes the PVC holding the token cache and
+  # forces another device-code login.
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
