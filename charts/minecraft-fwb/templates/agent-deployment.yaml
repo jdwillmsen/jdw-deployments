@@ -66,6 +66,27 @@ spec:
               value: "http://{{ include "mcMonitor.host" . }}:8080/metrics"
             - name: BACKUP_EXPORTER_URL
               value: "http://{{ include "backup.exporter.name" . }}.{{ .Release.Namespace }}.svc.cluster.local:9101/metrics.txt"
+            {{- if .Values.agent.database.enabled }}
+            - name: PG_HOST
+              value: {{ .Values.agent.database.host | quote }}
+            - name: PG_PORT
+              value: {{ .Values.agent.database.port | quote }}
+            - name: PG_DATABASE
+              value: {{ .Values.agent.database.name | quote }}
+            # Username and password come from the ExternalSecret rather than
+            # from values: a DSN in plain env would put the password in the
+            # Deployment object, readable by anything that can get it.
+            - name: PG_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent.dbSecret.name" . }}
+                  key: PG_USERNAME
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent.dbSecret.name" . }}
+                  key: PG_PASSWORD
+            {{- end }}
             {{- if .Values.agent.llm.enabled }}
             - name: LLM_BASE_URL
               value: {{ .Values.agent.llm.baseUrl | quote }}
