@@ -811,14 +811,13 @@ agent:
   # and reverted a direct scale within seconds (observed). Use `replicas`, not
   # `enabled: false`: disabling deletes the PVC holding the token cache and
   # forces another device-code login.
-  # 0 again on 2026-09-08: the agent was killed from the console to establish
-  # what a dead agent looks like to monitoring, and respawned at world spawn
-  # rather than where it had been parked. Off so the account can be signed in
-  # to and the character moved back. Restore to 1 afterwards.
-  #
-  # Note 0.5.0 now respawns on death, so this particular clean-up should not
-  # recur -- but respawning still puts it at spawn, not where you left it.
-  replicas: 0
+  # Restored 2026-09-08 after the character was moved back by hand. Taking
+  # this to 0 is how that is done: one Microsoft account holds one Minecraft
+  # session, so the agent has to be off the server first, and freeing the
+  # account also needs `tools/mc run kick JDWServerAgent` because the server
+  # holds the session open after the client goes. `kubectl scale` does not
+  # work -- selfHeal reverts it within seconds.
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
