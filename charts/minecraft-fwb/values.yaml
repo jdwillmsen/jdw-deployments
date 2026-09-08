@@ -854,12 +854,22 @@ agent:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
-    # 0.5.0 respawns the agent when it dies and ties readiness to being alive
-    # in the world rather than merely connected to it -- a killed agent kept
-    # its session, kept reporting ready, and went silent, measured live on
-    # 2026-09-08. On top of profiles/playtime (0.4.0), !online/!version/!backup
-    # (0.2.0) and @server answering (0.3.0).
-    tag: "0.5.0"
+    # 0.7.0 carries three changes that had been merged but never released, so
+    # this bump is larger than the version gap suggests:
+    #
+    #   - a generated skin, so the agent is a coloured figure rather than the
+    #     black silhouette a headless client gets by default. Player-visible.
+    #   - the pkg/ export the AFK bot copies its shared packages from.
+    #   - protocol negotiation: the server runs Mojang's LATEST and upgrades
+    #     itself on restart, and a point release that bumps only the protocol
+    #     number gets a client kicked before login. That is how 1.26.45 took
+    #     the fleet offline over unchanged packets, and until this tag the
+    #     agent would not have survived a repeat.
+    #
+    # On top of respawn-on-death and liveness-based readiness (0.5.0),
+    # profiles/playtime (0.4.0), !online/!version/!backup (0.2.0) and @server
+    # answering (0.3.0).
+    tag: "0.7.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
