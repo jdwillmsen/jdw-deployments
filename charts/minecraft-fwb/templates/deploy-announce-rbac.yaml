@@ -1,0 +1,64 @@
+{{- if .Values.deployAnnounce.enabled }}
+# Created as a PreSync hook alongside the Job, so the identity exists before
+# the Job that assumes it. Without the hook annotations these would be applied
+# in the normal wave -- after the hook has already tried and failed to run.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "deployAnnounce.name" . }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "deployAnnounce.name" . }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+rules:
+  # Reads the pod to decide whether there is a running server to talk to, and
+  # its log to read back the player count the console prints.
+  #
+  # Restricted to the one pod by name. Unlike the backup actor, which holds the
+  # same exec permission namespace-wide, this runs on every sync of this
+  # Application -- including syncs that are themselves fixing something broken
+  # -- so it gets the narrowest grant that still works.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get"]
+  # exec is what sends the console command. It is the sharpest permission here
+  # and cannot be narrowed further than the pod: Kubernetes has no notion of
+  # "may exec, but only this binary". The Job's script only ever runs
+  # `send-command`, and the console-bridge's allowlist does not constrain this
+  # path -- exec bypasses the bridge entirely.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "deployAnnounce.name" . }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "deployAnnounce.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "deployAnnounce.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

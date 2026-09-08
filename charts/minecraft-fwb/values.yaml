@@ -502,6 +502,29 @@ versionCheck:
     tokenSecretName: mc-bot-dispatch-token
     tokenSecretKey: token
 
+# Warns players before a sync that might restart the server, as an ArgoCD
+# PreSync hook so the warning is part of the deployment rather than something
+# an operator has to remember and time by hand.
+#
+# Every restart on 2026-09-07/08 reached players either unannounced or with a
+# warning that turned out to be wrong. Both failures were the same one: this
+# Application auto-syncs, so a merge becomes a restart on Argo's schedule, not
+# on anyone's. A hook is the only place a warning can sit and still be ahead of
+# the change every time -- Argo runs PreSync to completion before it applies
+# anything.
+deployAnnounce:
+  enabled: true
+
+  # Held before every sync while anyone is connected. Two minutes is long
+  # enough to reach somewhere safe and short enough that routine deployments
+  # are not painful; it is the delay a player experiences, so it is the one
+  # number here worth arguing about.
+  leadSeconds: 120
+
+  # Same image as the other in-cluster actors: it needs kubectl and python3,
+  # both of which this one already carries.
+  image: alpine/k8s:1.36.2
+
 volumeRecovery:
   # The server's volume has twice remounted read-only underneath a running pod
   # after a transient error on the iSCSI path. Kubernetes cannot recover from

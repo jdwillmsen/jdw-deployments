@@ -1,0 +1,140 @@
+{{- if .Values.deployAnnounce.enabled }}
+# Warns players before a sync that might restart the server, as part of the
+# sync itself.
+#
+# Every restart on 2026-09-07/08 reached players either with no warning or with
+# one that was wrong, and the reason was structural rather than careless: this
+# Application auto-syncs with selfHeal, so merging *is* deploying, and the only
+# gap between the two is however long Argo takes to notice. Nothing an operator
+# sends by hand can be reliably timed into that gap -- one attempt fired three
+# minutes early, the next had no window at all because Argo went from
+# regenerating the Application to deleting the pod inside a single poll.
+#
+# A PreSync hook is the only place the warning can sit and still be ahead of
+# the change every time: Argo runs it to completion before applying anything,
+# so the countdown finishes before the StatefulSet is touched, whoever or
+# whatever triggered the sync.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "deployAnnounce.name" . }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    # Replace rather than accumulate: one object per sync, named the same, so a
+    # failed run is visible until the next sync instead of leaving a pile of
+    # completed Jobs behind.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  # Bounded well above the countdown itself. A hook that hangs blocks every
+  # sync for this Application -- including the sync that would fix it -- so it
+  # has to fail rather than wait.
+  activeDeadlineSeconds: {{ add .Values.deployAnnounce.leadSeconds 120 }}
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "deployAnnounce.name" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: announce
+          image: {{ .Values.deployAnnounce.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi
+              cpu: 200m
+          env:
+            - name: SERVER_POD
+              value: {{ include "backup.serverPod" . }}
+            - name: SERVER_CONTAINER
+              value: {{ .Release.Name }}-minecraft-bedrock
+            - name: LEAD_SECONDS
+              value: {{ .Values.deployAnnounce.leadSeconds | quote }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -uo pipefail
+              NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+              emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
+
+              say() {
+                local text="$1" json
+                # Encoded by json.dumps, never by string interpolation. A
+                # message containing a quote silently produced malformed
+                # rawtext and the server rejected it -- which is how a joke
+                # about broken deployments went out missing its punchline.
+                json="$(MSG="$text" python3 -c 'import json,os; print(json.dumps({"rawtext":[{"text":os.environ["MSG"]}]}))')"
+                timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                  -- send-command tellraw @a "$json" >/dev/null 2>&1
+              }
+
+              # Never block a sync. Every failure below reports and exits 0:
+              # the server being unreachable is a reason to skip the courtesy,
+              # never a reason to stop the deployment that might be fixing it.
+              if ! kubectl get pod -n "$NS" "$SERVER_POD" >/dev/null 2>&1; then
+                emit skipped "server pod absent, nothing to warn"
+                exit 0
+              fi
+
+              READY="$(kubectl get pod -n "$NS" "$SERVER_POD" \
+                -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "")"
+              if [[ "$READY" != "true" ]]; then
+                emit skipped "server not ready, nobody is connected to warn"
+                exit 0
+              fi
+
+              # Ask the server who is on. `grep -a` because the console log
+              # carries binary bytes and grep otherwise refuses the whole
+              # stream -- the same defect that makes `tools/mc players` report
+              # zero while four people are playing.
+              timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                -- send-command list >/dev/null 2>&1
+              sleep 2
+              ONLINE="$(kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --tail=20 2>/dev/null \
+                | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 \
+                | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
+
+              if [[ -z "$ONLINE" ]]; then
+                emit unknown "could not read the player count; warning anyway"
+                ONLINE=1
+              fi
+
+              if [[ "$ONLINE" -eq 0 ]]; then
+                emit skipped "nobody online, syncing immediately"
+                exit 0
+              fi
+
+              emit warning "$ONLINE player(s) online, holding the sync for ${LEAD_SECONDS}s"
+
+              say "§6§lServer update incoming.§r§e A short restart may follow in ${LEAD_SECONDS} seconds."
+              say "§7Your world and inventory are safe. You will be able to rejoin straight after."
+
+              # Milestones, not a tick per second: a message every second is
+              # what buried the explanation last time and is why players could
+              # not tell a countdown from a fault.
+              REMAINING="$LEAD_SECONDS"
+              for milestone in 60 30 10; do
+                if [[ "$REMAINING" -gt "$milestone" ]]; then
+                  sleep $((REMAINING - milestone))
+                  REMAINING="$milestone"
+                  say "§e${milestone} seconds until the update."
+                fi
+              done
+              sleep "$REMAINING"
+
+              say "§c§lUpdating now.§r§c If you are disconnected, rejoin in about a minute."
+              emit done "countdown complete, releasing the sync"
+{{- end }}

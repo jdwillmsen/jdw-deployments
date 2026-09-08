@@ -65,3 +65,7 @@
 {{- define "agent.name" -}}
 {{ .Release.Name }}-server-agent
 {{- end -}}
+
+{{- define "deployAnnounce.name" -}}
+{{ .Release.Name }}-deploy-announce
+{{- end -}}
