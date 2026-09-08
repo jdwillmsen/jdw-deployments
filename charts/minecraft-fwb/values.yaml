@@ -653,22 +653,17 @@ bot:
   # See bot2.gamertag for why this is recorded. Documentation only.
   gamertag: LightBlaz3
 
-  # Matched to the server's tickDistance (12), which is Bedrock's maximum.
+  # Inert. This bot runs the TypeScript implementation, whose client library
+  # reads the requested radius from `client.viewDistance` while storing the
+  # value it was given at `client.options.viewDistance` -- a property nothing
+  # in the package ever assigns. The request therefore always falls back to
+  # the library's hardcoded 10, whatever is set here.
   #
-  # This was 4, on the reasoning that the value "only governs how many chunks
-  # the server sends this client" and that simulation is bounded by
-  # tickDistance regardless. The first half is certain. The second assumes
-  # chunks are loaded out to tickDistance independently of what the client
-  # asks for -- and if loading instead follows the client's radius, a bot
-  # requesting 4 keeps roughly 5 chunks loaded and nothing beyond them can
-  # tick, whatever tickDistance says.
-  #
-  # Both readings look identical from outside: the farm produces either way,
-  # and nobody can see the difference between working and working at a third
-  # of the area. Matching tickDistance makes the question moot rather than
-  # answering it, which is the cheaper fix -- the chunks are sent once per
-  # session over a LAN, against a farm that may have been quietly
-  # under-ticking.
+  # Kept at 12 rather than removed so the two bots read the same, and so this
+  # does not turn back into a live setting unnoticed if the bot moves to the
+  # Go implementation, where the value is honoured. The 10/12 difference
+  # against bot2 is a known confound in the Go-versus-TypeScript comparison
+  # and is small next to the 5-versus-12 gap that existed before.
   viewDistance: 12
 
   # A single idle UDP session and a JSON log line per chat message — 500m was
@@ -767,10 +762,15 @@ bot2:
   # asked to move a specific bot can answer "which one is that" in one grep.
   gamertag: Dotablaze7321
 
-  # Held equal to bot.viewDistance deliberately -- see the reasoning there.
-  # This bot is the Go canary, so radius is the one thing that must not differ
-  # between the pair: if it did, a change in farm output could not be
-  # attributed to the rewrite rather than to the radius.
+  # Matched to the server's tickDistance (12), which is Bedrock's maximum.
+  #
+  # This was 4, on the reasoning that the value only governs how many chunks
+  # the server sends and that simulation is bounded by tickDistance anyway, so
+  # a low value cost bandwidth and nothing else. That was wrong: measured on
+  # 2026-09-08, requesting 4 was granted 5 and requesting 12 was granted 12,
+  # so the server honours what the client asks for rather than extending to
+  # tickDistance. The bot was holding roughly a fifth of the area it was
+  # supposed to, and nothing showed it -- the farm produced either way.
   viewDistance: 12
 
   # Sized from bot's live-measured usage (46m CPU / 89Mi, see above) rather
