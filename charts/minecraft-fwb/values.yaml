@@ -818,10 +818,23 @@ consoleBridge:
 # makes turning it on ahead of the login safe rather than premature.
 agent:
   # Enabled 2026-09-08 once every prerequisite was checked rather than assumed:
-  # the image pulls (verified by a throwaway pod on the target node, not by a
-  # registry API call -- ghcr answers 404 anonymously for these packages even
-  # when the kubelet can pull them fine), the console-bridge it talks to holds
-  # a live console connection, and the Secret behind both exists.
+  # the image pulls (verified by a throwaway pod on the target node), the
+  # console-bridge it talks to holds a live console connection, and the Secret
+  # behind both exists.
+  #
+  # A throwaway pod is still the check worth running, because it exercises
+  # what the kubelet actually does. But the reason first recorded here --
+  # that ghcr answers 404 anonymously for these packages -- was a misreading.
+  # These images are single-arch OCI image manifests, not indexes, and ghcr
+  # returns 404 unless the request's Accept header names that exact type:
+  #
+  #   Accept: application/vnd.oci.image.manifest.v1+json   -> 200
+  #   Accept: application/vnd.oci.image.index.v1+json      -> 404
+  #   Accept: application/vnd.docker.distribution.manifest.list.v2+json -> 404
+  #
+  # The packages are anonymously readable. Worth knowing, because reading that
+  # 404 as "private" is how a real authentication failure later gets waved
+  # through as normal.
   #
   # Turning this on does not restart the server: it adds a Deployment, a PVC
   # and a ServiceMonitor, and leaves the StatefulSet byte-identical. Confirmed
