@@ -746,7 +746,21 @@ consoleBridge:
 # sidecar and this Deployment gated off), then complete the one-time
 # device-code login and the in-game allowlist add, then flip this on.
 agent:
-  enabled: false
+  # Enabled 2026-09-08 once every prerequisite was checked rather than assumed:
+  # the image pulls (verified by a throwaway pod on the target node, not by a
+  # registry API call -- ghcr answers 404 anonymously for these packages even
+  # when the kubelet can pull them fine), the console-bridge it talks to holds
+  # a live console connection, and the Secret behind both exists.
+  #
+  # Turning this on does not restart the server: it adds a Deployment, a PVC
+  # and a ServiceMonitor, and leaves the StatefulSet byte-identical. Confirmed
+  # by rendering the chart both ways and hashing the StatefulSet.
+  #
+  # The agent still cannot join until its Microsoft account completes a
+  # one-time device-code login and its gamertag is on the allowlist -- see
+  # README steps 5 and 6. Until then it runs, logs device_code_required, and
+  # does nothing else.
+  enabled: true
   replicas: 1
 
   image:
