@@ -653,11 +653,23 @@ bot:
   # See bot2.gamertag for why this is recorded. Documentation only.
   gamertag: LightBlaz3
 
-  # Only governs how many chunks the server sends this client. Simulation is
-  # bounded by the server's own tickDistance, so a small value costs bandwidth
-  # and nothing else — it does not shrink the area the bot's presence keeps
-  # ticking.
-  viewDistance: 4
+  # Matched to the server's tickDistance (12), which is Bedrock's maximum.
+  #
+  # This was 4, on the reasoning that the value "only governs how many chunks
+  # the server sends this client" and that simulation is bounded by
+  # tickDistance regardless. The first half is certain. The second assumes
+  # chunks are loaded out to tickDistance independently of what the client
+  # asks for -- and if loading instead follows the client's radius, a bot
+  # requesting 4 keeps roughly 5 chunks loaded and nothing beyond them can
+  # tick, whatever tickDistance says.
+  #
+  # Both readings look identical from outside: the farm produces either way,
+  # and nobody can see the difference between working and working at a third
+  # of the area. Matching tickDistance makes the question moot rather than
+  # answering it, which is the cheaper fix -- the chunks are sent once per
+  # session over a LAN, against a farm that may have been quietly
+  # under-ticking.
+  viewDistance: 12
 
   # A single idle UDP session and a JSON log line per chat message — 500m was
   # never load-driven, and it silently ate the CPU headroom the bedrock
@@ -755,7 +767,11 @@ bot2:
   # asked to move a specific bot can answer "which one is that" in one grep.
   gamertag: Dotablaze7321
 
-  viewDistance: 4
+  # Held equal to bot.viewDistance deliberately -- see the reasoning there.
+  # This bot is the Go canary, so radius is the one thing that must not differ
+  # between the pair: if it did, a change in farm output could not be
+  # attributed to the rewrite rather than to the radius.
+  viewDistance: 12
 
   # Sized from bot's live-measured usage (46m CPU / 89Mi, see above) rather
   # than guessed — same workload shape, same numbers.
