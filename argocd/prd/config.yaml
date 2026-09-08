@@ -7,3 +7,12 @@ apps:
     valueFiles:
       - values.yaml
       - values-prd.yaml
+      # Wires the console-bridge sidecar and the server's own websocket
+      # console. Last, so its extraEnv merges over the two above.
+      #
+      # Landing this restarts the server pod, and it binds the server's
+      # startup to the minecraft-fwb-console-bridge Secret existing. Removing
+      # this line is the way to undo that. Do not add it back without the
+      # ExternalSecret reading SecretSynced first -- see README, "Enabling the
+      # console bridge", for why that order is not optional.
+      - values-console-bridge.yaml
