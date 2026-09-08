@@ -735,7 +735,7 @@ bot2:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
-    # 1.0.0 is the Go rewrite; bot above stays on 0.3.1 as a live control.
+    # The Go implementation; bot above stays on TypeScript as a live control.
     #
     # This is a canary, not a migration. The two bots do the same job on the
     # same server under the same conditions, so the farm's own output is the
@@ -743,9 +743,16 @@ bot2:
     # but subtly fails to hold chunks looks perfectly healthy from Kubernetes,
     # which is exactly the failure this pairing exists to catch.
     #
+    # 1.1.0 restores protocol negotiation, which the Go rewrite dropped. The
+    # server runs Mojang's LATEST and upgrades itself on restart, and a point
+    # release that bumps only the protocol number gets a client kicked before
+    # login -- how 1.26.45 took the whole fleet offline over unchanged
+    # packets. Until this tag, the TypeScript bot was the only client on the
+    # server that would have survived a repeat.
+    #
     # Rolling back is this value. The TypeScript image is not going anywhere
     # until the farm says the Go one works.
-    tag: "1.0.0"
+    tag: "1.1.0"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
