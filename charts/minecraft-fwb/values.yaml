@@ -702,43 +702,15 @@ bot:
   # The server agent now replies in chat, so without this the answering bot has
   # an interlocutor that talks back -- two automated speakers and a 6/minute
   # rate limit between them and a loop.
-  botNames:
-    - Dotablaze7321
-    - JDWServerAgent
-
-  # Chat-question answering (see minecraft-afk-bot's README for the full env
-  # var reference).
-  answer:
-    # Enabled on this bot only — never bot2, which has no MC_LLM_*/
-    # MC_BOT_NAMES wiring and would answer this bot's replies forever
-    # (structurally guarded in bot2-deployment.yaml, not just defaulted off).
-    # The 0.3.0 crash-loop that forced this off (#51) was a mistagged image,
-    # not a code issue — 0.3.1 (#52) has been stable in the cluster since.
-    enabled: true
-    cooldownSeconds: 30
-    maxPerMinute: 6
-
-  llm:
-    # Cluster's own vLLM instance: unmetered, free, no auth needed. See
-    # apiKeySecret below for a hosted backend that does need one.
-    baseUrl: http://192.168.1.50:8000/v1
-    model: qwen/qwen3-coder-30b-a3b
-    timeoutMs: 8000
-    maxTokens: 96
-    apiKeySecret:
-      # Inert today — the default local-vLLM backend needs no key. Flip to
-      # true only after `vault kv put` has populated the property below for
-      # a hosted backend (Groq/Gemini/LiteLLM); this just wires the plumbing
-      # ahead of time so that switch is values-only.
-      create: false
-      name: minecraft-fwb-bot-llm
-      key: llm_api_key
-
-# Second, independent AFK bot — its own account, its own token cache, its own
-# player slot. Mirrors `bot` above rather than a generic list: this chart
-# already keeps backup/recovery/restore as separate named blocks with their
-# own templates, and a real list would rename the first bot's Deployment/PVC
-# (currently unsuffixed) and orphan its already-authenticated token cache.
+  # Chat answering moved to minecraft-server-agent on 2026-09-08, where it is
+  # reached with @server. botNames, answer and llm all went with it: they
+  # existed only so one answering bot would not answer another into a loop, and
+  # with nothing here answering there is nothing left to guard.
+  #
+  # Removing the variables is what disables it. The bot image defaults every
+  # one of them -- MC_ANSWER_ENABLED absent reads as false, the numerics fall
+  # back in config.ts -- so absence is off, where a zero would have tripped the
+  # positive-int validators and crash-looped the pod.
 bot2:
   # Same two-step bootstrap as `bot`: off until the account exists and the
   # image tag is published, then flipped on for the device-code login.
@@ -793,19 +765,8 @@ bot2:
   # duplicate: bot would answer bot2's answer, bot2 would answer that reply,
   # forever. This bot only holds a slot and mirrors chat — see bot.answer
   # above for the one that answers.
-  answer:
-    enabled: false
+  # No answering here either; see bot's note above.
 
-# The console-bridge sidecar (see minecraft-bedrock.sidecarContainers above)
-# — the only thing in this deployment with write access to the server
-# console. Lives inside the server's own StatefulSet pod, so this section is
-# just the Service that exposes its HTTP API to the agent Deployment below.
-# The secret name is under `global:` at the top of this file, not here —
-# both this chart's own templates and the vendored subchart's
-# sidecarContainers need it, and only `global:` crosses that boundary.
-# There is no separate image/tag value for this sidecar either: the literal
-# image ref lives directly in minecraft-bedrock.sidecarContainers (see the
-# comment there for why).
 consoleBridge:
   # No `enabled` here on purpose. This chart's own console-bridge templates
   # read global.consoleBridge.enabled, the same flag the sidecar needs, so
