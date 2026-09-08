@@ -815,9 +815,12 @@ agent:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
-    # 0.4.0 adds player profiles, playtime and welcome variants (Stage 3), on
-    # top of !online/!version/!backup (0.2.0) and @server answering (0.3.0).
-    tag: "0.4.0"
+    # 0.5.0 respawns the agent when it dies and ties readiness to being alive
+    # in the world rather than merely connected to it -- a killed agent kept
+    # its session, kept reporting ready, and went silent, measured live on
+    # 2026-09-08. On top of profiles/playtime (0.4.0), !online/!version/!backup
+    # (0.2.0) and @server answering (0.3.0).
+    tag: "0.5.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
