@@ -893,7 +893,25 @@ agent:
     # On top of the skin, pkg/ export and protocol negotiation (0.7.0),
     # respawn-on-death and liveness-based readiness (0.5.0), profiles/playtime
     # (0.4.0), !online/!version/!backup (0.2.0) and @server answering (0.3.0).
-    tag: "0.8.0"
+    #
+    # 0.9.0 is Stage 5: !kb (a curated fact store, open to read and
+    # operator-only to write), !wp (per-player coordinates, whispered because
+    # broadcasting where someone lives is a griefing vector), and a bounded
+    # tool-calling loop that lets the model look both up before it answers an
+    # @server question.
+    #
+    # Needs the V3 migration that landed alongside it, and this time that was
+    # verified rather than assumed: minecraft.knowledge and minecraft.waypoints
+    # exist, and the app role holds SELECT/INSERT/UPDATE/DELETE on both, so V2's
+    # default privileges covered the new tables. Against a database without
+    # them, !kb and !wp fail into a logged error the dispatcher never replies
+    # to, which players read as the commands not existing.
+    #
+    # Answering also moved off the Bedrock packet read loop in this release. A
+    # tool-calling exchange makes up to three sequential backend calls, and
+    # doing that inline stopped the agent hearing anything -- joins, commands,
+    # chat -- for the duration.
+    tag: "0.9.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
@@ -971,8 +989,19 @@ agent:
     enabled: true
     baseUrl: http://192.168.1.50:8000/v1
     model: qwen/qwen3-coder-30b-a3b
-    maxTokens: 96
+    # 96 was sized for a single chat line and cannot hold a tool call's
+    # arguments plus an answer on top of it.
+    maxTokens: 192
+    # Per call. Each request the answering loop makes gets its own bound, so
+    # one stalled request cannot consume the whole attempt.
     timeoutMs: 8000
+    # The whole attempt, every tool round trip included. This must be at least
+    # (MaxToolRounds + 1) x timeoutMs -- three calls at 8s, so 24s -- with
+    # margin, or a model that uses both of its tool rounds is cancelled before
+    # it ever answers and the player who asked simply gets silence. The agent
+    # defaults to this same value; it is set here so the relationship between
+    # the two is visible in one place rather than inferred from a default.
+    totalTimeoutMs: 30000
 
     # Deliberately below the command limit (10/min). One answer costs an LLM
     # call; one command costs a console round trip.
