@@ -96,6 +96,8 @@ spec:
               value: {{ .Values.agent.llm.maxTokens | quote }}
             - name: LLM_TIMEOUT_MS
               value: {{ .Values.agent.llm.timeoutMs | quote }}
+            - name: LLM_TOTAL_TIMEOUT_MS
+              value: {{ .Values.agent.llm.totalTimeoutMs | quote }}
             - name: ANSWER_MAX_PER_MINUTE
               value: {{ .Values.agent.llm.maxPerMinute | quote }}
             {{- end }}
