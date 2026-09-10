@@ -911,7 +911,29 @@ agent:
     # tool-calling exchange makes up to three sequential backend calls, and
     # doing that inline stopped the agent hearing anything -- joins, commands,
     # chat -- for the duration.
-    tag: "0.9.0"
+    #
+    # 0.10.0 batches three merged changes into one release so the account
+    # takes one login rather than three. The hold that took the agent down
+    # on 2026-09-09 followed a dozen restarts in an afternoon; every restart
+    # is a fresh Xbox Live authentication, so releases are batched on purpose.
+    #
+    #   - Announcements: !announce for operators, !inbox for players, and
+    #     queued messages delivered on join. A message for an offline player
+    #     waits for them, whispered, rather than being lost.
+    #   - A durable command audit in minecraft.command_audit. It records who
+    #     ran what at which permission and the outcome, and deliberately not
+    #     the reply text, which can carry whispered coordinates.
+    #   - Auth backoff: an Xbox Live account rejection now waits fifteen
+    #     minutes between attempts instead of retrying on the five-minute
+    #     ladder, which can extend the very hold it is waiting out. It still
+    #     retries, because that is what recovered the agent unattended.
+    #   - The play-test fixes: knowledge lookup matches phrasing players
+    #     actually use, and !wp lists coordinates and accepts x= y= z=.
+    #
+    # Needs the V4 migration, which is already applied — and the app role was
+    # verified able to write all three new tables against the live database
+    # before this bump, rather than assumed from the V2 default privileges.
+    tag: "0.10.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
