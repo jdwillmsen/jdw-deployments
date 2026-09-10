@@ -933,7 +933,14 @@ agent:
     # Needs the V4 migration, which is already applied — and the app role was
     # verified able to write all three new tables against the live database
     # before this bump, rather than assumed from the V2 default privileges.
-    tag: "0.10.0"
+    #
+    # 0.10.1 makes !ping measure the server rather than the agent: TPS read
+    # off the game clock with `time query gametime` (already on the bridge
+    # allowlist), plus the round trip over the agent's Bedrock connection.
+    # It adds one console command a minute, and so one "Gametime is" line a
+    # minute in the server log, which is the baseline every ping measures
+    # against. No migration.
+    tag: "0.10.1"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
