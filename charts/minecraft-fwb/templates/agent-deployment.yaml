@@ -101,6 +101,17 @@ spec:
             - name: ANSWER_MAX_PER_MINUTE
               value: {{ .Values.agent.llm.maxPerMinute | quote }}
             {{- end }}
+            {{- with .Values.agent.moderation.terms }}
+            - name: MODERATION_TERMS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.agent.announceApi.existingSecret }}
+            - name: ANNOUNCE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $.Values.agent.announceApi.secretKey | quote }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.agent.metrics.port }}
