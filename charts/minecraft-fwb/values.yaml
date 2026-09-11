@@ -1004,7 +1004,22 @@ agent:
     # private; a console tellraw arrives as a different text type and keeps
     # the broadcast. Minor rather than patch because it changes where an
     # existing reply goes. No migration.
-    tag: "0.12.0"
+    #
+    # 0.13.0 answers an unknown or refused command instead of returning
+    # silence, which a player cannot tell apart from the agent being offline.
+    #
+    # Unknown is answered only when whispered. Any message opening with "!"
+    # parses as a command, so "!!!" and "!nice that was close" reach the same
+    # branch, and answering all of them would have the agent talking over
+    # ordinary chat -- which is why it was silent to begin with. A whisper has
+    # no conversation to talk over.
+    #
+    # A refusal is answered either way, because it can only happen for a
+    # command that actually exists; nothing conversational reaches it. That
+    # names a command !help would have hidden, which is the deliberate trade:
+    # silence after a correct guess is indistinguishable from a broken agent.
+    # No migration.
+    tag: "0.13.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
