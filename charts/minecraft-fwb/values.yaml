@@ -940,7 +940,25 @@ agent:
     # It adds one console command a minute, and so one "Gametime is" line a
     # minute in the server log, which is the baseline every ping measures
     # against. No migration.
-    tag: "0.10.1"
+    #
+    # 0.11.0 is what makes 0.10.1's measurement visible. The metrics package
+    # that exports it was merged and then never tagged, so prod has been
+    # scraping an agent that only ever published mc_agent_connected and
+    # mc_agent_reconnects_total: !ping could answer a player in chat while
+    # Prometheus held no TPS series at all. This bump adds nine, of which
+    # mc_agent_server_tps and mc_agent_tps_last_success_timestamp_seconds are
+    # the pair worth alerting on — the gauge is a vector with no labels so it
+    # does not exist until something measures it, and the timestamp is a
+    # plain gauge so a run of failures reads as stale rather than as a
+    # crashed server reporting zero.
+    #
+    # Also raises the chat reply cap from 200 to 400 characters. The old cap
+    # was justified in code as Bedrock's own line limit; measured against
+    # this server, tellraw carried 2000 characters intact, so the limit was
+    # ours and it was cutting real answers mid-word with no ellipsis. 400
+    # stays inside the LLM_MAX_TOKENS=192 this chart already sets, so the cap
+    # that shortens a reply is the one that cuts cleanly. No migration.
+    tag: "0.11.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
