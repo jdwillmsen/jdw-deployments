@@ -982,7 +982,15 @@ agent:
     # ours and it was cutting real answers mid-word with no ellipsis. 400
     # stays inside the LLM_MAX_TOKENS=192 this chart already sets, so the cap
     # that shortens a reply is the one that cuts cleanly. No migration.
-    tag: "0.11.0"
+    #
+    # 0.11.1 makes !wp help and !kb help answer with the command's own syntax.
+    # Both fell through to their lookup branch and reported "You have no
+    # waypoint called help" / "I don't know anything about help", so the word a
+    # player reaches for when the syntax is not obvious was the one word that
+    # could not tell them it. help is now reserved in both stores beside set
+    # and del, since a name the switch intercepts could otherwise be stored and
+    # never read back. Reported in game. No migration.
+    tag: "0.11.1"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
