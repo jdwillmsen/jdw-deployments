@@ -1019,7 +1019,24 @@ agent:
     # names a command !help would have hidden, which is the deliberate trade:
     # silence after a correct guess is indistinguishable from a broken agent.
     # No migration.
-    tag: "0.13.0"
+    #
+    # 0.14.0 is the Stage 6 batch, shipped as one restart because each restart
+    # is a fresh Xbox Live login. Its migrations (V5 schedules, V6 moderation)
+    # were applied in jdwillmsen_prd and granted to the app role before this
+    # bump; every feature below answers "not available" without its table.
+    #
+    # - Leaves are recorded. The server's removal record carries only a UUID,
+    #   so until now no session was ever closed and a rejoin never counted as
+    #   a join again.
+    # - Announcements from events (first sight of a player and stale backups
+    #   to operators; playtime milestones and version changes to everyone),
+    #   from !schedule, and from the HTTP API configured below.
+    # - A moderation audit of flagged public chat, served through !modlog.
+    # - Replies no longer carry tool-call markup or end on a question.
+    #
+    # Playtime now counts only time the agent watched: a reconnect, and so
+    # this restart, starts a fresh session for everyone online.
+    tag: "0.14.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
@@ -1114,3 +1131,22 @@ agent:
     # Deliberately below the command limit (10/min). One answer costs an LLM
     # call; one command costs a console round trip.
     maxPerMinute: 4
+
+  # Words whose use in public chat is recorded in the moderation audit and
+  # answered with a whispered warning. Empty keeps that one rule off; the
+  # flood and caps rules need no configuration and run regardless. Matching
+  # is case-insensitive on word boundaries. Nothing is kicked, muted or
+  # banned: the console bridge's allowlist permits none of that, and widening
+  # it is a separate security decision.
+  moderation:
+    terms: []
+
+  # POST /announcements for in-cluster systems such as deploy hooks. Off until
+  # existingSecret names a Secret holding a bearer token under secretKey: with
+  # no token the agent does not mount the endpoint at all, so a disabled API
+  # answers exactly as an absent one does. The Secret is created by a human
+  # outside any agent session, never by this chart, so the token never passes
+  # through a transcript or a values file.
+  announceApi:
+    existingSecret: ""
+    secretKey: token
