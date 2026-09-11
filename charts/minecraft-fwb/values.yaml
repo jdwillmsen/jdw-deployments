@@ -84,13 +84,37 @@ minecraft-bedrock:
   # peak — real headroom, not a guess — and frees enough quota for the backup
   # (1000m) and volume-recovery (500m) CronJobs to schedule even if both land
   # at once alongside both AFK bots and the mc-monitor sidecar.
-  # Memory left as-is; usage stayed well under the old 4Gi limit.
+  # Memory no longer stays under 4Gi, and the shortfall is paid in chunk-load
+  # stutter rather than in OOM kills. Measured in the container's own cgroup
+  # 2026-09-11: memory.current 3.75Gi against a 4Gi max (87%), of which anon is
+  # 2.88Gi -- the server's chunk cache, which scales with view-distance --
+  # leaving 0.83Gi of page cache. The world is 509MB and would fit in cache
+  # whole, so what is left is not enough to hold it and the kernel evicts
+  # continuously. Every eviction sends the next read of that chunk back to an
+  # iSCSI volume over the network, which is the stall players feel flying into
+  # new terrain. 8Gi is sized to hold the world in cache alongside the heap
+  # with room for the heap to grow, not to stop an OOM that was not happening.
+  #
+  # The request follows actual usage rather than the old guess: 2Gi was below
+  # what the container has been consuming all along, so the scheduler has been
+  # placing this pod against a figure that was never true.
+  #
+  # cpu is deliberately NOT raised with it. The limit looks like the obvious
+  # companion change and is the one that bites: this namespace's quota caps
+  # limits.cpu at 8000m, 4700m of which is already committed, and backup
+  # (1000m) + volume-recovery (500m) + version-check (500m) can land together.
+  # Taking this container to 6 would leave 1300m against a 2000m worst case and
+  # re-run the August incident where three days of backups failed FailedCreate.
+  # It is also the wrong lever: cgroup cpu.stat shows 8361 throttled periods out
+  # of 839700 (1.0%), so CPU is real but secondary to the cache eviction above.
+  # The request moves 1500m -> 2000m only, which spends requests.cpu quota
+  # rather than limits.cpu, and matches the 1.6-1.75 cores actually observed.
   resources:
     requests:
-      memory: 2Gi
-      cpu: 1500m
-    limits:
       memory: 4Gi
+      cpu: 2000m
+    limits:
+      memory: 8Gi
       cpu: "4"
 
   # Bedrock ticks on a single core and uses others for chunk loading, so nodes
