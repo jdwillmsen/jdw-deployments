@@ -990,7 +990,21 @@ agent:
     # could not tell them it. help is now reserved in both stores beside set
     # and del, since a name the switch intercepts could otherwise be stored and
     # never read back. Reported in game. No migration.
-    tag: "0.11.1"
+    #
+    # 0.12.0 answers a whispered @server question privately. Commands already
+    # behaved this way -- a reply goes back the way the command came in, which
+    # is why !wp whispers coordinates -- but the mention path broadcast every
+    # answer except one built from the asker's own waypoints. A player who
+    # whispered a question therefore had it answered in front of everybody,
+    # publishing the question they had chosen not to ask in public.
+    #
+    # Open chat still gets a broadcast, and deliberately: an answer only the
+    # asker can see reads as no answer at all to everyone who watched them
+    # ask. A whisper has no such audience. Only Bedrock's /tell counts as
+    # private; a console tellraw arrives as a different text type and keeps
+    # the broadcast. Minor rather than patch because it changes where an
+    # existing reply goes. No migration.
+    tag: "0.12.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
