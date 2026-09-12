@@ -2,7 +2,7 @@
 # Carries the server's values digest from one sync to the next.
 #
 # This is what lets the PreSync hook tell "the server is about to restart" from
-# "a bot is being scaled". Argo applies hooks before manifests, so when the
+# "the chat agent is restarting" from "a bot is being scaled". Argo applies hooks before manifests, so when the
 # hook runs this object still holds the *previous* sync's digest, while the
 # hook is handed the new one. Different means the server workload changed;
 # equal means whatever is being deployed does not touch it.
@@ -17,4 +17,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   hash: {{ include "deployAnnounce.serverSpecHash" . | quote }}
+  # The agent's digest, kept beside the server's so one sync's comparison
+  # covers both. An agent-only change restarts the bot without touching the
+  # server: no countdown is owed, but players watching it leave chat deserve
+  # to know it was a release rather than a crash.
+  agentHash: {{ include "deployAnnounce.agentSpecHash" . | quote }}
 {{- end }}

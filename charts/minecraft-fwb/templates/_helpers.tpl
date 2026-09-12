@@ -87,6 +87,10 @@ does.
 {{ index .Values "minecraft-bedrock" | toYaml | sha256sum | trunc 16 }}
 {{- end -}}
 
+{{- define "deployAnnounce.agentSpecHash" -}}
+{{ .Values.agent | toYaml | sha256sum | trunc 16 }}
+{{- end -}}
+
 {{- define "deployAnnounce.hashConfigMap" -}}
 {{ .Release.Name }}-server-spec-hash
 {{- end -}}
