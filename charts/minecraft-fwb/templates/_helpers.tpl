@@ -89,8 +89,9 @@ does.
 
 {{/*
 A digest of the values that determine the chat agent's Deployment -- empty
-whenever this sync leaves no agent in chat, which is the same three conditions
-that Deployment renders under.
+whenever this sync leaves no agent in chat: the two flags that Deployment
+renders under, and a replica count above zero, since the Deployment renders
+at zero replicas but no bot is there to announce anything about.
 
 Kept apart from the server's digest rather than folded into it, because the two
 earn different announcements: a server restart disconnects everyone and is worth
