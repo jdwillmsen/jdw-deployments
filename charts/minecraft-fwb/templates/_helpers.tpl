@@ -87,6 +87,37 @@ does.
 {{ index .Values "minecraft-bedrock" | toYaml | sha256sum | trunc 16 }}
 {{- end -}}
 
+{{/*
+A digest of the values that determine the chat agent's Deployment -- empty
+whenever this sync leaves no agent in chat: the two flags that Deployment
+renders under, and a replica count above zero, since the Deployment renders
+at zero replicas but no bot is there to announce anything about.
+
+Kept apart from the server's digest rather than folded into it, because the two
+earn different announcements: a server restart disconnects everyone and is worth
+holding the sync for, while an agent restart only takes the bot out of chat for
+the length of a fresh login.
+
+Empty rather than a real digest when no agent will be there, because turning the
+agent off, or parking it at zero replicas to free its Microsoft account, moves
+its values too. Both the recorded digest and the hook's comparison use this, so
+an empty value on either side means "no agent was in chat", and neither losing
+the bot nor getting it back is announced as an update -- telling players it
+"will come straight back" about a sync that takes it away for good is the kind
+of wrong warning this hook exists to stop sending.
+
+Same approximation as the server's, for the same reason, with the same gap: a
+change to the agent's template rather than to these values -- a probe, a
+rollout strategy -- moves the pod without moving this digest, and that sync
+stays quiet.
+*/}}
+{{- define "deployAnnounce.agentSpecHash" -}}
+{{- if and .Values.agent.enabled .Values.global.consoleBridge.enabled
+          (gt (int .Values.agent.replicas) 0) -}}
+{{ .Values.agent | toYaml | sha256sum | trunc 16 }}
+{{- end -}}
+{{- end -}}
+
 {{- define "deployAnnounce.hashConfigMap" -}}
 {{ .Release.Name }}-server-spec-hash
 {{- end -}}

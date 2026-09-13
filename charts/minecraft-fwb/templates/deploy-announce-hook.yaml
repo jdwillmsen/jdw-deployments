@@ -64,6 +64,8 @@ spec:
               value: {{ .Values.deployAnnounce.leadSeconds | quote }}
             - name: EXPECTED_SPEC_HASH
               value: {{ include "deployAnnounce.serverSpecHash" . | quote }}
+            - name: EXPECTED_AGENT_HASH
+              value: {{ include "deployAnnounce.agentSpecHash" . | quote }}
             - name: SPEC_HASH_CONFIGMAP
               value: {{ include "deployAnnounce.hashConfigMap" . }}
           command: ["/bin/bash", "-c"]
@@ -116,12 +118,32 @@ spec:
               # be applied.
               LIVE_HASH="$(kubectl get configmap -n "$NS" "$SPEC_HASH_CONFIGMAP" \
                 -o jsonpath='{.data.hash}' 2>/dev/null || echo "")"
+              LIVE_AGENT_HASH="$(kubectl get configmap -n "$NS" "$SPEC_HASH_CONFIGMAP" \
+                -o jsonpath='{.data.agentHash}' 2>/dev/null || echo "")"
               if [[ -z "$LIVE_HASH" ]]; then
                 # First sync after this was introduced, or someone deleted it.
                 # Warn: an unknown previous state is not evidence of no change,
                 # and a spurious warning is cheaper than a silent restart.
                 emit unknown "no previous spec digest; warning rather than assuming no restart"
               elif [[ "$LIVE_HASH" == "$EXPECTED_SPEC_HASH" ]]; then
+                # The server is not restarting. The chat agent might be, and
+                # that is worth one line: it leaves chat for the length of a
+                # fresh Xbox Live login, which looks exactly like a crash to
+                # everyone watching. No countdown and no hold -- nobody is
+                # being disconnected, so there is nothing to save.
+                #
+                # A missing previous agent digest stays silent, the opposite of
+                # the unknown-server case above, because the costs are not
+                # symmetric: an unannounced server restart throws players out,
+                # while an unannounced agent release costs a few seconds of
+                # confusion. On the first sync after this shipped there is no
+                # agent digest to compare, and a notice then would be a guess.
+                if [[ -n "$EXPECTED_AGENT_HASH" && -n "$LIVE_AGENT_HASH" \
+                      && "$LIVE_AGENT_HASH" != "$EXPECTED_AGENT_HASH" ]]; then
+                  emit agent "agent spec changing ($LIVE_AGENT_HASH -> $EXPECTED_AGENT_HASH); one notice, no countdown"
+                  say "§b§lChat assistant updating.§r§7 It will drop out of chat for a few seconds and come straight back. The server is not restarting."
+                  exit 0
+                fi
                 emit skipped "server spec unchanged ($EXPECTED_SPEC_HASH); this sync does not restart the server"
                 exit 0
               else

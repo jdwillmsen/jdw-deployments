@@ -40,7 +40,8 @@ rules:
   # "may exec, but only this binary". The Job's script only ever runs
   # `send-command`, and the console-bridge's allowlist does not constrain this
   # path -- exec bypasses the bridge entirely.
-  # The digest of the previous sync's server values. Read-only and by name:
+  # The previous sync's digests of the server's and the agent's values.
+  # Read-only and by name:
   # this decides whether to announce at all, and getting it wrong in the
   # permissive direction only costs a spurious warning.
   - apiGroups: [""]
