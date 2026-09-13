@@ -131,7 +131,15 @@ spec:
                 # fresh Xbox Live login, which looks exactly like a crash to
                 # everyone watching. No countdown and no hold -- nobody is
                 # being disconnected, so there is nothing to save.
-                if [[ -n "$LIVE_AGENT_HASH" && "$LIVE_AGENT_HASH" != "$EXPECTED_AGENT_HASH" ]]; then
+                #
+                # A missing previous agent digest stays silent, the opposite of
+                # the unknown-server case above, because the costs are not
+                # symmetric: an unannounced server restart throws players out,
+                # while an unannounced agent release costs a few seconds of
+                # confusion. On the first sync after this shipped there is no
+                # agent digest to compare, and a notice then would be a guess.
+                if [[ -n "$EXPECTED_AGENT_HASH" && -n "$LIVE_AGENT_HASH" \
+                      && "$LIVE_AGENT_HASH" != "$EXPECTED_AGENT_HASH" ]]; then
                   emit agent "agent spec changing ($LIVE_AGENT_HASH -> $EXPECTED_AGENT_HASH); one notice, no countdown"
                   say "§b§lChat assistant updating.§r§7 It will drop out of chat for a few seconds and come straight back. The server is not restarting."
                   exit 0
