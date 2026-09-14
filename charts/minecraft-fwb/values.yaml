@@ -1020,23 +1020,41 @@ agent:
     # silence after a correct guess is indistinguishable from a broken agent.
     # No migration.
     #
-    # 0.14.0 is the Stage 6 batch, shipped as one restart because each restart
-    # is a fresh Xbox Live login. Its migrations (V5 schedules, V6 moderation)
-    # were applied in jdwillmsen_prd and granted to the app role before this
-    # bump; every feature below answers "not available" without its table.
+    # 0.14.0 was the Stage 6 batch: recorded leaves, announcements from
+    # events and schedules and the HTTP API, a moderation audit behind
+    # !modlog, and replies that carry no tool-call markup. Its migrations
+    # (V5 schedules, V6 moderation) were applied and granted before that
+    # bump.
     #
-    # - Leaves are recorded. The server's removal record carries only a UUID,
-    #   so until now no session was ever closed and a rejoin never counted as
-    #   a join again.
-    # - Announcements from events (first sight of a player and stale backups
-    #   to operators; playtime milestones and version changes to everyone),
-    #   from !schedule, and from the HTTP API configured below.
-    # - A moderation audit of flagged public chat, served through !modlog.
-    # - Replies no longer carry tool-call markup or end on a question.
+    # 0.15.0 needs no migration. It writes sessions.ended_reason
+    # 'agent_restart', a value V1 already permits and nothing had used.
     #
-    # Playtime now counts only time the agent watched: a reconnect, and so
-    # this restart, starts a fresh session for everyone online.
-    tag: "0.14.0"
+    # - Players already online when the agent connects are no longer greeted
+    #   again, nor their join counted. The server opens a session by naming
+    #   this client alone and then again at the head of the full roster, and
+    #   the agent used to read everyone behind that as a fresh arrival.
+    #   Effective this restart: the new pod is the one classifying.
+    # - A backlog queued for a joining player waits until their client can
+    #   render chat, and stops if the connection carrying it ends, so no
+    #   announcement is recorded against someone who never saw it.
+    # - The agent now disconnects cleanly on shutdown instead of leaving the
+    #   server to time its login out, which is about ten seconds of the
+    #   half-minute a release used to cost. That applies from the *next*
+    #   restart onward -- the pod leaving this time is 0.14.0 and does not
+    #   have it.
+    # - The warm-standby handover ships with it but stays inert here: the
+    #   strategy below is still Recreate, so no standby ever overlaps the
+    #   pod it replaces. The leader lock, its heartbeat and the standby
+    #   readiness state are all live and idle, waiting on the rolling-update
+    #   change that the token-cache volume still blocks.
+    # - Its new tuning (LEADER_POLL_MS, LEADER_MAX_WAIT_MS,
+    #   LEADER_HEARTBEAT_MS) is left at defaults and not set below.
+    #
+    # Playtime still counts only what the agent watched, so this restart
+    # starts a fresh session for everyone online. From the next one it will
+    # not: the departing agent closes what it was watching at the moment it
+    # stops, and that time is credited.
+    tag: "0.15.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
