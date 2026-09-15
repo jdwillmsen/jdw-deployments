@@ -40,9 +40,12 @@ data:
     ready="$(kubectl get pod -n "$NS" "$SERVER_POD" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" || true
     [[ "$phase" == "Running" && "$ready" == "True" ]] || give_up "server pod is not ready (phase=${phase:-none})"
 
-    # kubectl exec has no built-in call timeout: against an unresponsive pod
-    # it blocks until the job's activeDeadlineSeconds kills the whole run.
-    trap resume RETURN
+    # EXIT alone covers every way out of this script: it is executed
+    # directly rather than sourced, and every failure path leaves through
+    # give_up's exit. The backup job pairs this with a RETURN trap because
+    # its copy lives in a function left via return; here that trap would
+    # never fire, and a line that reads as a safety net but is not is worse
+    # than no line.
     trap resume EXIT
     timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save hold || give_up "save hold was refused"
 

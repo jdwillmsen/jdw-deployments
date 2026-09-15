@@ -115,11 +115,16 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+  # get and list stay unscoped because a list request cannot be
+  # constrained by resourceNames; exec and log below are pinned to the one
+  # pod this job has any business touching.
   - apiGroups: [""]
     resources: ["pods/exec"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
     verbs: ["create"]
   - apiGroups: [""]
     resources: ["pods/log"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -252,8 +257,8 @@ PY
 bash -n /tmp/snapshot.sh || fail "snapshot.sh is not valid bash"
 
 # The safety properties that must never be edited away.
-grep -q 'trap resume RETURN' /tmp/snapshot.sh || fail "no RETURN trap: a failed copy would leave the server held"
 grep -q 'trap resume EXIT'   /tmp/snapshot.sh || fail "no EXIT trap: a killed shell would leave the server held"
+grep -q 'trap resume RETURN' /tmp/snapshot.sh && fail "RETURN trap should not be present: this script is executed directly, not sourced"
 grep -q 'head -c'            /tmp/snapshot.sh || fail "files are not truncated to their committed length"
 grep -q 'snapshot-taken-at'  /tmp/snapshot.sh || fail "no provenance marker is written"
 grep -qE 'timeout [0-9]+s kubectl exec' /tmp/snapshot.sh || fail "kubectl exec is unbounded"
@@ -312,9 +317,12 @@ data:
     ready="$(kubectl get pod -n "$NS" "$SERVER_POD" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" || true
     [[ "$phase" == "Running" && "$ready" == "True" ]] || give_up "server pod is not ready (phase=${phase:-none})"
 
-    # kubectl exec has no built-in call timeout: against an unresponsive pod
-    # it blocks until the job's activeDeadlineSeconds kills the whole run.
-    trap resume RETURN
+    # EXIT alone covers every way out of this script: it is executed
+    # directly rather than sourced, and every failure path leaves through
+    # give_up's exit. The backup job pairs this with a RETURN trap because
+    # its copy lives in a function left via return; here that trap would
+    # never fire, and a line that reads as a safety net but is not is worse
+    # than no line.
     trap resume EXIT
     timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save hold || give_up "save hold was refused"
 
@@ -547,6 +555,8 @@ spec:
                 - name: backup
                   mountPath: /backup
                   readOnly: true
+                - name: tmp
+                  mountPath: /tmp
           volumes:
             - name: world
               persistentVolumeClaim:
@@ -561,6 +571,14 @@ spec:
               configMap:
                 name: {{ include "census.name" . }}-snapshot
                 defaultMode: 0555
+            - name: tmp
+              emptyDir:
+                # The archive fallback extracts a ~570MB world with os.MkdirTemp,
+                # which lands in /tmp. The root filesystem is read-only, so without
+                # this the fallback fails with permission denied on the one run where
+                # it is needed: the server being down is both why the snapshot was
+                # missed and why somebody is reading the report.
+                sizeLimit: 2Gi
 {{- end }}
 ```
 

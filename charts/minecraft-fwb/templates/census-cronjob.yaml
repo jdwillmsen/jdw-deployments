@@ -89,6 +89,8 @@ spec:
                 - name: backup
                   mountPath: /backup
                   readOnly: true
+                - name: tmp
+                  mountPath: /tmp
           volumes:
             - name: world
               persistentVolumeClaim:
@@ -103,4 +105,12 @@ spec:
               configMap:
                 name: {{ include "census.name" . }}-snapshot
                 defaultMode: 0555
+            - name: tmp
+              emptyDir:
+                # The archive fallback extracts a ~570MB world with os.MkdirTemp,
+                # which lands in /tmp. The root filesystem is read-only, so without
+                # this the fallback fails with permission denied on the one run where
+                # it is needed: the server being down is both why the snapshot was
+                # missed and why somebody is reading the report.
+                sizeLimit: 2Gi
 {{- end }}
