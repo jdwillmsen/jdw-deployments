@@ -61,8 +61,6 @@ spec:
                   value: {{ include "backup.serverStatefulSet" . }}
                 - name: NOTICE_ENABLED
                   value: {{ .Values.versionCheck.notice.enabled | quote }}
-                - name: METRICS_HOST
-                  value: {{ include "mcMonitor.host" . }}
                 - name: CANDIDATE_IMAGE
                   value: "{{ index .Values "minecraft-bedrock" "image" "repository" }}:{{ index .Values "minecraft-bedrock" "image" "tag" }}"
 {{- if .Values.versionCheck.bot.enabled }}
@@ -85,14 +83,28 @@ spec:
                   emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
 
                   # Production's currently-running version, read from the
-                  # mc-monitor sidecar's own Prometheus metrics -- already
-                  # scraped, so this needs no exec into the live pod.
-                  current="$(curl -fsS --max-time 10 "http://$METRICS_HOST:8080/metrics" 2>/dev/null \
-                    | grep -m1 '^minecraft_status_healthy{' \
-                    | grep -oE 'server_version="[^"]+"' | cut -d'"' -f2 || true)"
+                  # command line of the process actually serving the world.
+                  # The image runs the binary under its own version name
+                  # (./bedrock_server-1.26.51.1), so this is the one answer
+                  # that cannot disagree with what is running.
+                  #
+                  # This read used to scrape the mc-monitor sidecar's
+                  # Prometheus metrics, which was cheaper and is now useless:
+                  # that sidecar pings over RakNet, and production speaks
+                  # NetherNet, so the metric it publishes went stale the moment
+                  # the transport changed. Left alone, this job would have
+                  # taken the empty answer, emitted `skipped`, exited 0 -- and
+                  # reported success every hour while checking nothing.
+                  #
+                  # The server log carries the same string, but only until the
+                  # container log rotates past its startup; /proc does not
+                  # expire.
+                  current="$(timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- \
+                    sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\0" "\n" | grep -m1 "^\./bedrock_server-"' 2>/dev/null \
+                    | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true)"
                   if [[ -z "$current" ]]; then
-                    emit skipped "could not read production's current version from $METRICS_HOST"
-                    exit 0
+                    emit failed "could not read production's running version from $SERVER_POD"
+                    exit 1
                   fi
 
 {{- if .Values.versionCheck.bot.enabled }}
@@ -341,31 +353,15 @@ spec:
                     exit 1
                   fi
 
-                  # The two sides are the same release written two ways.
-                  # `current` comes from mc-monitor's Prometheus metric, which
-                  # reports what the server advertises in its RakNet pong --
-                  # three components, "1.26.45". `latest` comes from the image
-                  # entrypoint, which names the build it downloaded -- four,
-                  # "1.26.45.1". A bare `==` between them is true only by
-                  # accident and would restart production every hour forever.
+                  # Both sides now name the same four components -- `current`
+                  # from the running binary, `latest` from the entrypoint that
+                  # fetched it -- so plain equality carries this, and the
+                  # build-level bump the old three-component metric could not
+                  # express is visible again.
                   #
-                  # Equal outright, or equal once the candidate's extra build
-                  # component is allowed for: "1.26.45" and "1.26.45.1" are the
-                  # same release named by two sources that count differently.
-                  # The trailing dot is what keeps this from matching a prefix
-                  # that is really a different release -- "1.26.4" must not
-                  # swallow "1.26.45.1".
-                  #
-                  # The blind spot this accepts, stated rather than hidden:
-                  # Mojang ships hotfixes in that fourth component, and two
-                  # builds of the same three-component release are
-                  # indistinguishable here. A 1.26.45.1 -> 1.26.45.2 bump will
-                  # not restart production, because the pong production
-                  # advertises cannot express the difference. Catching those
-                  # needs the last-seen candidate build persisted somewhere
-                  # across runs, which is a store this job does not have; a
-                  # strict comparison without one restarts the server every
-                  # hour forever, which is far worse than missing a hotfix.
+                  # The prefix tolerance stays as a guard, not as the
+                  # mechanism: it is what stops an hourly restart loop if
+                  # either source ever goes back to naming three.
                   versions_match() {
                     local live="$1" candidate="$2"
                     [[ "$live" == "$candidate" ]] && return 0
