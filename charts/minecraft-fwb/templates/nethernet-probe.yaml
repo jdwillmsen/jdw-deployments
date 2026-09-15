@@ -1,0 +1,80 @@
+{{- if and .Values.netherNet.enabled .Values.netherNet.probe.enabled }}
+# The only thing watching this server while it speaks NetherNet.
+#
+# Every probe the vendored subchart renders is an `mc-monitor status-bedrock`
+# RakNet ping, so under NetherNet the kubelet's liveness check is switched off
+# and readiness is left failing on purpose (see values.yaml). That leaves
+# nothing to notice if the server dies -- no restart, no alert, and a pod that
+# already reads NotReady so its state cannot get any worse to look at.
+#
+# blackbox's tcp_connect against the signaling NodePort closes that gap from
+# outside the cluster: it is the same connect a client makes first, on the
+# address and port players actually dial, so it fails for a dead server, a
+# dead node, and a NodePort that stopped being routed alike.
+#
+# What it does not cover, stated so nobody reads more into it than it says: a
+# server that accepts the TCP connection and then cannot carry a session.
+# Proving that needs a real client, which is action item 7 on the incident.
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: {{ include "netherNet.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  interval: {{ .Values.netherNet.probe.interval }}
+  module: tcp_connect
+  prober:
+    url: {{ .Values.netherNet.probe.blackboxHost }}
+  targets:
+    staticConfig:
+      static:
+        - {{ .Values.netherNet.probe.target | quote }}
+        {{- /*
+          Labelled so the alert below can name the workload rather than an
+          address, and so this series is greppable next to the rest of the
+          tenant's metrics.
+        */}}
+      labels:
+        workload: {{ include "backup.serverStatefulSet" . }}
+        namespace: {{ .Release.Namespace }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "netherNet.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-nethernet
+      rules:
+        # 5m before firing: a node reboot or a sync that recreates the pod
+        # takes the listener away for around a minute, and paging for a
+        # restart that completes on its own is how an alert gets ignored.
+        - alert: JdwillmsenMinecraftUnreachable
+          expr: probe_success{job="probe/{{ .Release.Namespace }}/{{ include "netherNet.name" . }}"} == 0
+          for: 5m
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB is not accepting connections
+            description: >-
+              The NetherNet signaling port {{ .Values.netherNet.probe.target }}
+              has refused or timed out for 5 minutes. This is the port players
+              dial, and while the server runs on NetherNet it is the only check
+              covering it -- the kubelet probes are RakNet and are switched off.
+        # The probe failing to run at all is its own failure, and a silent one:
+        # `== 0` never matches a series that has stopped being produced.
+        - alert: JdwillmsenMinecraftProbeMissing
+          expr: absent(probe_success{job="probe/{{ .Release.Namespace }}/{{ include "netherNet.name" . }}"})
+          for: 15m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB reachability probe is not reporting
+            description: >-
+              No probe_success series for this server for 15 minutes, so the
+              alert above cannot fire whatever the server is doing. Check the
+              Probe object and the blackbox exporter.
+{{- end }}
