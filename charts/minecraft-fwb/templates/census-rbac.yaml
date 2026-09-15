@@ -1,0 +1,41 @@
+{{- if .Values.census.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "census.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "census.name" . }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # The census drives the server's own save protocol over its console to take
+  # a consistent copy, so it needs to exec into the pod and read back what
+  # `save query` printed. Scoped to this namespace; nothing here is
+  # cluster-wide.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "census.name" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "census.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "census.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
