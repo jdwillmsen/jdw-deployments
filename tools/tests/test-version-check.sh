@@ -52,16 +52,12 @@ sed -i 's/SECONDS + 60 /SECONDS + 4 /' "$work/version-check.sh"
 
 mkdir -p "$work/bin"
 
-# Production reports a version and the bot dispatch succeeds, so every case
-# below turns only on what the candidate does.
+# curl only carries the bot dispatch now. Production's own version is read by
+# exec'ing the server pod (see the kubectl shim), because the mc-monitor
+# metric this used to scrape goes stale the moment the server stops speaking
+# RakNet -- which is exactly what it now does.
 cat > "$work/bin/curl" <<'SHIM'
 #!/usr/bin/env bash
-for arg in "$@"; do
-  if [[ "$arg" == *"/metrics" ]]; then
-    echo 'minecraft_status_healthy{server_version="1.26.45"} 1'
-    exit 0
-  fi
-done
 exit 0
 SHIM
 chmod +x "$work/bin/curl"
@@ -151,14 +147,22 @@ case "$1" in
     exit 0
     ;;
   exec)
-    # Asking the candidate to serve a status ping is the regression this shim
+    # Asking either server to serve a status ping is the regression this shim
     # exists to catch: 1.26.51 defaults a fresh candidate to
-    # transport=nethernet, which opens no RakNet listener, so a version read
-    # that goes through mc-monitor cannot work however long it waits. Traced
-    # rather than merely refused, so the assertion names the cause.
+    # transport=nethernet and production now runs that way too, so no RakNet
+    # listener exists for a version read to reach. Traced rather than merely
+    # refused, so the assertion names the cause.
     if [[ "$*" == *"mc-monitor"* ]]; then
       echo "EXEC_MCMONITOR" >> "$trace"
       exit 1
+    fi
+    # Production's running version, the way the job reads it: the command line
+    # of the process serving the world, which the image names after the
+    # version it downloaded.
+    if [[ "$*" == *"/proc/"* ]]; then
+      echo "EXEC_PROC" >> "$trace"
+      printf './bedrock_server-%s\n' "${FAKE_PRODUCTION_VERSION-1.26.45.1}"
+      exit 0
     fi
     # send-command, on the server pod -- the notice and the stop. Its real
     # counterpart exits 0 whenever the pipe was writable.
@@ -267,7 +271,10 @@ echo "  ok: a candidate that dies before it is first seen still reports why"
 out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_STALE=yes FAKE_LINGER_GETS=2)"
 [[ "$out" == *'"event":"current"'* ]] || fail "stale candidate: expected the run to recover, got: $out"
 t="$(trace)"
-[[ "$t" == DELETE* ]] || fail "stale candidate: expected a delete before the first create, trace: $t"
+# Ordering, not the first line: reading production's version now leaves its own
+# EXEC_PROC entry ahead of any candidate work.
+[[ "$(grep -n 'DELETE' <<<"$t" | head -1 | cut -d: -f1)" -lt "$(grep -n 'CREATE:1' <<<"$t" | head -1 | cut -d: -f1)" ]] \
+  || fail "stale candidate: expected a delete before the first create, trace: $t"
 [[ "$t" == *"CREATE:1"* ]] || fail "stale candidate: expected a candidate to be created after it, trace: $t"
 echo "  ok: a leftover candidate is removed, waited out, and replaced"
 
@@ -281,24 +288,25 @@ out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_STALE=yes FAKE_LINGER_GETS=forever)"
   || fail "candidate will not terminate: a candidate was created over the leftover, trace: $(trace)"
 echo "  ok: a leftover that will not go stops the run instead of being created over"
 
-# Production reports three components ("1.26.45", from the pong mc-monitor
-# scrapes) and the candidate names four ("1.26.45.1", from the entrypoint).
-# They are the same release, and a comparison that cannot see that restarts the
-# server every hour forever.
-out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_CANDIDATE_VERSION=1.26.45.1)"
+# The guard, not the mechanism. Both sources name four components today, but
+# if either ever goes back to three the two strings are still the same release
+# -- and a comparison that cannot see that restarts the server every hour
+# forever.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_PRODUCTION_VERSION=1.26.45 FAKE_CANDIDATE_VERSION=1.26.45.1)"
 [[ "$out" == *'"event":"current"'* ]] \
   || fail "same release named two ways: expected a current event, got: $out"
 [[ "$out" != *'"event":"restarting"'* ]] \
   || fail "same release named two ways: production was restarted onto its own version, got: $out"
-echo "  ok: a four-component candidate matches the three-component version production reports"
+echo "  ok: a four-component candidate still matches a three-component production version"
 
-# The blind spot that comparison accepts, asserted so it is a decision rather
-# than a surprise: production cannot advertise a fourth component, so a hotfix
-# that only moves one is invisible here and will not restart anything.
-out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_CANDIDATE_VERSION=1.26.45.2)"
+# The cost of that tolerance, asserted so it stays a decision: against a
+# three-component production version a build-level bump cannot be seen, and
+# nothing restarts. This is why the read moved to the running binary, which
+# names all four.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_PRODUCTION_VERSION=1.26.45 FAKE_CANDIDATE_VERSION=1.26.45.2)"
 [[ "$out" == *'"event":"current"'* ]] \
-  || fail "build-only bump: expected it to read as current, got: $out"
-echo "  ok: a build-only bump is deliberately not treated as a new version"
+  || fail "build-only bump against a truncated version: expected current, got: $out"
+echo "  ok: the tolerance's blind spot is confined to a three-component version"
 
 # A genuinely new release still has to reach the restart, and the stop still
 # has to be delivered over the console rather than by recreating the pod --
@@ -322,5 +330,22 @@ out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_CANDIDATE_VERSION= \
 [[ "$out" == *"never named a version"* ]] \
   || fail "candidate names no version: expected the log-read reason, got: $out"
 echo "  ok: a candidate that boots but names no version fails the run"
+
+# The read that replaced the mc-monitor scrape. An unreadable production pod
+# has to fail the run: the previous shape emitted `skipped` and exited 0,
+# which would have reported success every hour while checking nothing.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_PRODUCTION_VERSION=)"
+[[ "$out" == *'"event":"failed"'* ]] \
+  || fail "unreadable production version: expected a failed event, got: $out"
+[[ "$out" == *"could not read production's running version"* ]] \
+  || fail "unreadable production version: expected the read to be named, got: $out"
+echo "  ok: a production version that cannot be read fails the run"
+
+# Both sides name four components now, so a build-level bump is visible where
+# the old three-component metric could not express it.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_PRODUCTION_VERSION=1.26.51.1 FAKE_CANDIDATE_VERSION=1.26.51.2)"
+[[ "$out" == *'"event":"restarting"'* ]] \
+  || fail "build-level bump: expected a restart, got: $out"
+echo "  ok: a build-level bump is now caught rather than truncated away"
 
 echo "PASS"
