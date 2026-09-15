@@ -56,6 +56,13 @@ account:
 The bot's XUID then goes on the server allowlist. It appears in the server log
 on first connect.
 
+**Switching a bot between implementations costs a login.** The Go client's
+token cache format is its own, and a cache written by the TypeScript build
+cannot be read by it. Moving `bot.image.tag` from a `0.x` tag to a `1.x` one
+is therefore not a plain image bump: the pod comes up unauthenticated and waits
+on a device code, exactly like step 2 above. The PVC does not need clearing —
+the stale cache is simply ignored — so `enabled` stays `true` throughout.
+
 **A device code can land on the wrong account.** The device-code page just
 authenticates whatever Microsoft account is already active in the browser
 that opens it — it does not prompt you to choose. If the wrong account ends

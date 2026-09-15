@@ -666,7 +666,18 @@ bot:
     # shipped as protocol 2169 over unchanged packets); a release that
     # actually changes the packet schema still needs this tag re-bumped,
     # surfacing as a protocol_spoofed log line followed by session failures.
-    tag: "0.3.1"
+    #
+    # 1.26.51 was such a release: this bot spoofed the advertised protocol,
+    # joined, and then died parsing a packet ("expected size was 393"), while
+    # bot2 on 1.1.0 rode the same bump out. 0.3.1 was the last TypeScript
+    # build; moving to 1.1.0 finishes the migration to the Go client both
+    # other workloads already run.
+    #
+    # The Go client's token cache format is its own: the cache this bot's PVC
+    # holds was written by the TypeScript build and cannot be reused, so the
+    # first pod on this tag will sit unauthenticated until someone completes
+    # the device-code login by hand. See README, "Relocating a bot".
+    tag: "1.1.0"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -677,17 +688,15 @@ bot:
   # See bot2.gamertag for why this is recorded. Documentation only.
   gamertag: LightBlaz3
 
-  # Inert. This bot runs the TypeScript implementation, whose client library
-  # reads the requested radius from `client.viewDistance` while storing the
-  # value it was given at `client.options.viewDistance` -- a property nothing
-  # in the package ever assigns. The request therefore always falls back to
-  # the library's hardcoded 10, whatever is set here.
+  # Live as of the 1.1.0 bump above. It was inert under the TypeScript build,
+  # whose client library read the requested radius from `client.viewDistance`
+  # while storing the given value at `client.options.viewDistance` -- so every
+  # request fell back to the library's hardcoded 10 whatever was set here. The
+  # Go client honours it, which makes this bot's first run on 1.1.0 a real
+  # 10 -> 12 radius increase; `chunk_radius_granted` in its log is what the
+  # server actually gave it.
   #
-  # Kept at 12 rather than removed so the two bots read the same, and so this
-  # does not turn back into a live setting unnoticed if the bot moves to the
-  # Go implementation, where the value is honoured. The 10/12 difference
-  # against bot2 is a known confound in the Go-versus-TypeScript comparison
-  # and is small next to the 5-versus-12 gap that existed before.
+  # Kept at 12 so the two bots read the same.
   viewDistance: 12
 
   # A single idle UDP session and a JSON log line per chat message — 500m was

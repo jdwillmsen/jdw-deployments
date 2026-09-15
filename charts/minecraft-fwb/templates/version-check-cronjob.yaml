@@ -277,12 +277,24 @@ spec:
                       continue
                     fi
 
-                    # mc-monitor is already bundled in this image (the same
-                    # binary the production sidecar runs), so this needs no
-                    # second tool. Flags/exit-code behavior confirmed live
-                    # against this image before ci.yml's smoke-test shipped:
-                    # `status-bedrock -host -port`, not the `-bedrock-servers`
-                    # flag that belongs to export-for-prometheus mode only.
+                    # Read from the candidate's own log rather than by
+                    # pinging it. The entrypoint names the version it fetched
+                    # ("Downloading Bedrock server version 1.26.51.1 ..."), and
+                    # the server names it again on boot ("Version: ..."); either
+                    # answers the only question this job asks.
+                    #
+                    # This used to `mc-monitor status-bedrock` the booted
+                    # candidate, which tied the check to RakNet being reachable.
+                    # 1.26.51 defaults a freshly-generated server.properties to
+                    # `transport=nethernet`, and a NetherNet server opens no
+                    # RakNet listener at all -- so every candidate answered
+                    # `connection refused`, every run failed, and production sat
+                    # on 1.26.45 with nothing saying why. Production was spared
+                    # only because its PVC still carries `transport=raknet` from
+                    # an older build. A log line costs nothing, needs no port,
+                    # and says the same thing whatever transport Mojang defaults
+                    # to next.
+                    #
                     # Bounded by wall clock, not iteration count. Counting
                     # iterations looks bounded and is not: each pass can cost the
                     # full `timeout 15s` plus the sleep, so 30 passes is ~510s
@@ -293,15 +305,21 @@ spec:
                     # The phase re-read is what ends this loop at the candidate
                     # rather than at its own deadline: restartPolicy Never leaves
                     # a pod whose entrypoint exited in Failed, and every further
-                    # exec into it can only fail. Sitting out the rest of the
-                    # budget learned nothing and cost the run its witness, since
-                    # the cleanup above removes the pod on the way out.
+                    # read from it can only return the same bytes. Sitting out
+                    # the rest of the budget learned nothing and cost the run its
+                    # witness, since the cleanup above removes the pod on the way
+                    # out.
                     poll_deadline=$(( SECONDS + 60 ))
                     while (( SECONDS < poll_deadline )); do
-                      out="$(timeout 15s kubectl exec -n "$NS" "$CANDIDATE_POD" -- \
-                        mc-monitor status-bedrock -host 127.0.0.1 -port 19132 -retry-limit 0 2>/dev/null || true)"
-                      if [[ "$out" == *"version="* ]]; then
-                        latest="$(grep -oE 'version=[^ ]+' <<<"$out" | cut -d= -f2)"
+                      out="$(timeout 15s kubectl logs -n "$NS" "$CANDIDATE_POD" 2>/dev/null || true)"
+                      # `|| true` because a candidate that has not named its
+                      # version yet is the normal state of this loop, and under
+                      # `set -e` with pipefail a grep that matches nothing ends
+                      # the run -- silently, since the assignment carries the
+                      # pipeline's status.
+                      latest="$(grep -oE '(Downloading Bedrock server version|Version:) [0-9]+(\.[0-9]+)+' <<<"$out" \
+                        | head -1 | awk '{print $NF}' || true)"
+                      if [[ -n "$latest" ]]; then
                         break
                       fi
                       phase="$(timeout 10s kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
@@ -314,7 +332,7 @@ spec:
                       break
                     fi
 
-                    reason="candidate never reported a version via mc-monitor (phase: ${phase:-unknown}); candidate log: $(candidate_log)"
+                    reason="candidate never named a version in its log (phase: ${phase:-unknown}); candidate log: $(candidate_log)"
                     emit candidate_failed "attempt $attempt: $reason"
                   done
 
@@ -323,7 +341,39 @@ spec:
                     exit 1
                   fi
 
-                  if [[ "$current" == "$latest" ]]; then
+                  # The two sides are the same release written two ways.
+                  # `current` comes from mc-monitor's Prometheus metric, which
+                  # reports what the server advertises in its RakNet pong --
+                  # three components, "1.26.45". `latest` comes from the image
+                  # entrypoint, which names the build it downloaded -- four,
+                  # "1.26.45.1". A bare `==` between them is true only by
+                  # accident and would restart production every hour forever.
+                  #
+                  # Equal outright, or equal once the candidate's extra build
+                  # component is allowed for: "1.26.45" and "1.26.45.1" are the
+                  # same release named by two sources that count differently.
+                  # The trailing dot is what keeps this from matching a prefix
+                  # that is really a different release -- "1.26.4" must not
+                  # swallow "1.26.45.1".
+                  #
+                  # The blind spot this accepts, stated rather than hidden:
+                  # Mojang ships hotfixes in that fourth component, and two
+                  # builds of the same three-component release are
+                  # indistinguishable here. A 1.26.45.1 -> 1.26.45.2 bump will
+                  # not restart production, because the pong production
+                  # advertises cannot express the difference. Catching those
+                  # needs the last-seen candidate build persisted somewhere
+                  # across runs, which is a store this job does not have; a
+                  # strict comparison without one restarts the server every
+                  # hour forever, which is far worse than missing a hotfix.
+                  versions_match() {
+                    local live="$1" candidate="$2"
+                    [[ "$live" == "$candidate" ]] && return 0
+                    [[ "$candidate" == "$live."* ]] && return 0
+                    return 1
+                  }
+
+                  if versions_match "$current" "$latest"; then
                     emit current "production already on $current"
                     exit 0
                   fi

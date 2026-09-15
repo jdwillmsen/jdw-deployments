@@ -42,6 +42,14 @@ found="$(grep -c 'SECONDS + 45' "$work/version-check.sh" || true)"
 [ "$found" = "1" ] || fail "expected one 45s gone-wait to shorten, found $found"
 sed -i 's/SECONDS + 45 /SECONDS + 3 /' "$work/version-check.sh"
 
+# Same treatment for the ready and version-read loops. A candidate that boots
+# and then names no version is a case here, and it is the one case that cannot
+# end early -- it can only run its deadline out, twice. Asserted before it is
+# rewritten for the same reason as the wait above.
+found="$(grep -c 'SECONDS + 60 ' "$work/version-check.sh" || true)"
+[ "$found" = "2" ] || fail "expected two 60s loops to shorten, found $found"
+sed -i 's/SECONDS + 60 /SECONDS + 4 /' "$work/version-check.sh"
+
 mkdir -p "$work/bin"
 
 # Production reports a version and the bot dispatch succeeds, so every case
@@ -99,6 +107,18 @@ case "$1" in
     exit 0
     ;;
   get)
+    # The server pod, not the candidate: uid plus restart count, which the
+    # restart branch reads before and after delivering its stop. Answered
+    # before the candidate-existence guard below, since the server pod exists
+    # whatever the candidate is doing. The count moves on the second read so a
+    # restart the script correctly performed does not sit out its 120s
+    # deadline here.
+    if [[ "$*" == *"containerStatuses"* ]]; then
+      reads=$(( $(cat "$state/serverreads" 2>/dev/null || echo 0) + 1 ))
+      echo "$reads" > "$state/serverreads"
+      if (( reads <= 1 )); then printf 'server-uid 0'; else printf 'server-uid 1'; fi
+      exit 0
+    fi
     [[ -f "$state/exists" ]] || exit 1
     if [[ "$*" == *"metadata.name"* ]]; then
       if [[ -f "$state/lingers" ]]; then
@@ -131,15 +151,29 @@ case "$1" in
     exit 0
     ;;
   exec)
-    [[ -f "$state/exists" ]] || exit 1
-    if [[ "$attempt" == "${FAKE_GOOD_ATTEMPT:-1}" ]]; then
-      echo "$CANDIDATE_POD version=1.26.45 players=0"
-      exit 0
+    # Asking the candidate to serve a status ping is the regression this shim
+    # exists to catch: 1.26.51 defaults a fresh candidate to
+    # transport=nethernet, which opens no RakNet listener, so a version read
+    # that goes through mc-monitor cannot work however long it waits. Traced
+    # rather than merely refused, so the assertion names the cause.
+    if [[ "$*" == *"mc-monitor"* ]]; then
+      echo "EXEC_MCMONITOR" >> "$trace"
+      exit 1
     fi
-    exit 1
+    # send-command, on the server pod -- the notice and the stop. Its real
+    # counterpart exits 0 whenever the pipe was writable.
+    echo "EXEC_SERVER" >> "$trace"
+    exit 0
     ;;
   logs)
     [[ -f "$state/exists" ]] || exit 1
+    # The line the image's entrypoint prints before the server starts, which
+    # is where the version now comes from. A candidate that never got that far
+    # prints only whatever the case staged.
+    version="${FAKE_CANDIDATE_VERSION-1.26.45.1}"
+    if [[ "$attempt" == "${FAKE_GOOD_ATTEMPT:-1}" && -n "$version" ]]; then
+      printf 'Downloading Bedrock server version %s ...\n' "$version"
+    fi
     printf '%s\n' "${FAKE_CANDIDATE_LOGS:-}"
     exit 0
     ;;
@@ -189,7 +223,9 @@ out="$(capture FAKE_GOOD_ATTEMPT=1)"
 [[ "$out" == *'"event":"current"'* ]] || fail "healthy candidate: expected a current event, got: $out"
 [[ "$(trace)" == *"CREATE:1"* && "$(trace)" != *"CREATE:2"* ]] \
   || fail "healthy candidate: expected exactly one candidate pod, trace: $(trace)"
-echo "  ok: healthy candidate answers on the first attempt"
+[[ "$(trace)" != *"EXEC_MCMONITOR"* ]] \
+  || fail "healthy candidate: the version was read by pinging the candidate, trace: $(trace)"
+echo "  ok: healthy candidate answers on the first attempt, from its log"
 
 # The live failure. The entrypoint gives up rather than retrying, so the pod is
 # already gone seconds in and no further waiting can produce an answer -- a
@@ -244,5 +280,47 @@ out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_STALE=yes FAKE_LINGER_GETS=forever)"
 [[ "$(trace)" != *"CREATE"* ]] \
   || fail "candidate will not terminate: a candidate was created over the leftover, trace: $(trace)"
 echo "  ok: a leftover that will not go stops the run instead of being created over"
+
+# Production reports three components ("1.26.45", from the pong mc-monitor
+# scrapes) and the candidate names four ("1.26.45.1", from the entrypoint).
+# They are the same release, and a comparison that cannot see that restarts the
+# server every hour forever.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_CANDIDATE_VERSION=1.26.45.1)"
+[[ "$out" == *'"event":"current"'* ]] \
+  || fail "same release named two ways: expected a current event, got: $out"
+[[ "$out" != *'"event":"restarting"'* ]] \
+  || fail "same release named two ways: production was restarted onto its own version, got: $out"
+echo "  ok: a four-component candidate matches the three-component version production reports"
+
+# The blind spot that comparison accepts, asserted so it is a decision rather
+# than a surprise: production cannot advertise a fourth component, so a hotfix
+# that only moves one is invisible here and will not restart anything.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_CANDIDATE_VERSION=1.26.45.2)"
+[[ "$out" == *'"event":"current"'* ]] \
+  || fail "build-only bump: expected it to read as current, got: $out"
+echo "  ok: a build-only bump is deliberately not treated as a new version"
+
+# A genuinely new release still has to reach the restart, and the stop still
+# has to be delivered over the console rather than by recreating the pod --
+# pod deletion is what migrates the world volume.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_CANDIDATE_VERSION=1.26.51.1)"
+[[ "$out" == *'"event":"restarting"'* ]] \
+  || fail "new release: expected a restarting event, got: $out"
+[[ "$out" == *'"event":"restarted"'* ]] \
+  || fail "new release: expected the run to confirm the restart, got: $out"
+[[ "$(trace)" == *"EXEC_SERVER"* ]] \
+  || fail "new release: expected a stop delivered to the server pod, trace: $(trace)"
+echo "  ok: a new release restarts production in place"
+
+# The failure this suite previously could not tell apart from a dead candidate:
+# the pod runs, serves nothing a ping could reach, and names no version either.
+# It must fail the run and say so in its own terms.
+out="$(capture FAKE_GOOD_ATTEMPT=1 FAKE_CANDIDATE_VERSION= \
+  FAKE_CANDIDATE_LOGS='[INFO] Server started.')"
+[[ "$out" == *'"event":"failed"'* ]] \
+  || fail "candidate names no version: expected a failed event, got: $out"
+[[ "$out" == *"never named a version"* ]] \
+  || fail "candidate names no version: expected the log-read reason, got: $out"
+echo "  ok: a candidate that boots but names no version fails the run"
 
 echo "PASS"
