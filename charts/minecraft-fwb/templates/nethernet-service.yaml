@@ -1,0 +1,53 @@
+{{- if .Values.netherNet.enabled }}
+# The route in for NetherNet, alongside (not instead of) the subchart's UDP
+# Service. Bedrock 1.26.51 made NetherNet the only transport retail clients
+# will use; RakNet still serves library clients and the server-list ping, so
+# the subchart's Service keeps its job and this one carries players.
+#
+# Two protocols, two shapes:
+#
+#   - signaling is HTTP over TCP on the server's own server-port, published on
+#     a different nodePort than it listens on. A nodePort is allocated per
+#     number for the whole cluster and not per protocol, so it cannot reuse
+#     the 31132 the subchart's UDP Service already holds -- the apiserver
+#     rejects that outright.
+#   - gameplay is UDP, negotiated per client from the range pinned by
+#     server-udp-ports in server.properties. Every port in that range needs
+#     its own Service entry, because a Service port is a single number --
+#     there is no range form.
+#
+# publishNotReadyAddresses is the load-bearing line. Every probe the vendored
+# subchart renders is an `mc-monitor status-bedrock` RakNet ping, and a
+# NetherNet server answers none of them, so this pod reads NotReady for as
+# long as it speaks NetherNet. Without this, the endpoints list is empty and
+# a Service that is otherwise correct routes nothing at all.
+#
+# That is a bridge, not a design. It trades health signal for reachability
+# and says so; the probes have to stop assuming a transport before this can
+# come off. See README, "NetherNet transition".
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "netherNet.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "backup.serverStatefulSet" . }}
+spec:
+  type: NodePort
+  publishNotReadyAddresses: true
+  selector:
+    app: {{ include "backup.serverStatefulSet" . }}
+  ports:
+    - name: signaling
+      port: {{ .Values.netherNet.signalingPort }}
+      targetPort: {{ .Values.netherNet.signalingPort }}
+      nodePort: {{ .Values.netherNet.signalingNodePort }}
+      protocol: TCP
+{{- range untilStep (int .Values.netherNet.gameplayPorts.start) (int (add1 .Values.netherNet.gameplayPorts.end)) 1 }}
+    - name: gameplay-{{ . }}
+      port: {{ . }}
+      targetPort: {{ . }}
+      nodePort: {{ . }}
+      protocol: UDP
+{{- end }}
+{{- end }}
