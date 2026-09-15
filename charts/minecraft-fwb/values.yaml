@@ -207,17 +207,40 @@ minecraft-bedrock:
     # benefit to us either way; on by deliberate choice, not a default.
     emitServerTelemetry: true
 
-  # The container downloads the pinned server binary on first start, so the
-  # chart's default liveness probe — 30s delay, then three 10s failures —
-  # kills it mid-download and the pod never gets far enough to persist the
-  # binary. The chart ships a startupProbe for exactly this and leaves it off
-  # by default; enabling it suspends liveness until the server answers, with a
-  # 10 minute budget, after which the normal probes take over unchanged.
+  # Every probe the vendored subchart renders is the same thing: an
+  # `mc-monitor status-bedrock` RakNet ping at 127.0.0.1:serverPort. Only the
+  # timings are values; the exec itself is hardcoded in that chart's
+  # deployment.yaml and 2.9.0 is its newest published release, so there is no
+  # NetherNet-aware version to move to.
+  #
+  # Under transport=nethernet the server opens no RakNet listener, so all
+  # three fail forever. Left alone, the startupProbe burns its 60 attempts and
+  # kills the container, and liveness then restarts it every ~60s -- an outage
+  # of our own making on top of the one this transition is fixing.
+  #
+  # So: startup off, liveness pushed a year out so it never fires. Readiness
+  # is deliberately left where it is. It fails, this pod reads NotReady, and
+  # that is the honest signal -- nothing here is health-checking the server
+  # any more. The NetherNet Service carries publishNotReadyAddresses so
+  # players still route to a pod nobody is checking.
+  #
+  # This is a bridge with a specific exit: probes that do not assume a
+  # transport, which needs the workload template vendored out of the subchart.
+  # Until that lands, this workload is not observable and must not be read as
+  # healthy. See README, "NetherNet transition".
   startupProbe:
-    enabled: true
+    enabled: false
     initialDelaySeconds: 30
     periodSeconds: 10
     failureThreshold: 60
+
+  livenessProbe:
+    # Quoted, and it has to stay quoted. Unquoted, Helm carries this through
+    # float64 and renders `3.1536e+07`, which the apiserver rejects as an
+    # int32 -- the manifest is invalid and nothing updates. As a string the
+    # subchart interpolates the digits unchanged.
+    initialDelaySeconds: "31536000"
+
 
   # mc-monitor already ships in this image and already runs the probes above
   # in its one-shot `status-bedrock` mode. `export-for-prometheus` is the same
@@ -650,7 +673,13 @@ bot:
   # account takeover without deleting its PVC/token cache — see README's
   # "Relocating a bot". Explicit rather than templated-default: Sprig's
   # `default` coerces 0 back to 1.
-  replicas: 1
+  #
+  # 0 for the NetherNet transition: this client dials RakNet, and a NetherNet
+  # server has no RakNet listener to dial. Left at 1 it is not degraded, it is
+  # a reconnect loop against a port that will never answer -- which is already
+  # what drove CPUThrottlingHigh on this pod during the 1.26.51 upgrade.
+  # Back to 1 when the client can speak NetherNet, not before.
+  replicas: 0
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
@@ -666,7 +695,18 @@ bot:
     # shipped as protocol 2169 over unchanged packets); a release that
     # actually changes the packet schema still needs this tag re-bumped,
     # surfacing as a protocol_spoofed log line followed by session failures.
-    tag: "0.3.1"
+    #
+    # 1.26.51 was such a release: this bot spoofed the advertised protocol,
+    # joined, and then died parsing a packet ("expected size was 393"), while
+    # bot2 on 1.1.0 rode the same bump out. 0.3.1 was the last TypeScript
+    # build; moving to 1.1.0 finishes the migration to the Go client both
+    # other workloads already run.
+    #
+    # The Go client's token cache format is its own: the cache this bot's PVC
+    # holds was written by the TypeScript build and cannot be reused, so the
+    # first pod on this tag will sit unauthenticated until someone completes
+    # the device-code login by hand. See README, "Relocating a bot".
+    tag: "1.1.0"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -677,17 +717,15 @@ bot:
   # See bot2.gamertag for why this is recorded. Documentation only.
   gamertag: LightBlaz3
 
-  # Inert. This bot runs the TypeScript implementation, whose client library
-  # reads the requested radius from `client.viewDistance` while storing the
-  # value it was given at `client.options.viewDistance` -- a property nothing
-  # in the package ever assigns. The request therefore always falls back to
-  # the library's hardcoded 10, whatever is set here.
+  # Live as of the 1.1.0 bump above. It was inert under the TypeScript build,
+  # whose client library read the requested radius from `client.viewDistance`
+  # while storing the given value at `client.options.viewDistance` -- so every
+  # request fell back to the library's hardcoded 10 whatever was set here. The
+  # Go client honours it, which makes this bot's first run on 1.1.0 a real
+  # 10 -> 12 radius increase; `chunk_radius_granted` in its log is what the
+  # server actually gave it.
   #
-  # Kept at 12 rather than removed so the two bots read the same, and so this
-  # does not turn back into a live setting unnoticed if the bot moves to the
-  # Go implementation, where the value is honoured. The 10/12 difference
-  # against bot2 is a known confound in the Go-versus-TypeScript comparison
-  # and is small next to the 5-versus-12 gap that existed before.
+  # Kept at 12 so the two bots read the same.
   viewDistance: 12
 
   # A single idle UDP session and a JSON log line per chat message — 500m was
@@ -755,7 +793,13 @@ bot2:
   # the server registers the disconnect. Freeing the *account* also needs
   # `tools/mc run kick <gamertag>` -- the server holds the session open for a
   # while after the client is gone.
-  replicas: 1
+  #
+  # 0 for the NetherNet transition: this client dials RakNet, and a NetherNet
+  # server has no RakNet listener to dial. Left at 1 it is not degraded, it is
+  # a reconnect loop against a port that will never answer -- which is already
+  # what drove CPUThrottlingHigh on this pod during the 1.26.51 upgrade.
+  # Back to 1 when the client can speak NetherNet, not before.
+  replicas: 0
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
@@ -887,7 +931,13 @@ agent:
   # account also needs `tools/mc run kick JDWServerAgent` because the server
   # holds the session open after the client goes. `kubectl scale` does not
   # work -- selfHeal reverts it within seconds.
-  replicas: 1
+  #
+  # 0 for the NetherNet transition: this client dials RakNet, and a NetherNet
+  # server has no RakNet listener to dial. Left at 1 it is not degraded, it is
+  # a reconnect loop against a port that will never answer -- which is already
+  # what drove CPUThrottlingHigh on this pod during the 1.26.51 upgrade.
+  # Back to 1 when the client can speak NetherNet, not before.
+  replicas: 0
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
@@ -1168,3 +1218,42 @@ agent:
   announceApi:
     existingSecret: ""
     secretKey: token
+
+# The route in for retail clients, and the UDP range the server hands them.
+#
+# Bedrock 1.26.51 made NetherNet the only transport retail clients will use.
+# Signaling is HTTP over TCP on minecraft-bedrock.minecraftServer.serverPort;
+# gameplay is UDP negotiated per client, which behind a NodePort has to be
+# pinned and advertised or the server offers clients its own pod IP -- a
+# 10.244.x address nothing on the LAN can route to.
+#
+# The pinning itself lives in server.properties on the world PVC, not here:
+#
+#   transport=nethernet
+#   server-udp-ports=192.168.1.87:31160-31179:31160-31179
+#
+# The itzg image has no property mapping for either key (checked against
+# /etc/bds-property-definitions.json in 2026.8.2), so the chart cannot set
+# them and this block only opens the matching way in. The node literal is the
+# one this server is pinned to by affinity above; it has to be the address
+# clients dial, not the pod's.
+#
+# Count matches minecraftServer.maxPlayers: one UDP port per connected
+# client. Widen both together.
+netherNet:
+  enabled: true
+
+  # Where the server listens, which is minecraftServer.serverPort -- the
+  # signaling socket replaces the RakNet one on the same number.
+  signalingPort: 31132
+
+  # What players dial, and deliberately not 31132. A nodePort is allocated
+  # per number across the whole cluster, not per protocol: the subchart's UDP
+  # Service already holds 31132, and asking for it again is rejected outright
+  # ("provided port is already allocated", confirmed against the live
+  # apiserver). The two cannot be the same number while both Services exist.
+  signalingNodePort: 31134
+
+  gameplayPorts:
+    start: 31160
+    end: 31179

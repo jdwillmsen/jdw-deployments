@@ -42,6 +42,10 @@
 {{ .Release.Name }}-minecraft-bedrock.{{ .Release.Namespace }}.svc.cluster.local
 {{- end -}}
 
+{{- define "netherNet.name" -}}
+{{ .Release.Name }}-nethernet
+{{- end -}}
+
 {{- define "versionCheck.name" -}}
 {{ .Release.Name }}-version-check
 {{- end -}}

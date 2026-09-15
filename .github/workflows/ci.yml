@@ -181,17 +181,21 @@ jobs:
           echo "repo=$repo" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      # Boots the real image and waits for it to answer a Bedrock status
-      # query -- lint/template only check that the manifest renders, not that
-      # the tag Renovate wants to auto-merge actually starts. mc-monitor is
-      # bundled in the image already (same tool the chart's own sidecar
-      # runs), so this needs no extra image to pull.
+      # Boots the real image and waits for the server to say it started --
+      # lint/template only check that the manifest renders, not that the tag
+      # Renovate wants to auto-merge actually starts.
+      #
+      # This waited on `mc-monitor status-bedrock` until 1.26.51, which
+      # defaults a freshly-generated server.properties to
+      # `transport=nethernet`; a NetherNet server opens no RakNet listener, so
+      # the ping can never succeed in a throwaway container and the gate would
+      # have failed every image bump from here on. "Server started." is the
+      # server's own claim and is independent of which transport it then
+      # offers -- which is the property a boot gate wants.
       #
       # Confirmed live against 2026.8.2: cold pull to "Server started" took
-      # ~6s and `mc-monitor status-bedrock -host 127.0.0.1 -port 19132`
-      # exits 0 once up, 1 (FATAL, connection refused) while it isn't -- the
-      # 3-minute budget below is generous margin over that, well inside the
-      # chart's own 10-minute production startupProbe allowance.
+      # ~6s -- the 3-minute budget below is generous margin over that, well
+      # inside the chart's own 10-minute production startupProbe allowance.
       - name: Boot smoke test
         if: steps.changed.outputs.bedrock == 'true'
         run: |
@@ -201,7 +205,7 @@ jobs:
 
           ready=false
           for _ in $(seq 1 90); do
-            if docker exec smoke-test mc-monitor status-bedrock -host 127.0.0.1 -port 19132 -retry-limit 0 2>/dev/null; then
+            if docker logs smoke-test 2>&1 | grep -q 'Server started\.'; then
               ready=true
               break
             fi
@@ -212,7 +216,7 @@ jobs:
           docker rm -f smoke-test
 
           if [ "$ready" != "true" ]; then
-            echo "::error::$image never reported ready via mc-monitor status-bedrock"
+            echo "::error::$image never logged \"Server started.\""
             exit 1
           fi
 
