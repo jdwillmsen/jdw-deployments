@@ -229,17 +229,10 @@ minecraft-bedrock:
   # Until that lands, this workload is not observable and must not be read as
   # healthy. See README, "NetherNet transition".
   startupProbe:
-    enabled: false
+    enabled: true
     initialDelaySeconds: 30
     periodSeconds: 10
     failureThreshold: 60
-
-  livenessProbe:
-    # Quoted, and it has to stay quoted. Unquoted, Helm carries this through
-    # float64 and renders `3.1536e+07`, which the apiserver rejects as an
-    # int32 -- the manifest is invalid and nothing updates. As a string the
-    # subchart interpolates the digits unchanged.
-    initialDelaySeconds: "31536000"
 
 
   # mc-monitor already ships in this image and already runs the probes above
@@ -673,13 +666,7 @@ bot:
   # account takeover without deleting its PVC/token cache — see README's
   # "Relocating a bot". Explicit rather than templated-default: Sprig's
   # `default` coerces 0 back to 1.
-  #
-  # 0 for the NetherNet transition: this client dials RakNet, and a NetherNet
-  # server has no RakNet listener to dial. Left at 1 it is not degraded, it is
-  # a reconnect loop against a port that will never answer -- which is already
-  # what drove CPUThrottlingHigh on this pod during the 1.26.51 upgrade.
-  # Back to 1 when the client can speak NetherNet, not before.
-  replicas: 0
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
@@ -793,13 +780,7 @@ bot2:
   # the server registers the disconnect. Freeing the *account* also needs
   # `tools/mc run kick <gamertag>` -- the server holds the session open for a
   # while after the client is gone.
-  #
-  # 0 for the NetherNet transition: this client dials RakNet, and a NetherNet
-  # server has no RakNet listener to dial. Left at 1 it is not degraded, it is
-  # a reconnect loop against a port that will never answer -- which is already
-  # what drove CPUThrottlingHigh on this pod during the 1.26.51 upgrade.
-  # Back to 1 when the client can speak NetherNet, not before.
-  replicas: 0
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
@@ -931,13 +912,7 @@ agent:
   # account also needs `tools/mc run kick JDWServerAgent` because the server
   # holds the session open after the client goes. `kubectl scale` does not
   # work -- selfHeal reverts it within seconds.
-  #
-  # 0 for the NetherNet transition: this client dials RakNet, and a NetherNet
-  # server has no RakNet listener to dial. Left at 1 it is not degraded, it is
-  # a reconnect loop against a port that will never answer -- which is already
-  # what drove CPUThrottlingHigh on this pod during the 1.26.51 upgrade.
-  # Back to 1 when the client can speak NetherNet, not before.
-  replicas: 0
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
@@ -1267,8 +1242,18 @@ netherNet:
   # namespace; Prometheus selects Probes and PrometheusRules with empty
   # selectors, so both objects are picked up from this tenant namespace with
   # no change to the platform repo.
+  # Off while the server speaks RakNet. This probe is a TCP connect against the
+  # signaling port, and a RakNet server opens no TCP listener there -- left on
+  # it reports probe_success 0 for a server that is serving fine, which is a
+  # false alarm on the one alert that is supposed to mean "players are locked
+  # out". RakNet has its own working check again: the kubelet probes and
+  # mc-monitor's metric both came back the moment the transport did.
+  #
+  # The Service, the ports and this probe all stay in the chart rather than
+  # being deleted: NetherNet is where Mojang is going, and the next attempt
+  # should start from what was already learned here rather than from nothing.
   probe:
-    enabled: true
+    enabled: false
     interval: 30s
     target: 192.168.1.87:31134
     blackboxHost: platform-blackbox-exporter-prometheus-blackbox-exporter.monitoring.svc.cluster.local:9115

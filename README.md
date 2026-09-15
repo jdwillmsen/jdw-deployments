@@ -23,59 +23,53 @@ self-contained here rather than referenced remotely.
 |---|---|
 | `minecraft-fwb` | Minecraft Bedrock server, migrated off an unmanaged Proxmox VM |
 
-### NetherNet transition
+### NetherNet, and why this server is not on it
 
-**The server currently speaks NetherNet, and while it does, nothing is health
-checking it.** Read this before touching the chart.
-
-Bedrock 1.26.51 made NetherNet the only transport retail clients will use.
-RakNet still answers the server-list ping and still serves library clients, so
-a server left on `transport=raknet` looks reachable, answers a ping, and
-accepts the Go bots -- while no player can join it. That is what the
-2026-09-15 outage was.
-
-**Players connect on port `31134`, not `31132`.** A nodePort is allocated per
-number across the cluster and not per protocol, so the TCP signaling port
-cannot reuse the number the subchart's UDP Service already holds.
-
-Two of the settings live on the world PVC rather than in the chart, because
-the itzg image has no property mapping for either key:
+Bedrock 1.26.51 prints this at ERROR level on every RakNet start:
 
 ```
-transport=nethernet
-server-udp-ports=192.168.1.87:31160-31179:31160-31179
+Your current connection type is not set to NetherNet. In this release,
+NetherNet is the only supported transport type.
+Players will not be able to connect to your game without NetherNet.
 ```
 
-The address in `server-udp-ports` is the **node's** LAN address, not the
-pod's. NetherNet negotiates gameplay UDP per client and advertises where to
-reach it; left to itself it advertises the pod IP, which is a `10.244.x`
-address nothing on the LAN can route to. The range is pinned so the matching
-NodePorts can be opened, and its size matches `maxPlayers`.
+**Do not act on that message the way it reads.** On 2026-09-15 it was taken at
+face value and production was moved to `transport=nethernet` during an outage.
+The signaling listener came up, the port was reachable from the LAN and
+answered HTTP, and a real client still could not join -- it reported trouble
+establishing NetherNet services. Meanwhile the switch took the server agent and
+both AFK bots offline, because they are RakNet clients and there is no
+configuration where both transports work.
 
-What is switched off while this is in place, and why:
+The server runs `transport=raknet` and players connect on **31132**, unchanged.
 
-| Off | Why | Back on when |
+What was actually wrong that day was the version: clients auto-updated to
+1.26.51 while the server was on 1.26.45, and a version-mismatched server
+rejects them. Updating the server fixed that. The NetherNet move came after,
+on the assumption that RakNet was dead -- an assumption never tested against a
+real client, because the only clients that connected in that window were Go
+library clients that implement RakNet themselves and are unaffected by what
+retail clients do. See `docs/incidents/2026-09-15-fwb-version-check-nethernet.md`.
+
+The chart keeps everything the attempt produced, switched off:
+
+| Kept | State | Why it is still here |
 |---|---|---|
-| `startupProbe`, and `livenessProbe` in all but name | Both are `mc-monitor status-bedrock` RakNet pings hardcoded in the vendored subchart. Left on, the startup probe kills the container and liveness restarts it every ~60s | The workload template is vendored out of the subchart with probes that do not assume a transport |
-| Readiness, in effect | Same ping. It fails, so the pod reads `NotReady` and the ArgoCD app reads `Degraded` — deliberately, because that is true | Same as above |
-| `bot`, `bot2`, `agent` (`replicas: 0`) | All three dial RakNet. Against a NetherNet server they are not degraded, they are a reconnect loop against a port that will never answer | Their client can speak NetherNet |
-| mc-monitor's metrics | The sidecar scrapes over RakNet, so `minecraft_status_healthy` goes stale and the `Jdwillmsen*` alerts that read it will fire | Same as above |
+| `nethernet-service.yaml` | rendered, unused | NetherNet is where Mojang is going; the nodePort and UDP-range mechanics were expensive to work out |
+| `nethernet-probe.yaml` | `netherNet.probe.enabled: false` | It is a TCP connect against a signaling port a RakNet server does not open, so it would report a false outage |
 
-The NetherNet Service carries `publishNotReadyAddresses: true`, which is the
-only reason players reach a pod that never becomes Ready. Do not remove that
-line while the probes are in this state.
+What a second attempt needs, beyond what is here:
 
-Because the kubelet is no longer watching this server, a blackbox `Probe` and
-its `PrometheusRule` ship alongside it, aimed at the node address and nodePort
-players dial. `JdwillmsenMinecraftUnreachable` is the alert that now stands in
-for liveness, and `JdwillmsenMinecraftProbeMissing` covers the probe itself
-going quiet — an `== 0` alert cannot fire on a series that stopped existing.
-Neither proves a client can hold a session; that still needs action item 7.
-
-**Reverting** is `transport=raknet` in `server.properties` plus restoring the
-probe values -- but understand what it buys: monitoring and the bots come
-back, and players are locked out again. It is the right move only if NetherNet
-turns out not to work on this network.
+- `transport=nethernet` and `server-udp-ports` in `server.properties` on the
+  world PVC -- the itzg image maps neither key, so the chart cannot set them.
+  A copy of the NetherNet file is kept at `/data/server.properties.nethernet`
+- A **verified client join** before anything else is changed, and before the
+  bots are taken down for it
+- Probes that do not assume a transport. Every one the vendored subchart
+  renders is an `mc-monitor status-bedrock` RakNet ping, so a NetherNet server
+  has to run with liveness and startup disabled, which is how this workload
+  spent that evening with no health check at all
+- A route for the agent and both AFK bots, which have no NetherNet client
 
 ### The AFK bot(s)
 
