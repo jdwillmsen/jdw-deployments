@@ -1,0 +1,106 @@
+{{- if .Values.census.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "census.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.census.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.census.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.census.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: {{ .Values.census.ttlSecondsAfterFinished }}
+      activeDeadlineSeconds: {{ .Values.census.timeoutSeconds }}
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "census.name" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 2000
+            seccompProfile:
+              type: RuntimeDefault
+          # Same reasoning as the backup job: a *required* podAffinity on the
+          # server reads as "run beside the server" but means "run only if a
+          # server pod exists", and the census is most worth reading when the
+          # server is unhealthy. The hard constraint is the node set the world
+          # volume can attach to; co-location is a preference.
+          affinity:
+            nodeAffinity:
+{{- toYaml (index .Values "minecraft-bedrock" "affinity" "nodeAffinity") | nindent 14 }}
+          initContainers:
+            - name: snapshot
+              image: {{ .Values.census.image }}
+              # version-check-cronjob.yaml runs kubectl under exactly this
+              # securityContext, which is the evidence that an in-cluster
+              # client needs no writable root here. If a first run does
+              # complain about a cache directory, the fix is an emptyDir at
+              # /tmp with HOME pointing at it -- not dropping this flag.
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: SERVER_POD
+                  value: {{ include "backup.serverPod" . }}
+              command: ["/bin/bash", "/script/snapshot.sh"]
+              resources:
+{{- toYaml .Values.census.resources | nindent 16 }}
+              volumeMounts:
+                - name: world
+                  mountPath: /data
+                  # The census reads worlds; it must never be able to write
+                  # one. The hold protocol only ever reads from here.
+                  readOnly: true
+                - name: snapshot
+                  mountPath: /snapshot
+                - name: script
+                  mountPath: /script
+          containers:
+            - name: census
+              image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              # Both paths every run. The init container writes a snapshot
+              # when it could take one and nothing when it could not, so the
+              # binary picks: a fresh world if there is one, last night's
+              # archive otherwise, and it says which on the report's own
+              # provenance line.
+              command: ["/census"]
+              args:
+                - "-world-dir"
+                - "/snapshot"
+                - "-backup-dir"
+                - "/backup"
+              resources:
+{{- toYaml .Values.census.resources | nindent 16 }}
+              volumeMounts:
+                - name: snapshot
+                  mountPath: /snapshot
+                  readOnly: true
+                - name: backup
+                  mountPath: /backup
+                  readOnly: true
+          volumes:
+            - name: world
+              persistentVolumeClaim:
+                claimName: datadir-{{ .Release.Name }}-minecraft-bedrock-0
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ include "backup.name" . }}
+            - name: snapshot
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: script
+              configMap:
+                name: {{ include "census.name" . }}-snapshot
+                defaultMode: 0555
+{{- end }}

@@ -236,6 +236,25 @@ depends on it. Do not collapse them.
    tools/mc run allowlist add "<agent's gamertag>"
    ```
 
+### Reading the mob census
+
+`census` runs daily at 05:00, an hour after the backup, and prints a report of
+what lives in the world and which 9x9-chunk regions have reached Bedrock's mob
+spawn cap — the reproducible form of "why is nothing spawning near my base".
+
+```bash
+kubectl logs -n <namespace> job/$(kubectl get jobs -n <namespace> \
+  -l job-name --sort-by=.metadata.creationTimestamp -o name | grep census | tail -1 | cut -d/ -f2)
+```
+
+Its first line says which world it read and when that world was captured. A
+report reading `via archive` means the fresh snapshot could not be taken that
+run — the server was down, or refused the save hold — and the numbers are up
+to a day old. `via snapshot` means they are minutes old.
+
+It is off by default (`census.enabled`), because the binary ships in the agent
+image and a release carrying it has to be published before the job can run.
+
 ### Restoring a backup
 
 The chart also carries a restore mechanism alongside the backup CronJob:
