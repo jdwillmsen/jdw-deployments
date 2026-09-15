@@ -1257,3 +1257,18 @@ netherNet:
   gameplayPorts:
     start: 31160
     end: 31179
+
+  # The replacement health signal while the kubelet probes are off.
+  #
+  # Aimed at the node address and nodePort players dial, not at the pod: that
+  # is the path being promised, and it fails for a dead server, a dead node
+  # and a NodePort that stopped routing alike. The blackbox exporter and the
+  # tcp_connect module it uses are already deployed in the monitoring
+  # namespace; Prometheus selects Probes and PrometheusRules with empty
+  # selectors, so both objects are picked up from this tenant namespace with
+  # no change to the platform repo.
+  probe:
+    enabled: true
+    interval: 30s
+    target: 192.168.1.87:31134
+    blackboxHost: platform-blackbox-exporter-prometheus-blackbox-exporter.monitoring.svc.cluster.local:9115

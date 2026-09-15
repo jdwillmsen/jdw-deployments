@@ -65,6 +65,13 @@ The NetherNet Service carries `publishNotReadyAddresses: true`, which is the
 only reason players reach a pod that never becomes Ready. Do not remove that
 line while the probes are in this state.
 
+Because the kubelet is no longer watching this server, a blackbox `Probe` and
+its `PrometheusRule` ship alongside it, aimed at the node address and nodePort
+players dial. `JdwillmsenMinecraftUnreachable` is the alert that now stands in
+for liveness, and `JdwillmsenMinecraftProbeMissing` covers the probe itself
+going quiet — an `== 0` alert cannot fire on a series that stopped existing.
+Neither proves a client can hold a session; that still needs action item 7.
+
 **Reverting** is `transport=raknet` in `server.properties` plus restoring the
 probe values -- but understand what it buys: monitoring and the bots come
 back, and players are locked out again. It is the right move only if NetherNet
