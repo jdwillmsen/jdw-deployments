@@ -128,9 +128,22 @@ spec:
               resources:
 {{- toYaml .Values.census.resources | nindent 16 }}
               volumeMounts:
+                # Writable, despite this container only wanting to read the
+                # world. LevelDB takes a lock on open and creates the LOCK
+                # file to do it, even when the database is opened read-only,
+                # so a read-only mount fails the scan outright:
+                #   open /snapshot/FWB/db/LOCK: read-only file system
+                # Confirmed on the first scheduled run. The unit tests missed
+                # it because they build their snapshot in t.TempDir(), which
+                # is writable -- the mount is the only place this surfaces.
+                #
+                # It costs nothing: the volume is an emptyDir shared with the
+                # init container that filled it, and it dies with the pod.
                 - name: snapshot
                   mountPath: /snapshot
-                  readOnly: true
+                # The archive is the nightly backup on a shared PVC, and this
+                # container has no business writing to it. Extraction happens
+                # under /tmp, which has its own writable volume.
                 - name: backup
                   mountPath: /backup
                   readOnly: true
