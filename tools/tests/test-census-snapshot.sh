@@ -116,6 +116,113 @@ for t in terms:
 AFFINITY
 echo "  ok: the census prefers the server's node with a selector that matches it"
 
+# --- who may write which volume ---------------------------------------------
+# The census only reads worlds, but goleveldb opens a database by flocking a
+# LOCK file in the db directory and creates that file when it is absent --
+# ReadOnly stops it writing the database, not the lock. `save query` never names
+# LOCK, so no snapshot ever carries one, and a read-only snapshot mount fails
+# the open with EROFS before a record is read. That is invisible to `helm
+# template`: both spellings render, and only one of them opens a world.
+#
+# The inverse matters more: the world mount is the live server's PVC, and the
+# census must never be able to write it. So this is a two-sided check, and it is
+# run three times -- once against the chart, and once against each of the two
+# one-line mutations that would break a side of it.
+cat > "$work/check-mounts.py" <<'MOUNTS'
+import sys, yaml
+
+census = None
+for doc in yaml.safe_load_all(open(sys.argv[1])):
+    if doc and doc.get("kind") == "CronJob" and doc["metadata"]["name"].endswith("-census"):
+        census = doc["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+assert census, "no census CronJob rendered"
+
+init = {c["name"]: c for c in census.get("initContainers") or []}
+main = {c["name"]: c for c in census["containers"]}
+assert "snapshot" in init, "the census job runs no snapshot init container"
+assert "census" in main, "the census job runs no census container"
+
+
+def mounts(container):
+    return {m["name"]: m for m in container.get("volumeMounts") or []}
+
+
+# The world is the running server's data. Checked across every container rather
+# than on the one that mounts it today, because the failure being prevented is a
+# future container mounting it writable, not this one changing.
+world_seen = 0
+for name, c in list(init.items()) + list(main.items()):
+    m = mounts(c).get("world")
+    if m is None:
+        continue
+    world_seen += 1
+    assert m.get("readOnly") is True, (
+        f"the {name} container mounts the live server's world writable"
+    )
+assert world_seen == 1, f"expected exactly one container to mount the world, found {world_seen}"
+
+snapshot = mounts(main["census"]).get("snapshot")
+assert snapshot, "the census container does not mount the snapshot at all"
+assert not snapshot.get("readOnly", False), (
+    "the census mounts the snapshot read-only: goleveldb creates a LOCK file in "
+    "the db directory it opens, even read-only, and the snapshotter copies only "
+    "what save query names -- so this fails the open with EROFS every run"
+)
+
+# Writable is only defensible because the volume is per-run scratch that nothing
+# outlives. A snapshot backed by a claim would make this a real grant.
+volumes = {v["name"]: v for v in census["volumes"]}
+assert "emptyDir" in volumes["snapshot"], (
+    "the snapshot volume is no longer a per-run emptyDir, so mounting it "
+    "writable now grants the census write access to something that survives it"
+)
+
+backup = mounts(main["census"]).get("backup")
+assert backup and backup.get("readOnly") is True, (
+    "the census mounts the archive volume writable; it is the only copy of every "
+    "night's backup"
+)
+MOUNTS
+
+python3 "$work/check-mounts.py" "$work/rendered.yaml" \
+  || fail "the census cannot open the snapshot it is given, or it can write something it must not"
+
+# Negative controls. Each flips one field in a copy of the render; a check that
+# does not go red on both is asserting nothing.
+mutate() {
+  python3 - "$work/rendered.yaml" "$1" "$2" <<'MUTATE'
+import sys, yaml
+
+src, dst, which = sys.argv[1], sys.argv[2], sys.argv[3]
+docs = list(yaml.safe_load_all(open(src)))
+touched = 0
+for doc in docs:
+    if not doc or doc.get("kind") != "CronJob" or not doc["metadata"]["name"].endswith("-census"):
+        continue
+    spec = doc["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    groups = (spec.get("initContainers") or []) + spec["containers"]
+    for c in groups:
+        for m in c.get("volumeMounts") or []:
+            if which == "snapshot-readonly" and c["name"] == "census" and m["name"] == "snapshot":
+                m["readOnly"] = True
+                touched += 1
+            if which == "world-writable" and m["name"] == "world":
+                m.pop("readOnly", None)
+                touched += 1
+assert touched == 1, f"mutation {which} matched {touched} mounts, so it is not the mutation it claims"
+with open(dst, "w") as fh:
+    yaml.safe_dump_all(docs, fh)
+MUTATE
+}
+
+for mutation in snapshot-readonly world-writable; do
+  mutate "$work/mutant-$mutation.yaml" "$mutation"
+  if python3 "$work/check-mounts.py" "$work/mutant-$mutation.yaml" >/dev/null 2>&1; then
+    fail "the mount check passes a render mutated to $mutation, so it checks nothing"
+  fi
+done
+echo "  ok: the census can write its snapshot, cannot write the world or the archives, and the check fails on both mutants"
+
 # The log read is the one call that can block after the hold succeeded: bash
 # defers its traps until the foreground child returns, so an unbounded read here
 # means activeDeadlineSeconds' SIGTERM never reaches the resume trap and the
