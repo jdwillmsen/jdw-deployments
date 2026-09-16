@@ -4,7 +4,7 @@
 |---|---|
 | **Workload** | minecraft-fwb (`jdwillmsen-prd`) |
 | **Detected** | 2026-09-15 17:01 UTC by alert; acted on 21:15 UTC |
-| **Resolved** | 2026-09-15 21:25 UTC (server updated by hand); check repaired in this PR |
+| **Resolved** | 2026-09-15 21:25 UTC, when the server was updated to 1.26.51.1. Not recognised as resolved until 2026-09-16 00:36, after a detour through NetherNet that was unnecessary |
 | **Data loss** | none |
 | **User impact** | Players could not join from roughly 15:00–16:00 UTC, when Mojang pushed 1.26.51 to clients, until the transport switch. Multiple user reports. Automatic version tracking was off for the same window. |
 
@@ -155,11 +155,21 @@ Service was never down; the update was applied by hand.
 5. Verified real joins rather than trusting the banner (see below):
    `Player Spawned: Dotablaze7321` and `Player Spawned: JDWServerAgent`.
 
-6. Moved production onto NetherNet once RakNet was shown not to serve retail
-   clients — chart changes for the signaling and gameplay NodePorts, the probe
-   values that stop the container being killed by checks that cannot pass, and
-   `transport`/`server-udp-ports` written to `server.properties` on the world
-   PVC, which the image offers no way to set from the chart.
+6. Moved production onto NetherNet at 22:14 — **which was not necessary and
+   should not have been done.** RakNet was never shown not to serve retail
+   clients; it was assumed from the startup banner. A real client could not
+   join over NetherNet either, and the switch took the server agent and both
+   AFK bots offline for 104 minutes, because they have no NetherNet client.
+7. Reverted to `transport=raknet` at 23:53 and restored the probes and all
+   three replicas. A retail client joined successfully at 00:36:
+
+   ```
+   [2026-09-16 00:36:19] Player connected: Dotablaze, xuid: 2535473803383948
+   [2026-09-16 00:36:22] Player Spawned:  Dotablaze
+   ```
+
+   That is the first retail join since 07:39 on 2026-09-15, and it confirms the
+   version update at 21:25 had already fixed the outage.
 
 1.26.51 prints, at ERROR level, on a RakNet server:
 
@@ -168,16 +178,25 @@ Service was never down; the update was applied by hand.
 [2026-09-15 21:25:28:636 ERROR] Players will not be able to connect to your game without NetherNet.
 ```
 
-That message is exact, and it was read too charitably at first: two Go clients
-joining over RakNet immediately after the upgrade was taken as evidence that
-players could too. It was not. gophertunnel implements RakNet itself and is
-unaffected by a client-side transport change, so those joins could not have
-detected the problem. User reports are what corrected it.
+**That message is not true of this release, and acting on it cost more than
+the outage did.** Retail clients still join over RakNet on 1.26.51 — verified
+at 00:36 by a real client, on a server that had printed this banner at every
+start. Treat it as notice that a future release will remove RakNet, not as a
+description of this one.
+
+The reasoning that went wrong is worth stating plainly, because the individual
+steps were each defensible. Two Go clients joined over RakNet right after the
+upgrade. That was correctly identified at the time as proving nothing —
+gophertunnel implements RakNet itself and is unaffected by any client-side
+change. But the conclusion drawn from "this evidence is worthless" was "so the
+banner must be right", when the available move was to spend two minutes asking
+a human to try joining. The version-matched RakNet server was never tested by a
+client before it was replaced.
 
 Every component this repo runs against the server — the mc-monitor sidecar,
-the console bridge, the server agent and both AFK bots — speaks RakNet only,
-so the switch that restored players took all of them offline. `transport` is a
-single value; there is no configuration where both work.
+the console bridge, the server agent and both AFK bots — speaks RakNet only.
+`transport` is a single value, so the switch took all of them down; the farm
+stopped loading chunks for 104 minutes and bought nothing.
 
 ## Action items
 
@@ -187,9 +206,10 @@ single value; there is no configuration where both work.
 | 2 | Gate the CI boot smoke test on `Server started.` rather than a RakNet ping | prevent | Done, this PR |
 | 3 | Move afk-bot to the Go client, which survived the 1.26.51 packet change | mitigate | Done, this PR; needs a device-code login by hand before the pod can authenticate |
 | 4 | Set `transport` explicitly in the chart so a restored or fresh world cannot come up NetherNet-only and invisible | prevent | Open — needs an image whose property definitions include it |
-| 5 | Decide what this fleet does when RakNet is actually removed | prevent | Answered by force — production is on NetherNet and the RakNet clients sit at `replicas: 0`. Each still needs a path back |
-| 6 | Vendor the workload template so probes do not assume a transport | detect | Open, and blocking: until it lands this server has no working health check and the ArgoCD app reads Degraded |
-| 7 | Alert on "reachable but unjoinable" — every existing check passed throughout this outage | detect | Open |
+| 5 | Decide what this fleet does when RakNet is actually removed | prevent | Open, and no longer urgent. The NetherNet Service and probe stay in the chart disabled, and the README records what a second attempt needs — starting with a verified client join before anything is taken offline |
+| 6 | Vendor the workload template so probes do not assume a transport | detect | Open, not urgent. The subchart's RakNet probes went green the moment the transport was reverted; this only bites on a future NetherNet attempt |
+| 7 | Alert on "reachable but unjoinable" — every existing check passed throughout this outage | detect | **Open, and the one that matters.** Untouched by any of tonight's work |
+| 8 | Require a verified client join before changing transport, in the README | prevent | Done — see "NetherNet, and why this server is not on it" |
 
 ## Assumptions invalidated
 
@@ -203,3 +223,11 @@ single value; there is no configuration where both work.
   itself; none of them could have detected what was wrong.
 - The monitoring covers "can players play". It covers "does the server answer a
   RakNet ping", which stayed true for the whole outage.
+- A vendor's own startup banner describes the release it ships in. 1.26.51
+  states NetherNet is "the only supported transport type" and that players
+  cannot connect without it. Retail clients joined over RakNet on that exact
+  build. The banner is a deprecation notice written in the present tense.
+- Ruling out the evidence you have is the same as having evidence for the
+  alternative. It is not. Once the Go clients' joins were correctly discarded
+  as proof, the honest position was "untested", and the test was two minutes of
+  a human's time.
