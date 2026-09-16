@@ -51,6 +51,19 @@ spec:
           affinity:
             nodeAffinity:
 {{- toYaml (index .Values "minecraft-bedrock" "affinity" "nodeAffinity") | nindent 14 }}
+            # A preference, for the reason above. It is also what keeps the
+            # ReadWriteOnce world claim attachable if the server's node set is
+            # ever widened: RWO admits many pods on one node and none across
+            # two, and the node set above admitting exactly one node today is a
+            # property of someone else's values block.
+            podAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        app: {{ .Release.Name }}-minecraft-bedrock
           initContainers:
             - name: snapshot
               image: {{ .Values.census.image }}

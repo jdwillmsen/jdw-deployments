@@ -16,7 +16,10 @@ data:
   # nightly archive, which is stale but true.
   #
   # Keep this in step with backup-cronjob.yaml's hold_copy(). If you change
-  # the manifest parsing or the truncation here, look there too.
+  # the manifest parsing or the truncation here, look there too. Two things
+  # here deliberately do NOT match it: every call into the server pod names
+  # its container, and every copy is checked against the length the server
+  # committed. Both are noted where they happen.
   snapshot.sh: |
     #!/usr/bin/env bash
     # Exits 0 when no snapshot could be taken: a failed init container stops
@@ -28,7 +31,16 @@ data:
     NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
     OUT=/snapshot
 
-    give_up() { echo "census-snapshot: $1; the census will read the newest archive instead" >&2; exit 0; }
+    # Clears the tree on the way out. A half-copied world with no marker is
+    # already unreadable to the census, which keys off the marker alone -- but
+    # leaving it there makes "the directory has files in it" look like a usable
+    # signal to whoever reads this next, and that reading is the one the
+    # marker ordering exists to rule out.
+    give_up() {
+      echo "census-snapshot: $1; the census will read the newest archive instead" >&2
+      rm -rf "${OUT:?}/"* "${OUT:?}/".snapshot-taken-at.tmp 2>/dev/null || true
+      exit 0
+    }
 
     # Always resume, even if the copy fails partway. Leaving the server held
     # would silently stop it persisting anything at all.
@@ -48,6 +60,11 @@ data:
     # than no line.
     trap resume EXIT
     timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- send-command save hold || give_up "save hold was refused"
+
+    # The world is as of the hold, not as of whenever the copy happened to
+    # finish, and the provenance line in the report describes the state that
+    # was captured.
+    stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     # save query reports "ready to be copied" followed by a comma-separated
     # file:length manifest. Poll until it does.
@@ -86,6 +103,14 @@ data:
       len="${entry##*:}"
       mkdir -p "$OUT/$(dirname "$f")" || give_up "could not create $OUT/$(dirname "$f")"
       head -c "$len" "/data/worlds/$f" > "$OUT/$f" || give_up "could not copy $f"
+      # head exits 0 on a source shorter than the length save query committed,
+      # writing whatever it found. Nothing downstream compares the two, and a
+      # short journal is byte-for-byte what a journal copied mid-write looks
+      # like -- so this is refused here or it is not refused at all. The
+      # backup job has the same gap and keeps it: a slightly short archive is
+      # merely a little further behind, while a short census is a published
+      # population count for a world that never existed.
+      [[ "$(stat -c %s "$OUT/$f")" == "$len" ]] || give_up "$f copied short of the $len bytes save query committed"
       count=$((count + 1))
     done < <(echo "$manifest" | tr ',' '\n')
 
@@ -94,6 +119,14 @@ data:
     # Written last and only on success: its presence is what tells the census
     # a usable snapshot exists, and its contents are the only record of when
     # the world was captured. The census refuses to invent that timestamp.
-    date -u +%Y-%m-%dT%H:%M:%SZ > "$OUT/snapshot-taken-at"
-    echo "census-snapshot: copied $count files under hold"
+    #
+    # Written to a temporary name and renamed because a marker created under
+    # its final name exists while it is still empty. The census container
+    # cannot see that window -- it does not start until this container has
+    # terminated -- but a failed write can leave it behind: the emptyDir has
+    # a sizeLimit, and a marker that is present and empty is a parse failure
+    # that fails the run instead of falling back to the archive.
+    printf '%s\n' "$stamp" > "$OUT/.snapshot-taken-at.tmp" || give_up "could not write the capture stamp"
+    mv "$OUT/.snapshot-taken-at.tmp" "$OUT/snapshot-taken-at" || give_up "could not publish the snapshot marker"
+    echo "census-snapshot: copied $count files under hold, taken at $stamp"
 {{- end }}
