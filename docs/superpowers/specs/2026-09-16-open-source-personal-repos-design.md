@@ -40,8 +40,14 @@ with the reasoning, because the reasoning is what a later reader will need.
 
 These become public repositories with a license. They do not become projects
 soliciting contributions: no issue triage commitment, no response-time
-expectation, no support promise. Issues stay disabled on all four until there is
-a reason to turn them on.
+expectation, no support promise.
+
+**Issues stay enabled.** An earlier draft of this document disabled them, which
+was a defect. Every repository's `renovate.json` extends `config:recommended`,
+which includes `:dependencyDashboard` — `minecraft-afk-bot` has that dashboard
+open right now as issue #10. Disabling Issues hides the dashboard and makes
+Renovate log an error on every run. The right control is a `SUPPORT.md` saying
+no support is offered, not an off switch that breaks tooling.
 
 The community health files in Phase 1 are not in tension with that. They exist
 to *state* the position — a `CONTRIBUTING.md` whose content is "this is a
@@ -121,7 +127,8 @@ Two routes do work, and both were declined:
 - **GitHub Support** will dereference affected PRs, garbage-collect the server
   and clear cached views. Their stated bar is sensitive data whose risk "can't
   be mitigated by rotating affected credentials", which an email address does
-  not obviously meet. Cost of waiting is roughly $12 of metered overage.
+  not obviously meet. Cost of waiting depends on a fact not yet established —
+  see the payment-method caveat under Verification.
 - **Delete and recreate** each repository. A complete purge, entirely
   self-service, that destroys all pull request review history and breaks 135
   commit-message cross-references of the form `(#96)`.
@@ -153,6 +160,7 @@ CONTRIBUTING.md
 SECURITY.md
 ISSUE_TEMPLATE/{bug_report.md,feature_request.md,config.yml}
 PULL_REQUEST_TEMPLATE.md
+SUPPORT.md
 ```
 
 Adapted from `jdwlabs/.github`, reworded for what these actually are: a personal
@@ -219,21 +227,30 @@ Rules mirror the org baseline: `pull_request` with one approving review and
 convention, regex `^(feat|fix|hotfix|release|chore|docs|refactor|test|ci)/.+`
 over `refs/heads/**` excluding `main`.
 
-One change is mandatory. The org baseline's bypass actor is:
+One change is mandatory, and it is not the obvious one. The org baseline's
+bypass actor is:
 
 ```json
 {"actor_id": null, "actor_type": "OrganizationAdmin", "bypass_mode": "always"}
 ```
 
-`OrganizationAdmin` does not exist on a personal repository. The equivalent is:
+`OrganizationAdmin` does not exist on a personal repository, so the org's
+`required_approving_review_count: 1` cannot be carried over as written — GitHub
+does not allow approving your own pull request, and there is no second person.
+Left uncorrected, this deadlocks the repository permanently.
 
-```json
-{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}
-```
+The tempting fix is a `RepositoryRole` bypass actor with the admin role id.
+Do not do this: the REST API documents `RepositoryRole` as a valid
+`actor_type` but publishes **no mapping from role name to integer id**, so any
+value written here is a guess that happens to work until it doesn't.
 
-Without a working bypass actor, `required_approving_review_count: 1` deadlocks
-the repository permanently: GitHub does not allow approving your own pull
-request, and there is no second person.
+Use `required_approving_review_count: 0` instead. The `pull_request` rule still
+forbids pushing directly to `main` and still requires a pull request, which is
+the property the working rules actually mandate. A required approval that the
+sole maintainer bypasses by construction enforces nothing; dropping it removes
+the deadlock, removes the undocumented magic number, and loses no real
+guarantee. This is a deliberate divergence from the org baseline, recorded here
+so nobody "fixes" it back.
 
 **Adopt the org's reusable security workflows.** `jdwlabs/.github` is public and
 both workflows are `workflow_call`, so a personal repository can call them. Pin
@@ -257,6 +274,14 @@ secret-bearing workflow (`release`, `renovate`, `protocol-check`) triggers on
 tag, schedule or dispatch only, never on `pull_request`. The PR-triggered
 `ci.yml` in all four consumes no secrets.
 
+**Code scanning becomes available.** GitHub's documentation: *"If you want to
+use code scanning on private repositories, you need a GitHub Code Security
+licence."* No such licence is needed on a public repository, so CodeQL becomes
+available to all four at no cost the moment they flip. None has code scanning
+today. This is worth taking alongside the reusable security workflows, though
+it is additive rather than blocking — set it up after Phase 3 proves out on
+`mc-console-bridge`.
+
 **GHCR package visibility is left alone.** Making a repository public does not
 publish its `ghcr.io/jdwillmsen/*` images. The cluster continues pulling with
 its existing pull secret. A separate decision, deliberately not bundled here.
@@ -271,6 +296,28 @@ for the plain wastefulness of paying six setup costs for 77 seconds of work.
 Tracked as follow-up, not done here.
 
 ## Verification
+
+Two facts underpinning this document were not verifiable from the API available
+to the agent that wrote it, and should be confirmed by a human before Phase 2.
+
+**Is there a payment method on file?** This decides whether running out of
+minutes is a bill or a wall. GitHub's billing documentation: *"If your account
+does not have a valid payment method on file, usage is blocked once you use up
+your quota."* With a card, overage on roughly 1,500 minutes is about $12 and the
+timeline is relaxed. Without one, **CI stops entirely on all four repositories
+around 2026-09-17** and stays stopped until the cycle resets. An earlier draft
+asserted the $12 figure unconditionally, which was wrong. Check Settings →
+Billing.
+
+**The minute figures are a reconstruction, not GitHub's own accounting.** The
+`/actions/runs/{id}/timing` endpoint returns `total_ms: 0` for every run on this
+account, including old ones, so it could not be used. The table above was
+computed from each job's `completed_at - started_at`, rounded up per job, with
+skipped and never-dispatched jobs excluded — which is how GitHub documents its
+billing, but is still an estimate. Confirm the totals against Settings → Billing
+before treating them as exact. The conclusion is robust to a wide margin of
+error: the free allowance is 2,000 and the estimate is 1,868 with two weeks to
+run.
 
 | Check | Command | Expected |
 |---|---|---|
@@ -336,7 +383,8 @@ Known and accepted exposures:
 ## Follow-up
 
 - CI consolidation in `jdw-deployments` (six jobs to two)
-- Whether to enable Issues, and the community layer generally
+- The community layer generally: whether to accept contributions, and whether
+  the issue templates should invite reports or discourage them
 - GHCR package visibility
 - `minecraft-afk-bot`'s `Protocol Check`: 321 `workflow_dispatch` runs in
   sixteen days at 361 billed minutes, the single largest job in the estate.
