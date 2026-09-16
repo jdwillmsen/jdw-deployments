@@ -7,6 +7,25 @@ metadata:
 spec:
   schedule: {{ .Values.census.schedule | quote }}
   concurrencyPolicy: Forbid
+  # The schedule keeps this clear of both neighbours that drive the same
+  # server's save protocol -- the backup, which may still be running an hour
+  # after its 04:00 start, and the version check, which can be restarting the
+  # server until 05:25. That separation only holds while runs start on time.
+  #
+  # Left unset, the controller starts the most recent missed run of *each*
+  # CronJob as soon as it can reach the API again: an outage spanning
+  # 03:50-06:00 has the backup's 04:00 run and this one admitted in the same
+  # reconcile. Both issue save hold, and whichever finishes first fires its own
+  # resume trap while the other is still copying -- a world the server was
+  # writing mid-copy, which is the one state nothing downstream can detect and
+  # the whole reason this job holds at all. concurrencyPolicy is per-CronJob
+  # and cannot see the backup.
+  #
+  # Ten minutes is longer than any scheduling delay this controller has shown
+  # and far shorter than the gap to either neighbour, so a run later than that
+  # is skipped outright. A skipped night is not silent: the cluster's
+  # CronJobHasNotSucceededRecently fires at 24h without a success.
+  startingDeadlineSeconds: {{ .Values.census.startingDeadlineSeconds }}
   successfulJobsHistoryLimit: {{ .Values.census.successfulJobsHistoryLimit }}
   failedJobsHistoryLimit: {{ .Values.census.failedJobsHistoryLimit }}
   jobTemplate:
@@ -32,6 +51,19 @@ spec:
           affinity:
             nodeAffinity:
 {{- toYaml (index .Values "minecraft-bedrock" "affinity" "nodeAffinity") | nindent 14 }}
+            # A preference, for the reason above. It is also what keeps the
+            # ReadWriteOnce world claim attachable if the server's node set is
+            # ever widened: RWO admits many pods on one node and none across
+            # two, and the node set above admitting exactly one node today is a
+            # property of someone else's values block.
+            podAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        app: {{ .Release.Name }}-minecraft-bedrock
           initContainers:
             - name: snapshot
               image: {{ .Values.census.image }}
@@ -48,6 +80,19 @@ spec:
               env:
                 - name: SERVER_POD
                   value: {{ include "backup.serverPod" . }}
+                # The server pod runs three containers -- the game server,
+                # mc-monitor and the console bridge -- and kubectl silently
+                # takes containers[0] when none is named. That ordering is a
+                # property of the vendored subchart plus this chart's sidecar
+                # list, asserted nowhere, and getting it wrong is not loud: the
+                # manifest poll would simply never match, every night, while
+                # the run still exits 0 through the archive fallback.
+                #
+                # The subchart names the container after the workload, so this
+                # is the same string as the StatefulSet -- version-check-cronjob.yaml
+                # names its own server container from the same helper.
+                - name: SERVER_CONTAINER
+                  value: {{ include "backup.serverStatefulSet" . }}
               command: ["/bin/bash", "/script/snapshot.sh"]
               resources:
 {{- toYaml .Values.census.resources | nindent 16 }}

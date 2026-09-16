@@ -1298,11 +1298,30 @@ census:
   # a job log rather than consumed by anything.
   enabled: true
 
-  # An hour after the backup's 0 4, so the archive the fallback path reads is
-  # the freshest one that exists. Daily rather than hourly because the counts
-  # this measures move over days: a region does not approach its cap between
-  # breakfast and lunch.
-  schedule: "0 5 * * *"
+  # 05:40 UTC, which is clear of both neighbours that drive this same server's
+  # save protocol -- and 05:00 was clear of neither. The backup starts at 04:00
+  # with an activeDeadlineSeconds of 3600, so a slow night has it still holding
+  # at 05:00; the version check runs hourly with a timeoutSeconds of 1500, so
+  # its own 05:00 run can be restarting the server until 05:25. A census that
+  # starts at 05:00 meets the first head-on and the second by the clock.
+  #
+  # What the separation protects is the save protocol, not the volume: two jobs
+  # holding the same server means whichever finishes first resumes it while the
+  # other is still copying, and a world the server resumed writing mid-copy is
+  # the one state nothing downstream can detect.
+  #
+  # Every time here is UTC, because nothing in this chart sets timeZone on any
+  # CronJob -- which is what makes the three windows comparable at all.
+  #
+  # Daily rather than hourly because the counts this measures move over days: a
+  # region does not approach its cap between breakfast and lunch. Daily is also
+  # the slowest it can safely be, since the cluster-wide
+  # CronJobHasNotSucceededRecently fires at 24h without a success.
+  schedule: "40 5 * * *"
+
+  # What stops the separation above from being undone by catch-up. See the
+  # field's comment in census-cronjob.yaml.
+  startingDeadlineSeconds: 600
 
   # Drives the save protocol through kubectl exec, exactly as the backup job
   # does, so it tracks the cluster's minor version for the same reason: a

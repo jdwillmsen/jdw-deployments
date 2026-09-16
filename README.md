@@ -238,9 +238,13 @@ depends on it. Do not collapse them.
 
 ### Reading the mob census
 
-`census` runs daily at 05:00, an hour after the backup, and prints a report of
-what lives in the world and which 9x9-chunk regions have reached Bedrock's mob
-spawn cap — the reproducible form of "why is nothing spawning near my base".
+`census` runs daily at 05:40 UTC and prints a report of what lives in the world
+and which 9x9-chunk regions have reached Bedrock's mob spawn cap — the
+reproducible form of "why is nothing spawning near my base". That slot is not
+arbitrary: it is clear of the backup, which starts at 04:00 and may run for an
+hour, and of the version check, whose 05:00 run can be restarting the server
+until 05:25. All three drive the same server's save protocol, and two of them
+holding it at once produces a snapshot taken while the server was writing.
 
 ```bash
 kubectl logs -n <namespace> job/$(kubectl get jobs -n <namespace> \
