@@ -48,6 +48,19 @@ spec:
               env:
                 - name: SERVER_POD
                   value: {{ include "backup.serverPod" . }}
+                # The server pod runs three containers -- the game server,
+                # mc-monitor and the console bridge -- and kubectl silently
+                # takes containers[0] when none is named. That ordering is a
+                # property of the vendored subchart plus this chart's sidecar
+                # list, asserted nowhere, and getting it wrong is not loud: the
+                # manifest poll would simply never match, every night, while
+                # the run still exits 0 through the archive fallback.
+                #
+                # The subchart names the container after the workload, so this
+                # is the same string as the StatefulSet -- version-check-cronjob.yaml
+                # names its own server container from the same helper.
+                - name: SERVER_CONTAINER
+                  value: {{ include "backup.serverStatefulSet" . }}
               command: ["/bin/bash", "/script/snapshot.sh"]
               resources:
 {{- toYaml .Values.census.resources | nindent 16 }}

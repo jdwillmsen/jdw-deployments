@@ -32,7 +32,7 @@ data:
 
     # Always resume, even if the copy fails partway. Leaving the server held
     # would silently stop it persisting anything at all.
-    resume() { timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save resume >/dev/null 2>&1 || true; }
+    resume() { timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- send-command save resume >/dev/null 2>&1 || true; }
 
     [[ -w "$OUT" ]] || { echo "census-snapshot: $OUT is not writable" >&2; exit 1; }
 
@@ -47,16 +47,28 @@ data:
     # never fire, and a line that reads as a safety net but is not is worse
     # than no line.
     trap resume EXIT
-    timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save hold || give_up "save hold was refused"
+    timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- send-command save hold || give_up "save hold was refused"
 
     # save query reports "ready to be copied" followed by a comma-separated
     # file:length manifest. Poll until it does.
     manifest=""
     for _ in $(seq 1 30); do
       sleep 3
-      timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save query >/dev/null || give_up "save query failed"
+      timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- send-command save query >/dev/null || give_up "save query failed"
       sleep 2
-      manifest="$(kubectl logs -n "$NS" "$SERVER_POD" --tail=20 | grep -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
+      # Bounded like every exec around it, and for a worse reason: a kubelet
+      # that stops answering log proxies blocks this read *after* save hold
+      # succeeded. Bash defers traps until the foreground child returns, so
+      # the resume trap would not run when activeDeadlineSeconds SIGTERMs the
+      # shell -- leaving the server held, persisting nothing, until the next
+      # morning's backup fails its own hold and resumes it.
+      #
+      # --tail=200 because this is the game server's console and chat shares
+      # it (values-console-bridge.yaml sets CONTENT_LOG_CONSOLE_OUTPUT_ENABLED),
+      # so a busy evening can push the manifest out of a 20-line window.
+      # grep -a because that console carries binary bytes, which otherwise
+      # make grep refuse the whole stream.
+      manifest="$(timeout 10s kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --tail=200 | grep -a -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
       [[ "$manifest" == *":"* ]] && break
       manifest=""
     done
