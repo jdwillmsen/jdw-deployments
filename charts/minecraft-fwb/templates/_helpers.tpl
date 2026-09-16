@@ -129,3 +129,7 @@ stays quiet.
 {{- define "agent.dbSecret.name" -}}
 {{ .Release.Name }}-server-agent-db
 {{- end -}}
+
+{{- define "census.name" -}}
+{{ .Release.Name }}-census
+{{- end -}}

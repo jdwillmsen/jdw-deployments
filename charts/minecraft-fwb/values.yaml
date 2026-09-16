@@ -1257,3 +1257,58 @@ netherNet:
     interval: 30s
     target: 192.168.1.87:31134
     blackboxHost: platform-blackbox-exporter-prometheus-blackbox-exporter.monitoring.svc.cluster.local:9115
+
+# Reads the world and reports which 9x9-chunk regions have hit Bedrock's mob
+# spawn cap -- the question "why is nothing spawning near my base" turned into
+# something reproducible. Takes a fresh snapshot through the server's own save
+# protocol when it can, and falls back to the newest backup archive when it
+# cannot.
+census:
+  # Off until an agent release containing cmd/census has been published and
+  # agent.image.tag below points at it. The binary landed after 0.15.0, which
+  # is what that tag currently reads, so turning this on now gets a
+  # CrashLoopBackOff whose cause is one line deep in a job log.
+  #
+  # Turning it on is the deliberate second half of a two-step bootstrap, the
+  # same shape as the bots above.
+  enabled: false
+
+  # An hour after the backup's 0 4, so the archive the fallback path reads is
+  # the freshest one that exists. Daily rather than hourly because the counts
+  # this measures move over days: a region does not approach its cap between
+  # breakfast and lunch.
+  schedule: "0 5 * * *"
+
+  # Drives the save protocol through kubectl exec, exactly as the backup job
+  # does, so it tracks the cluster's minor version for the same reason: a
+  # skewed client misbehaves on the one path that touches a live world.
+  image: alpine/k8s:1.36.2
+
+  # The hold poll is 30 iterations of roughly 5s, and a scan of the 570MB
+  # production world measured 270ms, so a run that reaches this is wedged
+  # rather than slow.
+  timeoutSeconds: 900
+
+  # A failed Job with no TTL is kept until failedJobsHistoryLimit evicts it,
+  # and KubeJobFailed reads the object rather than the run -- so one bad night
+  # pages until then. Deleting on a timer bounds that to a day, while a fault
+  # that is still real re-fires on the next schedule.
+  ttlSecondsAfterFinished: 86400
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      # The scan holds every entity in memory at once -- about 22,600 on the
+      # production world, which is small. The ceiling is sized for the archive
+      # extraction and the LevelDB read rather than the entity slice.
+      memory: 1Gi
+      # The namespace quota caps limits.cpu at 8000m, of which the server
+      # holds 4000m and the backup, volume-recovery and version-check jobs can
+      # claim 2000m between them if they land together. 500m for a job that
+      # runs once a day, an hour after the backup has finished, fits without
+      # reopening that fight.
+      cpu: 500m

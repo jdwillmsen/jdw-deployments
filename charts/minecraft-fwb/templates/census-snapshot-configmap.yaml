@@ -1,0 +1,87 @@
+{{- if .Values.census.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "census.name" . }}-snapshot
+  namespace: {{ .Release.Namespace }}
+data:
+  # A reduction of the same sequence backup-cronjob.yaml runs, not a fork of
+  # it. What is shared is hold/query/truncate; what is dropped is everything
+  # that exists to produce a restorable archive.
+  #
+  # There is deliberately no cold-copy fallback. Where the backup prefers a
+  # possibly-imperfect archive to no archive, the census prefers no snapshot
+  # to a torn one: a cold copy of a live world reads cleanly and reports
+  # numbers that are simply wrong, and the census then falls back to the
+  # nightly archive, which is stale but true.
+  #
+  # Keep this in step with backup-cronjob.yaml's hold_copy(). If you change
+  # the manifest parsing or the truncation here, look there too.
+  snapshot.sh: |
+    #!/usr/bin/env bash
+    # Exits 0 when no snapshot could be taken: a failed init container stops
+    # the census container ever running, which would make the archive
+    # fallback unreachable. A missed snapshot is signalled by the absence of
+    # snapshot-taken-at, not by an exit code.
+    set -uo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    OUT=/snapshot
+
+    give_up() { echo "census-snapshot: $1; the census will read the newest archive instead" >&2; exit 0; }
+
+    # Always resume, even if the copy fails partway. Leaving the server held
+    # would silently stop it persisting anything at all.
+    resume() { timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save resume >/dev/null 2>&1 || true; }
+
+    [[ -w "$OUT" ]] || { echo "census-snapshot: $OUT is not writable" >&2; exit 1; }
+
+    phase="$(kubectl get pod -n "$NS" "$SERVER_POD" -o jsonpath='{.status.phase}' 2>/dev/null)" || true
+    ready="$(kubectl get pod -n "$NS" "$SERVER_POD" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" || true
+    [[ "$phase" == "Running" && "$ready" == "True" ]] || give_up "server pod is not ready (phase=${phase:-none})"
+
+    # EXIT alone covers every way out of this script: it is executed
+    # directly rather than sourced, and every failure path leaves through
+    # give_up's exit. The backup job pairs this with a RETURN trap because
+    # its copy lives in a function left via return; here that trap would
+    # never fire, and a line that reads as a safety net but is not is worse
+    # than no line.
+    trap resume EXIT
+    timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save hold || give_up "save hold was refused"
+
+    # save query reports "ready to be copied" followed by a comma-separated
+    # file:length manifest. Poll until it does.
+    manifest=""
+    for _ in $(seq 1 30); do
+      sleep 3
+      timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save query >/dev/null || give_up "save query failed"
+      sleep 2
+      manifest="$(kubectl logs -n "$NS" "$SERVER_POD" --tail=20 | grep -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
+      [[ "$manifest" == *":"* ]] && break
+      manifest=""
+    done
+    [[ -n "$manifest" ]] || give_up "the save manifest never arrived"
+
+    # Each entry is path:length. The length is the number of bytes actually
+    # committed -- LevelDB keeps appending, so a file on disk can be longer
+    # than its valid contents, and copying the whole file is what produces a
+    # world that will not open.
+    count=0
+    while read -r entry; do
+      entry="$(echo "$entry" | xargs)"
+      [[ -z "$entry" ]] && continue
+      f="${entry%%:*}"
+      len="${entry##*:}"
+      mkdir -p "$OUT/$(dirname "$f")" || give_up "could not create $OUT/$(dirname "$f")"
+      head -c "$len" "/data/worlds/$f" > "$OUT/$f" || give_up "could not copy $f"
+      count=$((count + 1))
+    done < <(echo "$manifest" | tr ',' '\n')
+
+    [[ "$count" -ge 3 ]] || give_up "the manifest named only $count files"
+
+    # Written last and only on success: its presence is what tells the census
+    # a usable snapshot exists, and its contents are the only record of when
+    # the world was captured. The census refuses to invent that timestamp.
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$OUT/snapshot-taken-at"
+    echo "census-snapshot: copied $count files under hold"
+{{- end }}
