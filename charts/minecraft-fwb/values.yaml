@@ -1079,7 +1079,24 @@ agent:
     # starts a fresh session for everyone online. From the next one it will
     # not: the departing agent closes what it was watching at the moment it
     # stops, and that time is credited.
-    tag: "0.15.0"
+    #
+    # 0.16.0 carries ten merged commits, of which one is why this bump
+    # happens now: the image gains a second binary, /census, which the census
+    # CronJob below runs. Nothing in the agent process itself changes shape
+    # because of it -- the binary only rides along in the image.
+    #
+    # The other nine are this cycle's fixes and are listed here because a tag
+    # bump is the only place anybody reads what a restart is about to change:
+    # announcements no longer report an unspoken send as delivered, nor
+    # record one across a disconnect gap; a knowledge lookup that matched only
+    # another compound's head word now hedges instead of answering flatly;
+    # another player's waypoint question is answered in code rather than by
+    # the model; an older Bedrock client is told it cannot join rather than
+    # failing opaquely; the Xbox refresh token is cached in Postgres so a
+    # standby can read it; a refusal the model wrote during a tool round is
+    # now spoken; and the eval scores the delivered line for markup and
+    # invented facts.
+    tag: "0.16.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
@@ -1264,14 +1281,22 @@ netherNet:
 # protocol when it can, and falls back to the newest backup archive when it
 # cannot.
 census:
-  # Off until an agent release containing cmd/census has been published and
-  # agent.image.tag below points at it. The binary landed after 0.15.0, which
-  # is what that tag currently reads, so turning this on now gets a
-  # CrashLoopBackOff whose cause is one line deep in a job log.
+  # On as of agent 0.16.0, which is the first release whose image carries
+  # /census. This is the second half of the two-step bootstrap the comment
+  # here used to describe: the job shipped inert so the chart and the image
+  # could be landed and reviewed separately.
   #
-  # Turning it on is the deliberate second half of a two-step bootstrap, the
-  # same shape as the bots above.
-  enabled: false
+  # What switching this on starts doing nightly: an init container execs into
+  # the server pod and drives `save hold` / `save query` / `save resume` to
+  # copy the world consistently. The hold is seconds and the backup job has
+  # run the same sequence against this server for months, but it is a real
+  # touch of a live save path rather than a read of a file, and that is worth
+  # knowing before the first 05:00 run rather than after it.
+  #
+  # If it misbehaves, setting this back to false stops it entirely: nothing
+  # else in the chart depends on it, and the report it produces is read from
+  # a job log rather than consumed by anything.
+  enabled: true
 
   # An hour after the backup's 0 4, so the archive the fallback path reads is
   # the freshest one that exists. Daily rather than hourly because the counts
