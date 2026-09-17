@@ -1120,10 +1120,6 @@ agent:
       memory: 256Mi
       cpu: 200m
 
-  persistence:
-    storageClass: truenas-nfs
-    size: 1Gi
-
   bridge:
     # CONSOLE_BRIDGE_TIMEOUT_MS: how long the agent waits on a single call to
     # the console-bridge's HTTP API before giving up. The bridge's own URL
