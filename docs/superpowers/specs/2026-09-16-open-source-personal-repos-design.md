@@ -2,6 +2,34 @@
 
 Date: 2026-09-16
 
+## Status
+
+**Phase 2 is done.** All four repositories were flipped to public on 2026-09-17
+after it was established that the account has no payment method on file, which
+meant the quota was a hard stop rather than a bill — GitHub blocks usage instead
+of charging it. Roughly 93 minutes remained at the time, about a day.
+
+That inverted the order below: Phase 1 was written as pull requests against
+private repositories, which would have spent the last of the quota preparing for
+a flip that costs nothing. The flip creates the budget, so it went first. The
+only precondition that genuinely had to precede it — the secret audit — was
+already complete.
+
+Verified after the flip: all four report `PUBLIC`; `jdw-deployments` CI is green
+and PR #104 passes all six checks; the rulesets API returns 200 where it
+previously returned 403.
+
+Also found, not created here: every repository already carries an active
+`protect-main` ruleset with `bypass_actors: []`,
+`required_approving_review_count: 0`, `deletion`, `non_fast_forward`,
+`required_linear_history` and its own CI contexts as required checks. This
+matches the design in Phase 3 below, including the divergence from the org
+baseline. Phase 3's remaining work is the security workflows and code scanning,
+not the rulesets.
+
+Still outstanding: all of Phase 1, plus the security workflow adoption and code
+scanning from Phase 3.
+
 ## Problem
 
 The `jdwillmsen` account is on track to exceed its 2,000 free Actions minutes
