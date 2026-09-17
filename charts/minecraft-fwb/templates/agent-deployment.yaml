@@ -12,11 +12,17 @@ metadata:
 spec:
   replicas: {{ .Values.agent.replicas }}
   revisionHistoryLimit: 0
-  # Recreate, not RollingUpdate: same reason as the AFK bots — the token
-  # cache is ReadWriteOnce, and two agents signed in as the same account
-  # would fight over both the volume and the server session.
+  # RollingUpdate now that the token lives in Postgres rather than on a
+  # ReadWriteOnce volume: a replacement can start, authenticate and be ready
+  # before the incumbent leaves, so a release costs a handover rather than an
+  # absence. Only the advisory lock decides which of the two is in the game --
+  # the standby holds a token but never rotates it, so the two cannot fight
+  # over the account the way two mounts of one claim would have.
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: {{ include "agent.name" . }}
@@ -134,15 +140,15 @@ spec:
           resources:
             {{- toYaml .Values.agent.resources | nindent 12 }}
           volumeMounts:
-            - name: auth
-              mountPath: /data
+            # No auth volume: the Xbox token is a row in minecraft.auth_tokens,
+            # which every replica can read at once. The file cache it replaced
+            # was ReadWriteOnce, and that single-attach claim is what made a
+            # warm standby impossible.
+            #
             # The root filesystem is read-only, matching the AFK bots.
             - name: tmp
               mountPath: /tmp
       volumes:
-        - name: auth
-          persistentVolumeClaim:
-            claimName: {{ include "agent.name" . }}
         - name: tmp
           emptyDir: {}
 {{- end }}
