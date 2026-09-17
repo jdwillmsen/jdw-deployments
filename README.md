@@ -1,7 +1,10 @@
 # jdw-deployments
 
-Private deployment manifests for the `jdwillmsen` tenant of the jdwlabs
-Kubernetes platform.
+[![License](https://img.shields.io/badge/License-PolyForm%20NonCommercial%201.0-blue)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+
+Deployment manifests for the `jdwillmsen` tenant of the jdwlabs Kubernetes
+platform. A personal homelab, published to read rather than to depend on: no
+support is offered and the layout changes to suit its one operator.
 
 ArgoCD discovers work here through the tenant's `deploymentRepo.url`. The
 `jdwillmsen-deployments` ApplicationSet reads every `argocd/*/config.yaml`,
