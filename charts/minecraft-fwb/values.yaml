@@ -285,10 +285,21 @@ minecraft-bedrock:
       # The image ref has no such value to reach for at all (this sidecar
       # has no separate image/tag value — see consoleBridge's own comment
       # below) and is a literal for that reason.
-      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.1.0"
+      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.2.0"
       env:
-        - name: CONSOLE_ADDRESS
+        # CONSOLE_ADDR, not CONSOLE_ADDRESS: the bridge reads the former, and
+        # the misspelling was inert -- it only ever worked because the value
+        # here happens to equal the bridge's own default.
+        - name: CONSOLE_ADDR
           value: "127.0.0.1:8765"
+        # Sent as the Origin on the console handshake, and allow-listed by
+        # WEBSOCKET_ALLOWED_ORIGINS on the server. The scheme is deliberately
+        # not http(s): a browser only mints an origin for a scheme it can load
+        # a page from, so this one cannot be forged by a website, which is what
+        # leaves the server's origin check meaningful rather than merely
+        # satisfied. Both halves must carry the same literal.
+        - name: CONSOLE_ORIGIN
+          value: "mc-console-bridge://sidecar"
         - name: CONSOLE_PASSWORD
           valueFrom:
             secretKeyRef:
