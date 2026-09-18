@@ -143,6 +143,24 @@ if disabled == "true":
         "so it is ignored while looking like it applies"
     )
 
+# The server compares by exact string equality, so the two literals drifting
+# apart locks the bridge out of its own console -- and does it silently, since
+# each half reads as correct on its own.
+if allowed:
+    sidecar = None
+    for c in containers.values():
+        for e in c.get("env") or []:
+            if e.get("name") == "CONSOLE_ORIGIN":
+                sidecar = e.get("value")
+    assert sidecar is not None, (
+        "the server allow-lists an origin but no container sends one: the "
+        "bridge dials without an Origin and is refused by every entry"
+    )
+    assert sidecar == allowed, (
+        f"the bridge sends Origin {sidecar!r} but the server allow-lists "
+        f"{allowed!r}; exact string equality means the bridge is locked out"
+    )
+
 print("  ok: console on loopback, unpublished, and its origin settings agree with each other")
 CHECK
 
@@ -172,10 +190,12 @@ for doc in docs:
             env["WEBSOCKET_ADDRESS"]["value"] = "0.0.0.0:8765"
             touched += 1
         if which == "check-on-with-no-allowlist":
-            env["WEBSOCKET_DISABLE_ORIGIN_CHECK"]["value"] = "false"
+            game["env"] = [e for e in game["env"] if e.get("name") != "WEBSOCKET_ALLOWED_ORIGINS"]
             touched += 1
-        if which == "inert-allowlist":
-            game["env"].append({"name": "WEBSOCKET_ALLOWED_ORIGINS", "value": "https://example.invalid"})
+        if which == "origin-drift":
+            for e in game["env"]:
+                if e.get("name") == "WEBSOCKET_ALLOWED_ORIGINS":
+                    e["value"] = "https://example.invalid"
             touched += 1
         if which == "console-port-declared":
             game.setdefault("ports", []).append({"name": "ws-console", "containerPort": 8765})
@@ -190,7 +210,7 @@ with open(dst, "w") as fh:
 MUTATE
 }
 
-for mutation in bind-all-interfaces check-on-with-no-allowlist inert-allowlist \
+for mutation in bind-all-interfaces check-on-with-no-allowlist origin-drift \
                 console-port-declared console-published; do
   mutate "$mutation"
   if python3 "$work/check-console.py" "$work/mutant-$mutation.yaml" >/dev/null 2>&1; then

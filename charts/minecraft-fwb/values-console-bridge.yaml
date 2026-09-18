@@ -72,7 +72,12 @@ minecraft-bedrock:
   extraEnv:
     WEBSOCKET_CONSOLE: "true"
     WEBSOCKET_ADDRESS: "127.0.0.1:8765"
-    WEBSOCKET_DISABLE_ORIGIN_CHECK: "true"
+    # Origin checking on. mc-server-runner compares the request's Origin to
+    # this list by exact string equality, and a client sending no Origin can
+    # never match any entry -- which is why this could not be enabled until
+    # the bridge sent one (0.2.0). The literal must match CONSOLE_ORIGIN on
+    # the sidecar exactly.
+    WEBSOCKET_ALLOWED_ORIGINS: "mc-console-bridge://sidecar"
     WEBSOCKET_PASSWORD:
       valueFrom:
         secretKeyRef:
