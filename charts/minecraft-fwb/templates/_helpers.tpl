@@ -133,3 +133,11 @@ stays quiet.
 {{- define "census.name" -}}
 {{ .Release.Name }}-census
 {{- end -}}
+
+{{- define "scheduledRestart.name" -}}
+{{ .Release.Name }}-scheduled-restart
+{{- end -}}
+
+{{- define "tickRateAlert.name" -}}
+{{ .Release.Name }}-tick-rate
+{{- end -}}

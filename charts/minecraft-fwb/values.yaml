@@ -1363,3 +1363,129 @@ census:
       # runs once a day, an hour after the backup has finished, fits without
       # reopening that fight.
       cpu: 500m
+
+# Restarts the server nightly, because on Bedrock 1.26.51.1 tick rate decays
+# with process age -- 20.00 TPS after a restart, about 3.5 TPS/day lost
+# thereafter, reaching 12.5 by the second day. The same world on 1.26.45 held
+# 20.00 across a 4.7-day process, so the world is not what changed.
+#
+# This is a mitigation and is written to be thrown away: the decay itself has
+# no fix yet, and a restart is the only thing known to reverse it.
+scheduledRestart:
+  enabled: true
+
+  # 09:40 UTC (04:40 CDT), chosen against every other schedule that touches
+  # this server rather than picked for being quiet:
+  #
+  #   backup        04:00, activeDeadlineSeconds 3600 -- can hold the save
+  #                 until 05:00
+  #   census        05:40
+  #   version-check hourly, timeoutSeconds 1500 -- its 09:00 run can be
+  #                 restarting the server until 09:25
+  #
+  # 09:40 clears the worst of those by fifteen minutes, and it is the
+  # emptiest point in this server's session history. Every time in this chart
+  # is UTC, because no CronJob here sets timeZone -- which is what makes the
+  # windows comparable at all.
+  schedule: "40 9 * * *"
+
+  # Ten minutes, for the same reason the census sets it: left unset, the
+  # controller admits the most recent missed run of every CronJob at once
+  # after an API outage, and the separation above is then worth nothing. A
+  # night skipped outright is better than a restart landing on a save hold,
+  # and a skipped night is not silent -- the cluster's
+  # CronJobHasNotSucceededRecently fires at 24h without a success.
+  startingDeadlineSeconds: 600
+
+  # Same image as the other in-cluster actors. It needs kubectl and python3,
+  # both of which this one already carries.
+  image: alpine/k8s:1.36.2
+
+  # What a player experiences, so it is the one number here worth arguing
+  # about. Two minutes matches the deploy announcement's lead: long enough to
+  # reach somewhere safe, short enough that a nightly event is not a nightly
+  # interruption. It is skipped entirely when nobody is online, which at
+  # 09:40 UTC is most nights.
+  leadSeconds: 120
+
+  # Counted per loop *ceiling* rather than per deadline, because a wall-clock
+  # deadline is where work stops starting, not where it stops:
+  #
+  #   pod present / ready         10 + 10 =  20
+  #   player count       15 (exec) + 2 (sleep) + 15 (logs) =  32
+  #   countdown       leadSeconds + 6 announce timeouts   = 210
+  #   stop                                  timeout       =  30
+  #   restart poll   120 + 10 (get) + 3 (sleep)           = 133
+  #
+  # About 425s of worst case. 600 leaves margin without letting a wedged run
+  # sit long enough to matter -- and with concurrencyPolicy Forbid, a run that
+  # never ends would otherwise suspend every future restart silently.
+  timeoutSeconds: 600
+
+  # A failed Job with no TTL is kept until failedJobsHistoryLimit evicts it,
+  # and KubeJobFailed reads the object rather than the run -- so one bad night
+  # pages until then. Deleting on a timer bounds that to a day, while a fault
+  # that is still real re-fires on the next schedule.
+  ttlSecondsAfterFinished: 86400
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+
+  # It execs into another pod and sleeps; the floor here is kubectl and one
+  # python3 invocation, not the work being done.
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 200m
+
+# Alerts on a server that answers every reachability check while running at
+# two thirds speed -- the state this server was in for two days before anyone
+# noticed, with no check anywhere that asks how fast it is ticking.
+tickRateAlert:
+  # Reads mc_agent_server_tps, which the server agent publishes: with
+  # agent.enabled false there is no series, and the second rule below is what
+  # says so rather than leaving the first quietly unfirable.
+  enabled: true
+
+  # Below normal jitter and above the trouble: healthy days measured a p10 of
+  # 19.5-20.0, while the onset day had already reached 15.9 by its end.
+  #
+  # Read this together with the `for` below rather than on its own -- the pair
+  # is what decides when it fires. Sustained means *every* evaluation in the
+  # window is under the threshold, so the single-sample dips this server takes
+  # routinely (a save hold, a chunk load: 7.7 TPS for one reading three hours
+  # into an otherwise clean cycle) cannot reach it.
+  #
+  # Replayed against the real decay in Prometheus at 1m steps, this pair first
+  # fires 09-17 12:58 -- about 30 hours in, with the server at 13-16 TPS and a
+  # day and a half before anyone noticed by hand. With the nightly restart
+  # above in place the server never reaches that age, so what remains is the
+  # alert for a restart that did not happen or did not help.
+  #
+  # The margin against a normal night is real but thin: on the heaviest day
+  # measured, the busiest 24-hour cycle bottomed out at a sustained 17.31, so a
+  # heavier one than anything on record would page while merely slow. That is
+  # a true statement about the server when it happens, and the severity is
+  # warning.
+  threshold: 17
+
+  # Thirty minutes. A backup's save hold, a census scan or a chunk-loading
+  # spike all clear well inside it, and the failure being caught here takes
+  # days rather than minutes to develop.
+  for: 30m
+
+  # How recent a reading has to be to count. The agent samples the game clock
+  # once a minute and Prometheus scrapes every 60s, so five minutes is several
+  # missed cycles rather than a tight race -- the widest gap measured across
+  # 50 hours, including a full server restart, was 158s. The metric holds its
+  # last good value across a failed measurement by design, so without this
+  # clause an agent that stopped measuring during a slow patch would page
+  # forever about a number frozen in the past.
+  #
+  # Both rules read this one value: anything too stale to be compared is what
+  # the second rule reports as unmeasured. Two separate numbers would leave a
+  # band of staleness that suppresses the first rule without raising the
+  # second, which is the failure this alerting exists to avoid.
+  freshnessSeconds: 300

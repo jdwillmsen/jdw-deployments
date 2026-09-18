@@ -1,0 +1,48 @@
+{{- if .Values.scheduledRestart.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "scheduledRestart.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "scheduledRestart.name" . }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # Everything this actor does happens to one pod it never creates: read its
+  # readiness and restart count, read back what `list` printed, and drive its
+  # console. Every rule is pinned to that pod by name -- a `get` can be, unlike
+  # the `list` other jobs here need.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["create"]
+  # No statefulsets grant, and no pod delete. The restart is the server
+  # exiting its own process and the kubelet bringing the container back in
+  # place; both of the wider verbs would instead recreate the pod and migrate
+  # the world volume, which is the outcome this job is shaped to avoid.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "scheduledRestart.name" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "scheduledRestart.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "scheduledRestart.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

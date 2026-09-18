@@ -290,6 +290,37 @@ to a day old. `via snapshot` means they are minutes old.
 It is off by default (`census.enabled`), because the binary ships in the agent
 image and a release carrying it has to be published before the job can run.
 
+### The nightly restart, and the tick rate alert
+
+`scheduledRestart` stops and restarts the server every night at **09:40 UTC**
+(04:40 CDT). It exists because Bedrock 1.26.51.1 loses tick rate with process
+age: 20.00 TPS after a restart, roughly 3.5 TPS/day lost after that, down to
+12.5 by the second day. The same world on 1.26.45 held 20.00 flat across a
+4.7-day process, and a restart puts it straight back — 12.8 to 19.98 TPS,
+measured on 2026-09-18. The decay itself has no fix yet.
+
+The slot is picked against the other actors that drive this same server, not
+for being quiet: the backup starts at 04:00 and may hold the save until 05:00,
+the census runs at 05:40, and the hourly version check can be restarting the
+server until HH:25. 09:40 clears the worst of those by fifteen minutes, and is
+also the emptiest point in this server's session history.
+
+The restart is `send-command stop` through the server's own console — never
+`kubectl rollout restart`, never a pod delete. The container comes back inside
+the same pod on the same node with the world volume never unmounted; deleting
+the pod is what migrated the volume and cost 11 `.ldb` files on 2026-08-30. The
+job fails loudly if it sees a new pod UID afterwards rather than an incremented
+restart count. Players online get a 120-second countdown first
+(`scheduledRestart.leadSeconds`); an empty server is restarted immediately.
+
+`tickRateAlert` is the other half, and separately switchable. It fires when
+`mc_agent_server_tps` sits under 17 for 30 minutes, paired with the agent's
+freshness timestamp so a stale reading suppresses the alert instead of paging
+about a frozen number. A second rule reports the measurement being gone at all,
+since a comparison never matches a series nobody is producing. Replayed against
+the 2026-09-16 decay the first rule would have fired at 20:15 that evening,
+about thirteen hours in — the real thing went unnoticed for two days.
+
 ### Restoring a backup
 
 The chart also carries a restore mechanism alongside the backup CronJob:
