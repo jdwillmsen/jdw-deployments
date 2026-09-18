@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
 # Pins the console websocket's exposure boundary in the rendered chart.
 #
-# The console websocket is the one path that runs server commands. Its origin
-# check is off, and the only reason that is defensible is the bind address: the
-# endpoint listens on loopback inside the server pod and no Service publishes
-# it, so the browser a Cross-Site WebSocket Hijacking attack needs has nothing
-# to dial. That argument is a pair, not one setting, and nothing else in this
-# repo notices if half of it moves -- helm renders a console bound to 0.0.0.0
-# just as happily, and ArgoCD syncs it.
+# The console websocket is the one path that runs server commands, so its
+# exposure rests on two controls rather than one, and nothing else in this repo
+# notices if either moves -- helm renders a console bound to 0.0.0.0 just as
+# happily, and ArgoCD syncs it.
 #
-# The check cannot simply be turned on instead. mc-server-runner admits a
+# The first is the bind address: the endpoint listens on loopback inside the
+# server pod and no Service publishes it, so the browser a Cross-Site WebSocket
+# Hijacking attack needs has nothing to dial.
+#
+# The second is the origin check, on since the bridge began sending an Origin
+# in 0.2.0. It could not be turned on before that: mc-server-runner admits a
 # request only when its literal Origin header appears in the allow-list, and
 # the allow-list drops blank fields, so the empty string cannot be an entry --
-# a client sending no Origin, which is what the bridge sidecar is, is refused
-# under every possible allow-list. Enabling it needs a bridge that sends a
-# fixed Origin, which is a change to the sidecar image and not to this chart.
-# Until that ships, the assertions below are the control that is actually
-# holding, so they are the ones worth failing a build over.
+# a client sending no Origin, which is what the sidecar used to be, was refused
+# under every possible allow-list. The scheme is deliberately one no browser
+# can load a page from, so no website can mint it; allow-listing something like
+# http://localhost would leave the check satisfied but not meaningful.
+#
+# Both halves are asserted below, along with the thing that breaks them: the
+# server's allow-list and the sidecar's Origin are compared by exact string
+# equality, so the two literals drifting apart locks the bridge out of its own
+# console while each half still reads as correct alone.
 #
 # Read from the rendered chart rather than from the values file, so an override
 # arriving from any layer is caught rather than the one layer this was written
