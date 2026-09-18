@@ -1107,7 +1107,12 @@ agent:
     # standby can read it; a refusal the model wrote during a tool round is
     # now spoken; and the eval scores the delivered line for markup and
     # invented facts.
-    tag: "0.16.0"
+    #
+    # 0.17.0 changes nothing about the agent process. It carries /census's
+    # -metrics-file, which is what census.metrics above needs: the counts the
+    # nightly scan already computes, written as a Prometheus payload instead
+    # of only into a Job log that is evicted within three days.
+    tag: "0.17.0"
     pullPolicy: IfNotPresent
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
@@ -1347,6 +1352,34 @@ census:
   ttlSecondsAfterFinished: 86400
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 5
+
+  # Publishes the counts as time series alongside the printed report.
+  #
+  # The report stays the better artefact for the spawn-cap and concentration
+  # tables; what it cannot do is answer "is world load growing?", because the
+  # Job log holding it is evicted by successfulJobsHistoryLimit within three
+  # days. That question was load-bearing during the tick-decay investigation,
+  # and answering it meant recovering three evicted runs out of Loki by hand
+  # -- numbers this job had computed correctly every night and thrown away.
+  metrics:
+    # Needs an agent image carrying /census with -metrics-file, which is
+    # 0.17.0 and later. Switching this off stops the sidecar and the exporter
+    # and leaves the report exactly as it was.
+    enabled: true
+
+    exporter:
+      # Same shape as the backup exporter and deliberately a separate pod:
+      # Prometheus drops an entire scrape on one malformed line, so a shared
+      # process would put the backup freshness contract and the census counts
+      # behind each other's mistakes.
+      image: busybox:1.37
+      # 9101 is the backup exporter's.
+      port: 9102
+      # The payload changes once a night. A faster scrape buys nothing and a
+      # slower one delays a run's numbers past the morning somebody reads
+      # them.
+      interval: 300s
+      refreshSeconds: 60
 
   resources:
     requests:

@@ -106,6 +106,94 @@ spec:
                   mountPath: /snapshot
                 - name: script
                   mountPath: /script
+{{- if .Values.census.metrics.enabled }}
+            # Publishes the census's counts where something other than a job
+            # log can read them.
+            #
+            # A sidecar rather than a step, because there is nowhere to put a
+            # step: the census image is distroless, so it has no shell and no
+            # kubectl, and a Job has no "after the container exits" hook. This
+            # runs beside it, watches the file the census writes at the end of
+            # a successful run, and publishes it.
+            #
+            # restartPolicy Always makes this a native sidecar: it starts
+            # before the census container and the kubelet terminates it once
+            # that container exits, so it cannot hold the Job open. The trap
+            # below is what makes that termination safe -- SIGTERM arrives
+            # right after the census finishes, which is exactly when the file
+            # it wrote may not have been picked up yet.
+            - name: metrics-publish
+              image: {{ .Values.census.image }}
+              restartPolicy: Always
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: 32Mi
+                  cpu: 10m
+                limits:
+                  memory: 128Mi
+                  cpu: 100m
+              env:
+                - name: METRICS_CM
+                  value: {{ include "census.metricsConfigMap" . }}
+                - name: METRICS_FILE
+                  value: /tmp/metrics.txt
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -uo pipefail
+                  NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+                  emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
+
+                  # Idempotent, and the only thing this container does. A
+                  # republish of an identical payload is a no-op apply, which
+                  # is why both the watch loop and the shutdown path can call
+                  # it without coordinating.
+                  publish() {
+                    [[ -s "$METRICS_FILE" ]] || return 1
+                    kubectl create configmap "$METRICS_CM" -n "$NS" \
+                      --from-file=metrics.txt="$METRICS_FILE" \
+                      --dry-run=client -o yaml | kubectl apply -n "$NS" -f - >/dev/null
+                  }
+
+                  # The census writes its payload immediately before exiting,
+                  # and the kubelet terminates this container as soon as it
+                  # does. Without a last attempt on the way out, a run whose
+                  # file lands inside the final poll interval would publish
+                  # nothing -- and the failure would look exactly like a census
+                  # that never produced one.
+                  shutting_down=""
+                  on_term() {
+                    shutting_down="yes"
+                    if publish; then
+                      emit published "on shutdown"
+                    else
+                      emit skipped "no payload to publish; the census did not complete"
+                    fi
+                    exit 0
+                  }
+                  trap on_term TERM INT
+
+                  while [[ -z "$shutting_down" ]]; do
+                    if publish; then
+                      emit published "$(wc -c <"$METRICS_FILE") bytes"
+                      # Nothing more will be written this run: the census
+                      # writes the payload once, at the end. Waiting for
+                      # SIGTERM from here costs nothing and keeps the publish
+                      # path to exactly one shape.
+                      while true; do sleep 5; done
+                    fi
+                    sleep 2
+                  done
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+{{- end }}
           containers:
             - name: census
               image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
@@ -125,6 +213,14 @@ spec:
                 - "/snapshot"
                 - "-backup-dir"
                 - "/backup"
+{{- if .Values.census.metrics.enabled }}
+                # Written at the end of a run that produced a report, and only
+                # then: a payload from a world the census refused to report
+                # would put a fabricated dip on the graph. The sidecar above
+                # publishes whatever lands here.
+                - "-metrics-file"
+                - "/tmp/metrics.txt"
+{{- end }}
               resources:
 {{- toYaml .Values.census.resources | nindent 16 }}
               volumeMounts:

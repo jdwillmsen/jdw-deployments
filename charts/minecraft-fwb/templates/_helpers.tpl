@@ -134,6 +134,14 @@ stays quiet.
 {{ .Release.Name }}-census
 {{- end -}}
 
+{{- define "census.metricsConfigMap" -}}
+{{ .Release.Name }}-census-metrics
+{{- end -}}
+
+{{- define "census.exporter.name" -}}
+{{ .Release.Name }}-census-exporter
+{{- end -}}
+
 {{- define "scheduledRestart.name" -}}
 {{ .Release.Name }}-scheduled-restart
 {{- end -}}

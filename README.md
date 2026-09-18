@@ -290,6 +290,42 @@ to a day old. `via snapshot` means they are minutes old.
 It is off by default (`census.enabled`), because the binary ships in the agent
 image and a release carrying it has to be published before the job can run.
 
+#### The counts as metrics
+
+The report is the better artefact for the spawn-cap and concentration tables,
+and a bad one for "is world load growing?" — the Job log holding it is evicted
+by `successfulJobsHistoryLimit` within three days. `census.metrics.enabled`
+publishes the same counts as time series, without changing the report.
+
+The path is three parts, because the census image is distroless and so has
+neither a shell nor `kubectl`:
+
+1. `/census -metrics-file /tmp/metrics.txt` writes a Prometheus payload at the
+   end of a run that produced a report — and only then, so a world the census
+   refused to report cannot put a fabricated dip on a graph
+2. a `metrics-publish` sidecar in the same pod watches that file and writes it
+   into the `<release>-census-metrics` ConfigMap. It is a native sidecar
+   (`restartPolicy: Always` among the init containers), so it cannot hold the
+   Job open, and it publishes once more on SIGTERM because the file lands
+   moments before the census exits
+3. `<release>-census-exporter` serves that ConfigMap, scraped by its own
+   ServiceMonitor
+
+A second exporter rather than a second payload in the backup exporter:
+Prometheus drops an entire scrape on one malformed line, and the backup
+freshness contract should not be able to lose to a census bug.
+
+```bash
+kubectl get configmap -n <namespace> <release>-census-metrics -o jsonpath='{.data.metrics\.txt}'
+```
+
+`mc_census_reported` is 0 until a census has published, which is what separates
+"no run yet" from "a world with nothing in it".
+`mc_census_world_taken_at_timestamp_seconds` and `mc_census_world_from_snapshot`
+carry the provenance the report prints in words: a run that fell back to an
+archive is reporting numbers up to a day old, and a graph cannot say so on its
+own. The full metric list is in the agent repo's README.
+
 ### The nightly restart, and the tick rate alert
 
 `scheduledRestart` stops and restarts the server every night at **09:40 UTC**
