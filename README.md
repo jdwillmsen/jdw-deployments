@@ -239,6 +239,34 @@ depends on it. Do not collapse them.
    tools/mc run allowlist add "<agent's gamertag>"
    ```
 
+#### Why the console's origin check is off
+
+Every start of the server logs a WARN saying the websocket origin check is
+disabled and the server is open to Cross-Site WebSocket Hijacking. That is
+deliberate, and it currently cannot be otherwise from this repo.
+
+`mc-server-runner` admits a websocket only when the request's literal `Origin`
+header appears in `WEBSOCKET_ALLOWED_ORIGINS`, and its flag parser drops blank
+fields from that list — so the empty string cannot be an entry, and a client
+that sends no `Origin` at all is refused under *every* allow-list, empty or
+not. The console-bridge sidecar is exactly that client: it sends no `Origin`.
+Turning the check on therefore answers the bridge with `403 origin not
+allowed` and takes the console path down; it admits only clients that do send
+an `Origin`, which means browsers, which is the threat. It was configured this
+way round on first deploy and did exactly that.
+
+What holds instead is the bind address: `WEBSOCKET_ADDRESS` puts the console on
+`127.0.0.1`, no Service publishes that port, and no container declares it — so
+the browser the attack needs has nothing it can reach. That pair is what
+`tools/tests/test-console-origin.sh` pins, including that an allow-list is
+never left set while the check is disabled, where it would read as protection
+that is not applied.
+
+Closing this properly needs the sidecar to send a fixed `Origin` of its own,
+released as a new `mc-console-bridge` image; the chart can then name that value
+in `WEBSOCKET_ALLOWED_ORIGINS` and drop `WEBSOCKET_DISABLE_ORIGIN_CHECK`. Until
+that image exists, changing the setting here is an outage, not a hardening.
+
 ### Reading the mob census
 
 `census` runs daily at 05:40 UTC and prints a report of what lives in the world

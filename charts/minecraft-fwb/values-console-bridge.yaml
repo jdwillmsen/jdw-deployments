@@ -33,21 +33,37 @@ minecraft-bedrock:
   # console is reachable from inside this pod alone, through the console-bridge
   # sidecar, never from the pod network.
   #
-  # The origin check is disabled rather than pointed at an allowed origin.
-  # This was the other way round on first deploy and the bridge could not
-  # connect at all: mc-server-runner answered every dial with 403 and logged
-  # `origin not allowed`, because the bridge sends no Origin header, so an
-  # allow-list naming one can never match. mc-console-bridge's README states
-  # that contract directly -- "WEBSOCKET_ALLOWED_ORIGINS covering the Origin
-  # this bridge sends, which by default is none".
+  # The origin check is disabled rather than pointed at an allowed origin, and
+  # no value of WEBSOCKET_ALLOWED_ORIGINS can replace that. This was the other
+  # way round on first deploy and the bridge could not connect at all:
+  # mc-server-runner answered every dial with 403 and logged `origin not
+  # allowed`, because the bridge sends no Origin header at all.
+  #
+  # The obvious repair -- allow-list the empty origin -- is not available.
+  # mc-server-runner admits a request only when the literal Origin header value
+  # appears in the allow-list, and its flag parser splits that setting on commas
+  # and then drops every blank field, so the empty string can never be an entry.
+  # A client sending no Origin is therefore refused under every possible
+  # allow-list, including an empty one. Measured against the runner's own code
+  # at the version in this image: with the check on, a dial carrying no Origin
+  # got 403 whether the allow-list named a real origin, was empty, or had a
+  # leading comma; only a dial that did send a matching Origin got 101.
+  #
+  # So the check, once on, admits exactly the clients that send an Origin --
+  # browsers -- and refuses the only client that exists here. Turning it on
+  # cannot be done from this chart. It needs the bridge to send a fixed Origin
+  # first, shipped as a new sidecar image; then this file names that same value
+  # here and drops the line below.
   #
   # The comment this replaces argued a fixed origin "keeps the check
   # meaningful instead of turned off". It reads well and was never true: it
   # kept the check meaningful by making it reject the only client there is.
   #
-  # Disabling it costs no exposure. WEBSOCKET_ADDRESS binds the console to
-  # 127.0.0.1, so the only things that can reach it are the containers sharing
-  # this pod's network namespace; there is no browser and no other origin.
+  # Disabling it costs no exposure, and that rests entirely on the line above:
+  # WEBSOCKET_ADDRESS binds the console to 127.0.0.1, so the only things that
+  # can reach it are the containers sharing this pod's network namespace; there
+  # is no browser and no other origin. Moving that bind off loopback is what
+  # would turn this line into a real hole, which is why a test pins it.
   #
   # extraEnv is a map, so these keys merge into values.yaml's rather than
   # replacing anything. The secret name is a literal because nothing here is
