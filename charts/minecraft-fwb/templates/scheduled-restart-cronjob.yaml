@@ -1,0 +1,218 @@
+{{- if .Values.scheduledRestart.enabled }}
+# Restarts the server nightly, because on the release this runs the tick rate
+# decays with process age rather than with load.
+#
+# Measured over 2026-09-10..09-18: on 1.26.45 a single process held a median of
+# 20.00 TPS for 4.7 days. On 1.26.51.1 every process starts at 20.00 and loses
+# roughly 3.5 TPS per day until it is restarted, reaching 12.3 by the second
+# day, with entity count, player count, world size and tick/view distance all
+# unchanged across the boundary. A restart is the only thing that reverses it.
+#
+# So this is a mitigation with a known expiry, not a maintenance ritual. When
+# the underlying defect is fixed or the transport question is settled, the
+# whole thing should come out rather than be kept because it is harmless.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "scheduledRestart.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # 09:40 UTC is 04:40 local, the quietest point in the session history, and it
+  # is the one slot in the hour that collides with nothing else this chart runs:
+  # backup starts at 04:00 and may hold the save until 05:00, census runs 05:40,
+  # and the hourly version check can still be restarting the server until HH:25.
+  # Moving this without re-checking those three is how two actors end up driving
+  # the same save protocol at once.
+  schedule: {{ .Values.scheduledRestart.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # A retry would re-announce a countdown to players who just saw one and
+      # re-stop a server that may already be coming back up. If a run fails,
+      # the next night's run is the retry.
+      ttlSecondsAfterFinished: {{ .Values.scheduledRestart.ttlSecondsAfterFinished }}
+      # Must exceed the countdown plus the restart wait plus the readiness wait,
+      # with slack -- otherwise the deadline kills the job mid-sequence, after
+      # the stop has been delivered and before anything has verified the server
+      # came back, which is the one state this job must never leave behind.
+      activeDeadlineSeconds: {{ .Values.scheduledRestart.timeoutSeconds }}
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "scheduledRestart.name" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: scheduled-restart
+              image: {{ .Values.scheduledRestart.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: 64Mi
+                  cpu: 50m
+                limits:
+                  memory: 256Mi
+                  cpu: 200m
+              env:
+                - name: SERVER_POD
+                  value: {{ include "backup.serverPod" . }}
+                # The subchart names the server container after the workload,
+                # so this is the same string as the StatefulSet -- but it is the
+                # container this job needs, to pick a status by name rather than
+                # by index.
+                - name: SERVER_CONTAINER
+                  value: {{ include "backup.serverStatefulSet" . }}
+                - name: LEAD_SECONDS
+                  value: {{ .Values.scheduledRestart.leadSeconds | quote }}
+                - name: READY_TIMEOUT
+                  value: {{ .Values.scheduledRestart.readyTimeoutSeconds | quote }}
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -uo pipefail
+                  NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+                  emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
+
+                  say() {
+                    local text="$1" json
+                    # Encoded by json.dumps, never by string interpolation: a
+                    # message containing a quote silently produces malformed
+                    # rawtext and the server rejects the whole line.
+                    json="$(MSG="$text" python3 -c 'import json,os; print(json.dumps({"rawtext":[{"text":os.environ["MSG"]}]}))')"
+                    timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                      -- send-command tellraw @a "$json" >/dev/null 2>&1
+                  }
+
+                  if ! timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" >/dev/null 2>&1; then
+                    emit skipped "server pod absent, nothing to restart"
+                    exit 0
+                  fi
+
+                  # A server that is already not Ready is either mid-restart or
+                  # wedged, and volume-recovery owns the wedged case. Stopping it
+                  # now would either race that actor or interrupt a restart that
+                  # is already happening, and the tick rate this job exists to
+                  # reset is not a concern on a server nobody is playing on.
+                  READY="$(timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" \
+                    -o jsonpath="{.status.containerStatuses[?(@.name=='$SERVER_CONTAINER')].ready}" 2>/dev/null || echo "")"
+                  if [[ "$READY" != "true" ]]; then
+                    emit skipped "server not ready; leaving it to volume-recovery"
+                    exit 0
+                  fi
+
+                  # Ask the server who is on. `grep -a` because the console log
+                  # carries binary bytes and grep otherwise refuses the whole
+                  # stream -- the same defect that makes `tools/mc players`
+                  # report zero while four people are playing.
+                  timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                    -- send-command list >/dev/null 2>&1
+                  sleep 2
+                  ONLINE="$(timeout 10s kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --tail=20 2>/dev/null \
+                    | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 \
+                    | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
+
+                  if [[ -z "$ONLINE" ]]; then
+                    # An unreadable count is not evidence of an empty server, and
+                    # a countdown nobody needed costs two minutes once a night.
+                    emit unknown "could not read the player count; announcing anyway"
+                    ONLINE=1
+                  fi
+
+                  if [[ "$ONLINE" -eq 0 ]]; then
+                    emit proceeding "nobody online, restarting without a countdown"
+                  else
+                    emit announcing "$ONLINE player(s) online, holding ${LEAD_SECONDS}s"
+                    say "§6§lNightly restart incoming.§r§e The server restarts in ${LEAD_SECONDS} seconds."
+                    say "§7Your world and inventory are safe. You will be able to rejoin straight after."
+
+                    # Milestones, not a tick per second: a message every second
+                    # is what buries the explanation and leaves players unable to
+                    # tell a countdown from a fault.
+                    REMAINING="$LEAD_SECONDS"
+                    for milestone in 60 30 10; do
+                      if [[ "$REMAINING" -gt "$milestone" ]]; then
+                        sleep $((REMAINING - milestone))
+                        REMAINING="$milestone"
+                        say "§e${milestone} seconds until the restart."
+                      fi
+                    done
+                    sleep "$REMAINING"
+                    say "§c§lRestarting now.§r§c Rejoin in about a minute."
+                  fi
+
+                  # The pod UID is captured alongside the restart count because
+                  # the two answer different questions. The count rising says the
+                  # container came back; the UID staying put says it came back
+                  # *in the same pod*, with the world volume never unmounted.
+                  # Recreating the pod is what migrates that volume, and it is
+                  # what cost 11 .ldb files on 2026-08-30.
+                  server_state() {
+                    timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" \
+                      -o jsonpath="{.metadata.uid} {.status.containerStatuses[?(@.name=='$SERVER_CONTAINER')].restartCount}" 2>/dev/null || true
+                  }
+
+                  before="$(server_state)"
+                  before_uid="${before%% *}"
+
+                  # send-command's exit code carries information here, unlike in
+                  # say: it exits non-zero when the write never reached the
+                  # server. A stop that was never delivered must fail the run
+                  # rather than fall through to a restart poll that cannot
+                  # succeed -- and it must fail *after* the countdown, so players
+                  # are never told about a restart that then silently does not
+                  # happen without the job going red about it.
+                  if ! timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -- send-command stop >/dev/null 2>&1; then
+                    emit failed "could not deliver stop to $SERVER_POD"
+                    exit 1
+                  fi
+
+                  restarted=""
+                  now=""
+                  restart_deadline=$(( SECONDS + 120 ))
+                  while (( SECONDS < restart_deadline )); do
+                    now="$(server_state)"
+                    if [[ -n "$now" && "$now" != "$before" ]]; then
+                      restarted="yes"
+                      break
+                    fi
+                    sleep 5
+                  done
+
+                  if [[ -z "$restarted" ]]; then
+                    emit failed "stop delivered but the server did not restart within 120s"
+                    exit 1
+                  fi
+
+                  after_uid="${now%% *}"
+                  if [[ "$after_uid" != "$before_uid" ]]; then
+                    emit failed "pod was recreated ($before_uid -> $after_uid); the world volume moved"
+                    exit 1
+                  fi
+
+                  # Reporting success on the restart alone would call a server
+                  # that came back and then failed to open its world a good
+                  # night's work.
+                  ready_deadline=$(( SECONDS + READY_TIMEOUT ))
+                  while (( SECONDS < ready_deadline )); do
+                    if [[ "$(timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" \
+                          -o jsonpath="{.status.containerStatuses[?(@.name=='$SERVER_CONTAINER')].ready}" 2>/dev/null || echo "")" == "true" ]]; then
+                      emit done "restarted in place, pod uid unchanged, server ready"
+                      exit 0
+                    fi
+                    sleep 5
+                  done
+
+                  emit failed "server restarted but was not ready within ${READY_TIMEOUT}s"
+                  exit 1
+{{- end }}

@@ -1,0 +1,70 @@
+{{- if and .Values.tpsAlert.enabled .Values.agent.enabled }}
+# Tick rate is the one measure of this server that players feel directly and
+# nothing was watching. Between 2026-09-16 and 09-18 it fell from 20.00 to
+# 12.3 -- a 38% loss of simulation speed over two days -- and surfaced only
+# because someone was asked to look.
+#
+# Gated on the agent as well as its own flag: mc_agent_server_tps is produced
+# by the agent's console probe, so with the agent off the series does not
+# exist and the staleness rule below would page about a measurement nobody
+# asked for.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "agent.name" . }}-tps
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-tps
+      rules:
+        # Paired with the freshness check rather than read alone. serverTPS is
+        # deliberately never reset on a failed measurement -- it holds the last
+        # good reading -- so a low value from a probe that stopped running an
+        # hour ago says nothing about the server now. The join makes this alert
+        # mean "the server is slow", and leaves "we stopped measuring" to the
+        # rule below it.
+        #
+        # Matched on the full label set rather than `on(namespace)`: both series
+        # come from the same agent target, so their labels are identical, and
+        # during a rollout two agent pods briefly export both -- which makes a
+        # namespace-only join many-to-many, and a many-to-many join is an
+        # evaluation error rather than an alert.
+        - alert: JdwillmsenMinecraftLowTPS
+          expr: >-
+            mc_agent_server_tps < {{ .Values.tpsAlert.threshold }}
+            and
+            (time() - mc_agent_tps_last_success_timestamp_seconds) < {{ .Values.tpsAlert.freshnessSeconds }}
+          for: {{ .Values.tpsAlert.for }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB is running below {{ .Values.tpsAlert.threshold }} TPS
+            description: >-
+              Server tick rate has been under {{ .Values.tpsAlert.threshold }} of a
+              possible 20 for {{ .Values.tpsAlert.for }}. Mobs, redstone and farms
+              all run at that fraction of normal speed. On healthy days the 10th
+              percentile sits at 19.5-20.0, so this is well outside jitter. A
+              restart resets it; see the nightly scheduled-restart CronJob, and
+              check whether that job has been failing.
+        # A threshold rule cannot fire on a series that stopped being produced,
+        # and this one is the only thing watching tick rate -- so losing the
+        # measurement has to be its own alert or the silence reads as health.
+        - alert: JdwillmsenMinecraftTPSUnmeasured
+          expr: >-
+            absent(mc_agent_server_tps)
+            or (time() - mc_agent_tps_last_success_timestamp_seconds) > {{ .Values.tpsAlert.staleSeconds }}
+          for: {{ .Values.tpsAlert.staleFor }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB tick rate is not being measured
+            description: >-
+              No fresh TPS measurement for
+              {{ div .Values.tpsAlert.staleSeconds 60 }} minutes, so the low-TPS
+              alert cannot fire whatever the server is doing. The reading comes
+              from the agent's console probe, so this usually means the agent
+              lost its session or the console bridge is down rather than that
+              the server is unwell.
+{{- end }}
