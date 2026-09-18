@@ -68,6 +68,21 @@ spec:
               SRC=/run/state/metrics.txt
               mkdir -p "$OUT"
 
+              # Read before the first payload is written, so the age the
+              # never-reported rule measures starts when this process began
+              # serving rather than when it was first scraped.
+              STARTED="$(date +%s)"
+
+              # A clock this pod cannot read would render as a bare metric name
+              # and make Prometheus reject the whole scrape, taking the counts
+              # down with it. Same guard the backup exporter carries, for the
+              # same reason. case rather than a regex: this is busybox sh.
+              case "$STARTED" in
+                ''|*[!0-9]*)
+                  echo "FATAL: could not read the clock at startup" >&2
+                  exit 1 ;;
+              esac
+
               # Says whether what is being served came from a census run at
               # all. Without it, a census that has never reported and a census
               # reporting a world with nothing in it are the same empty answer
@@ -77,10 +92,21 @@ spec:
               # Published in both branches. A gauge that appears and disappears
               # cannot be joined against, and its absence would mean both "no
               # census yet" and "an exporter too old to publish it".
+              #
+              # The start time rides along because "has not reported yet" is
+              # only excusable for as long as a census run has not been due,
+              # and that comparison needs to know when this process began
+              # serving. A restart resets it, which is honest: the mount is
+              # re-read on startup, so an exporter that has counts to serve
+              # publishes 1 immediately and only a genuinely empty state is
+              # delayed.
               reported() {
                 echo "# HELP mc_census_reported 1 if a census run has published counts this exporter is serving, 0 if it has never reported."
                 echo "# TYPE mc_census_reported gauge"
                 echo "mc_census_reported $1"
+                echo "# HELP mc_census_exporter_start_time_seconds Unix time this exporter process began serving."
+                echo "# TYPE mc_census_exporter_start_time_seconds gauge"
+                echo "mc_census_exporter_start_time_seconds ${STARTED}"
               }
 
               # Copied out of the ConfigMap mount rather than served from it:
@@ -176,4 +202,62 @@ spec:
       # nothing and buys nothing; this is slow enough to say so and fast
       # enough that a run is visible within the hour it lands.
       interval: {{ .Values.census.metrics.exporter.interval }}
+{{- if .Values.census.metrics.alert.enabled }}
+---
+# Without these, a broken publish path is silent in the one way that matters:
+# the exporter keeps serving last night's counts, the scrape stays green, and
+# the panel keeps drawing a line that stopped meaning anything.
+#
+# The cluster's CronJobHasNotSucceededRecently already covers a census that
+# fails or never runs. What it cannot see is a census that succeeds while the
+# sidecar, the ConfigMap or the exporter has stopped carrying the result.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "census.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-census
+      rules:
+        - alert: JdwillmsenMinecraftCensusStale
+          # Measured from the world's capture time rather than the scan's, so
+          # a census that keeps running while falling back to older and older
+          # archives is caught too -- that is a working job producing numbers
+          # nobody should read as current.
+          expr: |
+            (time() - mc_census_world_taken_at_timestamp_seconds{namespace="{{ .Release.Namespace }}"})
+              > {{ .Values.census.metrics.alert.maxAgeSeconds }}
+          for: 30m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB census counts are stale
+            description: >-
+              The served census reads a world older than
+              {{ div .Values.census.metrics.alert.maxAgeSeconds 3600 }} hours.
+              The job runs nightly, so either it has stopped producing a payload
+              or nothing is publishing it -- the counts on the dashboard are no
+              longer current whichever it is.
+        # `> maxAge` never matches a series that is not there, and the never-
+        # reported case is exactly the one where it is not there.
+        - alert: JdwillmsenMinecraftCensusNeverReported
+          expr: |
+            mc_census_reported{namespace="{{ .Release.Namespace }}"} == 0
+              and
+            (time() - mc_census_exporter_start_time_seconds{namespace="{{ .Release.Namespace }}"})
+              > {{ .Values.census.metrics.alert.maxAgeSeconds }}
+          for: 30m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB census has never published counts
+            description: >-
+              This exporter has been serving for longer than a census cycle and
+              has never been given a payload, so the entity-count panels have
+              nothing behind them. The gate is the exporter's own start time, so
+              a fresh deployment is not paged for before the first nightly run.
+{{- end }}
 {{- end }}

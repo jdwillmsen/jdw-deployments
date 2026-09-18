@@ -287,8 +287,10 @@ report reading `via archive` means the fresh snapshot could not be taken that
 run — the server was down, or refused the save hold — and the numbers are up
 to a day old. `via snapshot` means they are minutes old.
 
-It is off by default (`census.enabled`), because the binary ships in the agent
-image and a release carrying it has to be published before the job can run.
+`census.enabled` is the switch. It shipped off, because the binary rides in the
+agent image and a release carrying it had to be published first; it has been on
+since agent 0.16.0, which is that release. `census.metrics.enabled` below
+follows the same two-step and is on as of 0.17.0.
 
 #### The counts as metrics
 

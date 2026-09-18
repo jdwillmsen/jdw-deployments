@@ -150,12 +150,19 @@ spec:
 
                   emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
 
-                  # Idempotent, and the only thing this container does. A
-                  # republish of an identical payload is a no-op apply, which
-                  # is why both the watch loop and the shutdown path can call
-                  # it without coordinating.
+                  # Two questions, deliberately not one. "The census wrote no
+                  # payload" is the ordinary outcome of a failed run and this
+                  # container's business is to stay quiet about it; "the apply
+                  # was rejected" is a fault nobody else will report, and
+                  # folding them together would log an RBAC regression as a
+                  # census that did not complete while the exporter kept
+                  # serving last night's counts as current.
+                  have_payload() { [[ -s "$METRICS_FILE" ]]; }
+
+                  # Idempotent: a republish of an identical payload is a no-op
+                  # apply, which is why the watch loop and the shutdown path
+                  # can both call it without coordinating.
                   publish() {
-                    [[ -s "$METRICS_FILE" ]] || return 1
                     kubectl create configmap "$METRICS_CM" -n "$NS" \
                       --from-file=metrics.txt="$METRICS_FILE" \
                       --dry-run=client -o yaml | kubectl apply -n "$NS" -f - >/dev/null
@@ -170,23 +177,34 @@ spec:
                   shutting_down=""
                   on_term() {
                     shutting_down="yes"
+                    if ! have_payload; then
+                      emit skipped "no payload to publish; the census did not complete"
+                      exit 0
+                    fi
                     if publish; then
                       emit published "on shutdown"
-                    else
-                      emit skipped "no payload to publish; the census did not complete"
+                      exit 0
                     fi
-                    exit 0
+                    emit failed "the payload was written but the apply was rejected"
+                    exit 1
                   }
                   trap on_term TERM INT
 
                   while [[ -z "$shutting_down" ]]; do
-                    if publish; then
-                      emit published "$(wc -c <"$METRICS_FILE") bytes"
-                      # Nothing more will be written this run: the census
-                      # writes the payload once, at the end. Waiting for
-                      # SIGTERM from here costs nothing and keeps the publish
-                      # path to exactly one shape.
-                      while true; do sleep 5; done
+                    if have_payload; then
+                      if publish; then
+                        emit published "$(wc -c <"$METRICS_FILE") bytes"
+                        # Nothing more will be written this run: the census
+                        # writes the payload once, at the end. Waiting for
+                        # SIGTERM from here costs nothing and keeps the publish
+                        # path to exactly one shape.
+                        while true; do sleep 5; done
+                      fi
+                      # Retried rather than given up on, because the likeliest
+                      # cause is transient and the run has minutes left. A
+                      # cause that is not transient reports itself again on the
+                      # way out, where it also fails the container.
+                      emit apply_failed "retrying"
                     fi
                     sleep 2
                   done

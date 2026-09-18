@@ -1381,6 +1381,16 @@ census:
       interval: 300s
       refreshSeconds: 60
 
+    alert:
+      enabled: true
+      # Two nights. The cluster's CronJobHasNotSucceededRecently already pages
+      # at 24h for a census that fails or is never scheduled, so anything under
+      # a day here would only restate it and double-page. What this catches is
+      # the case that rule cannot see: a census that succeeds while the
+      # sidecar, the ConfigMap or the exporter has stopped carrying the result,
+      # leaving a green scrape serving numbers that stopped moving.
+      maxAgeSeconds: 172800
+
   resources:
     requests:
       memory: 256Mi
