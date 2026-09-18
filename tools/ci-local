@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# Runs the gates GitHub would run, on this machine.
+#
+# Exists because Actions is blocked for the rest of a billing cycle once the
+# free minutes are gone and no payment method is on file -- account-wide,
+# public repositories included, so nothing on this account builds until the
+# month turns over. Merging still has to be safe in the meantime, and "it
+# looked fine" is not the standard the ruleset was enforcing.
+#
+# This is a stand-in for CI, not a replacement for it. It runs the same
+# commands against the same tree; it does not run them on a clean machine, and
+# it cannot prove the workflow files themselves are valid. When Actions comes
+# back, the real run is still the one that counts.
+#
+#   tools/ci-local             # every gate
+#   tools/ci-local lint template
+#   tools/ci-local --list
+#
+# Exit status is the number of failed gates, so `tools/ci-local && git merge`
+# behaves.
+# Gates are dispatched by name (`g_${gate//-/_}`), which shellcheck cannot
+# follow, so every gate body reads as unreachable to it.
+# shellcheck disable=SC2317
+set -uo pipefail
+
+here="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$here" || exit 1
+
+# yq is a CI-provided tool rather than a repo dependency, so a local install
+# under ~/.local/bin is the likely place it landed.
+export PATH="$HOME/.local/bin:$PATH"
+
+failed=0
+declare -a FAILED_GATES=()
+
+bold() { printf '\033[1m%s\033[0m\n' "$1"; }
+# __gate_name rather than `name`: bash's `local` is dynamically scoped, so a
+# gate body that reads into a plain `name` -- as vendored-dependencies does --
+# overwrites the caller's copy and the result is reported against an empty
+# label. The underscores are the whole defence.
+gate() {
+  local __gate_name="$1"; shift
+  bold "== $__gate_name"
+  if "$@"; then
+    printf '   PASS %s\n\n' "$__gate_name"
+  else
+    printf '   FAIL %s\n\n' "$__gate_name"
+    failed=$((failed + 1))
+    FAILED_GATES+=("$__gate_name")
+  fi
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 && return 0
+  echo "   SKIP: $1 is not installed" >&2
+  return 1
+}
+
+# --- gates, one per ci.yml job -------------------------------------------
+
+g_lint() {
+  local chart
+  for chart in charts/*/; do
+    echo "linting $chart..."
+    helm lint "$chart" || return 1
+  done
+}
+
+g_template() {
+  local chart name values_file
+  for chart in charts/*/; do
+    name="$(basename "$chart")"
+    for values_file in "$chart"values-*.yaml; do
+      [ -f "$values_file" ] || continue
+      echo "Templating $name with $(basename "$values_file")..."
+      helm template "$name" "$chart" -f "$chart/values.yaml" -f "$values_file" > /dev/null || return 1
+    done
+  done
+}
+
+g_vendored_dependencies() {
+  local rc=0 chart name version _repo status
+  for chart in charts/*/; do
+    [ -f "$chart/Chart.lock" ] || continue
+    echo "Checking $chart..."
+    while read -r name version _repo status; do
+      [ -n "$name" ] || continue
+      if [ "$status" = "ok" ]; then
+        echo "  $name $version ok"
+      else
+        echo "  ERROR: $name $version is '$status' -- run helm dependency update and commit charts/"
+        rc=1
+      fi
+    done < <(helm dependency list "$chart" | tail -n +2)
+  done
+  return "$rc"
+}
+
+g_validate_config() {
+  need yq || return 1
+  local rc=0 config apps i name ns chart_path value_files j vf
+  for config in argocd/*/config.yaml; do
+    echo "Validating $config..."
+    apps=$(yq '.apps | length' "$config")
+    for i in $(seq 0 $((apps - 1))); do
+      name=$(yq ".apps[$i].name" "$config")
+      ns=$(yq ".apps[$i].namespace" "$config")
+      chart_path=$(yq ".apps[$i].chartPath" "$config")
+      if [ "$name" = "null" ] || [ -z "$name" ]; then echo "  ERROR: apps[$i] missing 'name'"; rc=1; fi
+      if [ "$ns" = "null" ] || [ -z "$ns" ]; then echo "  ERROR: apps[$i] ($name) missing 'namespace'"; rc=1; fi
+      if [ "$chart_path" = "null" ] || [ -z "$chart_path" ]; then
+        echo "  ERROR: apps[$i] ($name) missing 'chartPath'"; rc=1
+      elif [ ! -d "$chart_path" ]; then
+        echo "  ERROR: apps[$i] ($name) chartPath '$chart_path' does not exist"; rc=1
+      fi
+      value_files=$(yq ".apps[$i].valueFiles | length" "$config")
+      for j in $(seq 0 $((value_files - 1))); do
+        vf=$(yq ".apps[$i].valueFiles[$j]" "$config")
+        if [ ! -f "$chart_path/$vf" ]; then
+          echo "  ERROR: apps[$i] ($name) valueFile '$chart_path/$vf' does not exist"; rc=1
+        fi
+      done
+    done
+    echo "  $apps apps validated"
+  done
+  return "$rc"
+}
+
+# CI gates this on charts/minecraft-fwb/values.yaml having changed. Locally the
+# comparison point is origin/main, which is the same question a pull request
+# asks. Booting a real server image is the slowest gate by far, so it stays
+# conditional rather than becoming a reason not to run this script.
+g_smoke_test() {
+  need yq || return 1
+  need docker || return 1
+  if git diff --quiet origin/main -- charts/minecraft-fwb/values.yaml; then
+    echo "charts/minecraft-fwb/values.yaml unchanged against origin/main, nothing to boot"
+    return 0
+  fi
+  local repo tag image ready
+  repo=$(yq '.["minecraft-bedrock"].image.repository' charts/minecraft-fwb/values.yaml)
+  tag=$(yq '.["minecraft-bedrock"].image.tag' charts/minecraft-fwb/values.yaml)
+  image="${repo}:${tag}"
+  echo "Booting $image..."
+  docker rm -f smoke-test >/dev/null 2>&1 || true
+  docker run -d --name smoke-test -e EULA=TRUE "$image" >/dev/null || return 1
+  ready=false
+  for _ in $(seq 1 90); do
+    if docker logs smoke-test 2>&1 | grep -q 'Server started\.'; then ready=true; break; fi
+    sleep 2
+  done
+  docker logs smoke-test 2>&1 | tail -5
+  docker rm -f smoke-test >/dev/null 2>&1
+  [ "$ready" = "true" ] || { echo "ERROR: $image never logged \"Server started.\""; return 1; }
+}
+
+g_tools_tests() {
+  local rc=0 suite
+  shellcheck -s bash tools/mc tools/ci-local tools/tests/*.sh || rc=1
+  for suite in tools/tests/test-*.sh; do
+    echo "== $suite"
+    bash "$suite" || rc=1
+  done
+  return "$rc"
+}
+
+# --- gates the reusable jdwlabs workflows provide ------------------------
+#
+# Run through Docker because neither tool is installed here and neither is
+# worth a permanent install for a thirteen-day gap. Skipped rather than failed
+# when Docker is missing, so this script stays useful on a machine that has
+# none -- a skipped scanner is visible in the output and an absent one is not.
+
+g_gitleaks() {
+  need docker || return 1
+  docker run --rm -v "$here:/repo" -w /repo \
+    zricethezav/gitleaks:latest detect --source=/repo --no-banner --redact --exit-code 1
+}
+
+g_trivy() {
+  need docker || return 1
+  # Advisory in CI (fail-on-findings defaults false), so advisory here: the
+  # exit code is deliberately not propagated. Findings are printed to be read,
+  # not to block a merge on a posture this repo has already triaged.
+  docker run --rm -v "$here:/repo" aquasec/trivy:latest fs /repo \
+    --scanners vuln,misconfig,secret --severity CRITICAL,HIGH --quiet --exit-code 0
+}
+
+# Every commit this branch adds must be signed, which is what
+# verify-pr-signatures asserts server-side using GitHub's own `verified` field.
+# Locally the keyring is the only thing available, so this checks that a
+# signature exists and is not bad -- weaker than the real gate, and it says so.
+g_signatures() {
+  local bad=0 sha status
+  while read -r sha status; do
+    case "$status" in
+      G|U|E) ;;                                   # good, or unverifiable locally
+      *) echo "  $sha is unsigned or has a bad signature ($status)"; bad=1 ;;
+    esac
+  done < <(git log --format='%h %G?' origin/main..HEAD)
+  [ "$bad" = 0 ] || return 1
+  echo "  every commit on this branch carries a signature"
+  echo "  note: GitHub verifies against your account's keys; this only checks one exists"
+}
+
+# --- anti-drift ----------------------------------------------------------
+#
+# A gate added to ci.yml and not here is the failure this script would cause:
+# a merge that looks locally green while a real check it never ran would have
+# failed. Cheaper to refuse to run than to be quietly incomplete.
+g_in_sync_with_ci() {
+  local expected actual
+  expected=$(awk '/^jobs:/{f=1;next} f && /^  [a-z][a-z0-9-]*:$/{gsub(/[ :]/,"");print}' .github/workflows/ci.yml | sort)
+  actual=$(printf '%s\n' lint template vendored-dependencies validate-config smoke-test tools-tests | sort)
+  if [ "$expected" != "$actual" ]; then
+    echo "ci.yml jobs and this script's gates have diverged:"
+    diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") || true
+    echo "Add the missing gate here before trusting a local run."
+    return 1
+  fi
+  echo "  gates match ci.yml's job list"
+}
+
+declare -a ALL=(in-sync-with-ci lint template vendored-dependencies validate-config
+                smoke-test tools-tests gitleaks trivy signatures)
+
+if [ "${1:-}" = "--list" ]; then printf '%s\n' "${ALL[@]}"; exit 0; fi
+
+declare -a WANTED=("$@")
+[ "${#WANTED[@]}" -gt 0 ] || WANTED=("${ALL[@]}")
+
+for g in "${WANTED[@]}"; do
+  gate "$g" "g_${g//-/_}"
+done
+
+bold "== summary"
+if [ "$failed" -eq 0 ]; then
+  echo "all ${#WANTED[@]} gates passed"
+else
+  echo "$failed of ${#WANTED[@]} gates failed: ${FAILED_GATES[*]}"
+fi
+exit "$failed"

@@ -233,7 +233,7 @@ jobs:
       # one extracts its subject from the rendered chart, which is why helm is
       # set up above.
       - name: Shellcheck the operator tools
-        run: shellcheck -s bash tools/mc tools/tests/*.sh
+        run: shellcheck -s bash tools/mc tools/ci-local tools/tests/*.sh
 
       # Discovered rather than listed, so a suite added alongside a new tool
       # is run without a second edit here -- a listed set silently skips
