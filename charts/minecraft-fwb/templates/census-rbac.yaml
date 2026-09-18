@@ -29,6 +29,20 @@ rules:
     resources: ["pods/log"]
     resourceNames: ["{{ include "backup.serverPod" . }}"]
     verbs: ["get"]
+{{- if .Values.census.metrics.enabled }}
+  # The metrics sidecar publishes the census counts into a ConfigMap the
+  # exporter serves. create cannot be scoped by resourceName, which is the
+  # same deliberately-broader grant the backup job carries for the same
+  # `kubectl create --dry-run | kubectl apply` idiom; get and patch, which are
+  # what an apply over an existing object needs, stay pinned to the one name.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ include "census.metricsConfigMap" . }}"]
+    verbs: ["get", "patch", "update"]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

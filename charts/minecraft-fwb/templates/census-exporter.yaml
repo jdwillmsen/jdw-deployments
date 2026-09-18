@@ -1,0 +1,263 @@
+{{- if and .Values.census.enabled .Values.census.metrics.enabled }}
+# Serves the census counts, which are produced once a night by a Job that is
+# gone by morning.
+#
+# Same shape as backup-exporter.yaml and deliberately a second pod rather than
+# a second payload in that one: Prometheus drops an entire scrape on a single
+# malformed line, so sharing a process would put the backup freshness contract
+# and the census counts behind one another's mistakes. They also fail for
+# unrelated reasons and are read by unrelated panels.
+#
+# A long-lived pod mounting the world or the archive is not available here for
+# the reason recorded on the backup exporter: both claims are ReadWriteOnce
+# against a driver with attachRequired, so a permanent mounter would have to be
+# pinned to the server's node and follow it. A ConfigMap has no node affinity.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "census.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "census.exporter.name" . }}
+spec:
+  replicas: 1
+  # Nothing worth rolling back for a static-file server on a pinned tag.
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: {{ include "census.exporter.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "census.exporter.name" . }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: {{ .Values.census.metrics.exporter.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 10m
+            limits:
+              memory: 64Mi
+              cpu: 100m
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.census.metrics.exporter.port }}
+          env:
+            - name: REFRESH_SECONDS
+              value: {{ .Values.census.metrics.exporter.refreshSeconds | quote }}
+            - name: PORT
+              value: {{ .Values.census.metrics.exporter.port | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              OUT=/run/metrics
+              SRC=/run/state/metrics.txt
+              mkdir -p "$OUT"
+
+              # Read before the first payload is written, so the age the
+              # never-reported rule measures starts when this process began
+              # serving rather than when it was first scraped.
+              STARTED="$(date +%s)"
+
+              # A clock this pod cannot read would render as a bare metric name
+              # and make Prometheus reject the whole scrape, taking the counts
+              # down with it. Same guard the backup exporter carries, for the
+              # same reason. case rather than a regex: this is busybox sh.
+              case "$STARTED" in
+                ''|*[!0-9]*)
+                  echo "FATAL: could not read the clock at startup" >&2
+                  exit 1 ;;
+              esac
+
+              # Says whether what is being served came from a census run at
+              # all. Without it, a census that has never reported and a census
+              # reporting a world with nothing in it are the same empty answer
+              # -- and `optional: true` on the mount below makes the first case
+              # arrive silently.
+              #
+              # Published in both branches. A gauge that appears and disappears
+              # cannot be joined against, and its absence would mean both "no
+              # census yet" and "an exporter too old to publish it".
+              #
+              # The start time rides along because "has not reported yet" is
+              # only excusable for as long as a census run has not been due,
+              # and that comparison needs to know when this process began
+              # serving. A restart resets it, which is honest: the mount is
+              # re-read on startup, so an exporter that has counts to serve
+              # publishes 1 immediately and only a genuinely empty state is
+              # delayed.
+              reported() {
+                echo "# HELP mc_census_reported 1 if a census run has published counts this exporter is serving, 0 if it has never reported."
+                echo "# TYPE mc_census_reported gauge"
+                echo "mc_census_reported $1"
+                echo "# HELP mc_census_exporter_start_time_seconds Unix time this exporter process began serving."
+                echo "# TYPE mc_census_exporter_start_time_seconds gauge"
+                echo "mc_census_exporter_start_time_seconds ${STARTED}"
+              }
+
+              # Copied out of the ConfigMap mount rather than served from it:
+              # the mount is a symlink farm the kubelet swaps atomically, and
+              # serving a plain file avoids depending on how the web server
+              # treats those symlinks.
+              #
+              # The refresher runs beside httpd rather than in front of it, so
+              # a failed read does not end the container while httpd carries on
+              # serving a frozen file -- a stale payload still parses, so the
+              # scrape would stay green with nothing behind it alive. A blip is
+              # tolerated; anything that ends the loop takes PID 1 with it,
+              # where a restart is visible.
+              (
+                trap 'kill 1' EXIT
+                while true; do
+                  if [ -s "$SRC" ]; then
+                    { cat "$SRC" && reported 1; } > "$OUT/.metrics.tmp" 2>/dev/null || :
+                  else
+                    reported 0 > "$OUT/.metrics.tmp" 2>/dev/null || :
+                  fi
+                  # Never publish a half-written payload: Prometheus rejects
+                  # the whole scrape on one malformed line. The reported gauge
+                  # is written last and both branches are &&-chained, so a
+                  # payload carrying it is one that was written in full.
+                  if grep -q '^mc_census_reported ' "$OUT/.metrics.tmp" 2>/dev/null; then
+                    mv "$OUT/.metrics.tmp" "$OUT/metrics.txt"
+                  fi
+                  sleep "$REFRESH_SECONDS"
+                done
+              ) &
+
+              # The .txt suffix is load-bearing: it is what makes busybox httpd
+              # answer text/plain with no MIME configuration to get wrong.
+              exec httpd -f -v -p "$PORT" -h "$OUT"
+          readinessProbe:
+            httpGet:
+              path: /metrics.txt
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: state
+              mountPath: /run/state
+              readOnly: true
+            - name: metrics
+              mountPath: /run/metrics
+      volumes:
+        # Written by the census job, deliberately not shipped by this chart:
+        # ArgoCD syncs with selfHeal, so a chart-managed ConfigMap would have
+        # last night's counts reverted to the committed placeholder on every
+        # sync. Optional so this pod starts before the first census has run.
+        - name: state
+          configMap:
+            name: {{ include "census.metricsConfigMap" . }}
+            optional: true
+        - name: metrics
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "census.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "census.exporter.name" . }}
+spec:
+  selector:
+    app: {{ include "census.exporter.name" . }}
+  ports:
+    - name: metrics
+      port: {{ .Values.census.metrics.exporter.port }}
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "census.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "census.exporter.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "census.exporter.name" . }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics.txt
+      # The payload changes once a night. Scraping it faster costs a series
+      # nothing and buys nothing; this is slow enough to say so and fast
+      # enough that a run is visible within the hour it lands.
+      interval: {{ .Values.census.metrics.exporter.interval }}
+{{- if .Values.census.metrics.alert.enabled }}
+---
+# Without these, a broken publish path is silent in the one way that matters:
+# the exporter keeps serving last night's counts, the scrape stays green, and
+# the panel keeps drawing a line that stopped meaning anything.
+#
+# The cluster's CronJobHasNotSucceededRecently already covers a census that
+# fails or never runs. What it cannot see is a census that succeeds while the
+# sidecar, the ConfigMap or the exporter has stopped carrying the result.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "census.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-census
+      rules:
+        - alert: JdwillmsenMinecraftCensusStale
+          # Measured from the world's capture time rather than the scan's, so
+          # a census that keeps running while falling back to older and older
+          # archives is caught too -- that is a working job producing numbers
+          # nobody should read as current.
+          expr: |
+            (time() - mc_census_world_taken_at_timestamp_seconds{namespace="{{ .Release.Namespace }}"})
+              > {{ .Values.census.metrics.alert.maxAgeSeconds }}
+          for: 30m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB census counts are stale
+            description: >-
+              The served census reads a world older than
+              {{ div .Values.census.metrics.alert.maxAgeSeconds 3600 }} hours.
+              The job runs nightly, so either it has stopped producing a payload
+              or nothing is publishing it -- the counts on the dashboard are no
+              longer current whichever it is.
+        # `> maxAge` never matches a series that is not there, and the never-
+        # reported case is exactly the one where it is not there.
+        - alert: JdwillmsenMinecraftCensusNeverReported
+          expr: |
+            mc_census_reported{namespace="{{ .Release.Namespace }}"} == 0
+              and
+            (time() - mc_census_exporter_start_time_seconds{namespace="{{ .Release.Namespace }}"})
+              > {{ .Values.census.metrics.alert.maxAgeSeconds }}
+          for: 30m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB census has never published counts
+            description: >-
+              This exporter has been serving for longer than a census cycle and
+              has never been given a payload, so the entity-count panels have
+              nothing behind them. The gate is the exporter's own start time, so
+              a fresh deployment is not paged for before the first nightly run.
+{{- end }}
+{{- end }}
