@@ -53,6 +53,10 @@ spec:
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop: ["ALL"]
+                # This job writes only to the scratch claim and reads /backup;
+                # it stages nothing through the image, so unlike the backup job
+                # it needs no writable /tmp alongside this.
+                readOnlyRootFilesystem: true
               resources:
                 requests:
                   memory: 128Mi

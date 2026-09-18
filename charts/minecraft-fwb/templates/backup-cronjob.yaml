@@ -72,6 +72,11 @@ spec:
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop: ["ALL"]
+                # Everything this job writes goes to a claim: the world staging
+                # copy and the archive to /backup, nothing to the image. The
+                # one exception is the few-KB metrics file below, which gets a
+                # small emptyDir rather than a writable root.
+                readOnlyRootFilesystem: true
               resources:
                 requests:
                   memory: 128Mi
@@ -105,12 +110,26 @@ spec:
                   set -euo pipefail
                   NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
                   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-                  STAGE="$(mktemp -d)"
-
                   # A pod killed outright leaves its partial behind, since no
                   # trap runs. They match no glob the job uses, so they are
                   # inert rather than dangerous, but they would accumulate.
                   rm -f /backup/.fwb-*.tar.gz.partial
+                  # Same for a staging directory, and for the same reason. Swept
+                  # before this run creates its own, so the glob cannot match it.
+                  rm -rf /backup/.fwb-stage-*
+
+                  # On the backup claim, not the node's root filesystem, which
+                  # is what lets the container run with a read-only root. The
+                  # staging copy is the whole world -- 683 MB against a 661 MB
+                  # archive at the time of writing -- so an emptyDir would put
+                  # that on node ephemeral storage and make a backup capable of
+                  # evicting the pod it is backing up. The claim already sizes
+                  # for 14 archives and has the room.
+                  #
+                  # The name is dot-prefixed and carries no .tar.gz, so it
+                  # matches neither the retention glob
+                  # (fwb-????????T??????Z.tar.gz) nor the partial sweep above.
+                  STAGE="$(mktemp -d /backup/.fwb-stage-XXXXXX)"
                   ARCHIVE="/backup/fwb-${STAMP}.tar.gz"
 
                   # Quiescing the server is an optimisation, not a correctness
@@ -445,6 +464,8 @@ spec:
                   mountPath: /data
                 - name: backup
                   mountPath: /backup
+                - name: tmp
+                  mountPath: /tmp
           volumes:
             - name: world
               persistentVolumeClaim:
@@ -452,4 +473,12 @@ spec:
             - name: backup
               persistentVolumeClaim:
                 claimName: {{ include "backup.name" . }}
+            # Only the metrics file lands here -- a few KB of Prometheus text
+            # handed to `kubectl create configmap --from-file`. The sizeLimit is
+            # a bound, not a budget: if something ever starts writing the world
+            # here instead of to the claim, the job fails on a full volume
+            # rather than filling the node out from under the server.
+            - name: tmp
+              emptyDir:
+                sizeLimit: 16Mi
 {{- end }}
