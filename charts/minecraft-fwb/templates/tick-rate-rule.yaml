@@ -55,10 +55,16 @@ spec:
         # the freshness clause above turns a stale reading into no alert at
         # all rather than into a page.
         - alert: JdwillmsenMinecraftTickRateUnmeasured
+          #
+          # The staleness bound is the same freshnessSeconds the rule above
+          # requires, which is what leaves no band between them: any reading
+          # old enough to stop the degradation alert matching is old enough to
+          # start this one counting. Split values would leave a window where a
+          # measurement that keeps limping back is covered by neither.
           expr: |
             absent(mc_agent_server_tps{namespace="{{ .Release.Namespace }}"})
               or
-            (time() - mc_agent_tps_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"}) > {{ .Values.tickRateAlert.unmeasuredSeconds }}
+            (time() - mc_agent_tps_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"}) > {{ .Values.tickRateAlert.freshnessSeconds }}
           for: 15m
           labels:
             severity: warning
@@ -66,8 +72,10 @@ spec:
           annotations:
             summary: Minecraft FWB tick rate is not being measured
             description: >-
-              No fresh TPS reading from the server agent for 15 minutes, so the
-              degradation alert above cannot fire whatever the server is doing.
-              The measurement runs over the console bridge, so this usually means
-              the agent or the bridge is down rather than the server.
+              Every TPS reading for the last 15 minutes has been older than
+              {{ .Values.tickRateAlert.freshnessSeconds }}s, or the metric is gone
+              entirely, so the degradation alert above cannot fire whatever the
+              server is doing. The measurement runs over the console bridge, so
+              this usually means the agent or the bridge is down rather than the
+              server.
 {{- end }}

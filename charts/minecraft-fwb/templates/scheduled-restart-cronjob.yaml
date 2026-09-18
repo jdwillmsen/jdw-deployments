@@ -172,10 +172,20 @@ spec:
                       -o jsonpath="{.metadata.uid} {.status.containerStatuses[?(@.name=='$SERVER_CONTAINER')].restartCount}" 2>/dev/null || true
                   }
 
+                  # Read before stopping, and refuse to stop without it. An
+                  # unreadable state is not just a missing log line: the poll
+                  # below compares against it, and an empty baseline makes the
+                  # very first reading differ, so the run would report the pod
+                  # recreated -- the data-loss alarm -- for a restart that went
+                  # perfectly.
                   before="$(server_state)"
+                  if [[ -z "$before" ]]; then
+                    emit failed "could not read $SERVER_POD state; not stopping a server whose restart cannot be verified"
+                    exit 1
+                  fi
                   before_uid="${before%% *}"
                   before_count="${before##* }"
-                  if ! timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -- send-command stop >/dev/null 2>&1; then
+                  if ! timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- send-command stop >/dev/null 2>&1; then
                     emit failed "could not deliver stop to $SERVER_POD"
                     exit 1
                   fi

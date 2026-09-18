@@ -1450,9 +1450,25 @@ tickRateAlert:
   enabled: true
 
   # Below normal jitter and above the trouble: healthy days measured a p10 of
-  # 19.5-20.0, while the onset day had already reached 15.9 by its end. A
-  # threshold inside that gap fires on the decay without firing on a busy
-  # evening.
+  # 19.5-20.0, while the onset day had already reached 15.9 by its end.
+  #
+  # Read this together with the `for` below rather than on its own -- the pair
+  # is what decides when it fires. Sustained means *every* evaluation in the
+  # window is under the threshold, so the single-sample dips this server takes
+  # routinely (a save hold, a chunk load: 7.7 TPS for one reading three hours
+  # into an otherwise clean cycle) cannot reach it.
+  #
+  # Replayed against the real decay in Prometheus at 1m steps, this pair first
+  # fires 09-17 12:58 -- about 30 hours in, with the server at 13-16 TPS and a
+  # day and a half before anyone noticed by hand. With the nightly restart
+  # above in place the server never reaches that age, so what remains is the
+  # alert for a restart that did not happen or did not help.
+  #
+  # The margin against a normal night is real but thin: on the heaviest day
+  # measured, the busiest 24-hour cycle bottomed out at a sustained 17.31, so a
+  # heavier one than anything on record would page while merely slow. That is
+  # a true statement about the server when it happens, and the severity is
+  # warning.
   threshold: 17
 
   # Thirty minutes. A backup's save hold, a census scan or a chunk-loading
@@ -1462,13 +1478,14 @@ tickRateAlert:
 
   # How recent a reading has to be to count. The agent samples the game clock
   # once a minute and Prometheus scrapes every 60s, so five minutes is several
-  # missed cycles rather than a tight race. The metric holds its last good
-  # value across a failed measurement by design, so without this clause an
-  # agent that stopped measuring during a slow patch would page forever about
-  # a number frozen in the past.
+  # missed cycles rather than a tight race -- the widest gap measured across
+  # 50 hours, including a full server restart, was 158s. The metric holds its
+  # last good value across a failed measurement by design, so without this
+  # clause an agent that stopped measuring during a slow patch would page
+  # forever about a number frozen in the past.
+  #
+  # Both rules read this one value: anything too stale to be compared is what
+  # the second rule reports as unmeasured. Two separate numbers would leave a
+  # band of staleness that suppresses the first rule without raising the
+  # second, which is the failure this alerting exists to avoid.
   freshnessSeconds: 300
-
-  # When the measurement itself has been gone long enough to report. Wider
-  # than the freshness window above, so a brief bridge blip suppresses the
-  # degradation alert without immediately raising this one.
-  unmeasuredSeconds: 1800
