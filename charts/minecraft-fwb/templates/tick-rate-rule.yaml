@@ -1,0 +1,73 @@
+{{- if .Values.tickRateAlert.enabled }}
+# Notices a server that is up, joinable and running at two thirds speed.
+#
+# Nothing did on 2026-09-16: tick rate fell 38% over two days and the first
+# report of it was a player saying the world felt slow. Every check this repo
+# runs passed throughout, because all of them ask whether the server answers,
+# not how fast it is running.
+#
+# The agent has measured TPS from the server's own game clock for weeks, once
+# a minute; the series was there the whole time with nothing reading it.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "tickRateAlert.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-tick-rate
+      rules:
+        - alert: JdwillmsenMinecraftTickRateDegraded
+          # The staleness clause is what makes the threshold mean anything.
+          # mc_agent_server_tps is deliberately never reset on a failed
+          # measurement -- it holds the last good reading -- so a console
+          # bridge outage, an agent restart or the nightly restart itself
+          # leaves a number that no longer describes the server. Paired with
+          # the freshness timestamp, a stale reading stops matching, which
+          # also resets the `for` rather than letting a frozen value age into
+          # a page.
+          #
+          # Plain `and` rather than `and on(...)`: both series come from the
+          # agent's one metrics endpoint and carry identical labels, so the
+          # exact match is free and says so.
+          expr: |
+            mc_agent_server_tps{namespace="{{ .Release.Namespace }}"} < {{ .Values.tickRateAlert.threshold }}
+              and
+            (time() - mc_agent_tps_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"}) < {{ .Values.tickRateAlert.freshnessSeconds }}
+          # Long enough that a chunk-loading spike, a backup's save hold or a
+          # census scan cannot page; far shorter than the day and a half the
+          # last decay went unnoticed.
+          for: {{ .Values.tickRateAlert.for }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB is running below {{ .Values.tickRateAlert.threshold }} TPS
+            description: >-
+              Server tick rate has been under {{ .Values.tickRateAlert.threshold }}
+              of 20 for {{ .Values.tickRateAlert.for }}, so mobs, redstone and farms
+              are all running slow. A restart is the known remedy for the decay this
+              server shows on Bedrock 1.26.51.1; the scheduled restart does it nightly,
+              and doing it early is `send-command stop` through the server console --
+              never a pod delete.
+        # The measurement stopping is its own failure, and a silent one: a
+        # comparison never matches a series that is no longer produced, and
+        # the freshness clause above turns a stale reading into no alert at
+        # all rather than into a page.
+        - alert: JdwillmsenMinecraftTickRateUnmeasured
+          expr: |
+            absent(mc_agent_server_tps{namespace="{{ .Release.Namespace }}"})
+              or
+            (time() - mc_agent_tps_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"}) > {{ .Values.tickRateAlert.unmeasuredSeconds }}
+          for: 15m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB tick rate is not being measured
+            description: >-
+              No fresh TPS reading from the server agent for 15 minutes, so the
+              degradation alert above cannot fire whatever the server is doing.
+              The measurement runs over the console bridge, so this usually means
+              the agent or the bridge is down rather than the server.
+{{- end }}
