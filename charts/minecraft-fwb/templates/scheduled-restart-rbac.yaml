@@ -1,0 +1,53 @@
+{{- if .Values.scheduledRestart.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "scheduledRestart.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "scheduledRestart.name" . }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # Reads the server pod to decide whether to act at all, and afterwards to
+  # prove the restart happened in place -- the UID and restart count this job
+  # compares both come from here.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get"]
+  # Everything this actor does to the server it does through its console:
+  # the countdown, the player-count query, and the stop itself.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["create"]
+  # The player count is only readable by asking the console and then reading
+  # the answer back out of the log; there is no API for it.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames: ["{{ include "backup.serverPod" . }}"]
+    verbs: ["get"]
+  # No delete on pods, and no grant on statefulsets. This actor restarts the
+  # server by stopping the process and letting restartPolicy: Always bring the
+  # container back inside the same pod. Deleting the pod, or patching the
+  # workload to force a roll, is what unstages the world volume -- the
+  # migration behind docs/incidents/2026-08-30-fwb-world-data-loss.md. Not
+  # holding the permission is a stronger guarantee than not using it.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "scheduledRestart.name" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "scheduledRestart.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "scheduledRestart.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

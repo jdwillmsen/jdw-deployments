@@ -1352,3 +1352,85 @@ census:
       # runs once a day, an hour after the backup has finished, fits without
       # reopening that fight.
       cpu: 500m
+
+scheduledRestart:
+  # A mitigation with a known expiry, not maintenance. On Bedrock 1.26.51.1 the
+  # server's tick rate decays with process age rather than with load: measured
+  # 2026-09-10..09-18, a 1.26.45 process held a median 20.00 TPS for 4.7 days,
+  # while every 1.26.51.1 process starts at 20.00 and loses roughly 3.5 TPS a
+  # day, reaching 12.3 by the second. Entity count, player count, world size
+  # and tick/view distance were all unchanged across that boundary. Restarting
+  # is the only thing that reverses it.
+  #
+  # Turn this off once the defect is fixed or the transport question is
+  # settled. A nightly restart nobody needs is a nightly outage nobody needs.
+  enabled: true
+
+  # 09:40 UTC -- 04:40 local, the quietest point in the session history, and
+  # the one slot in the hour that collides with nothing else here. The backup
+  # starts at 04:00 with an activeDeadlineSeconds of 3600 and may still hold
+  # the save at 05:00; the census runs at 05:40; the hourly version check has a
+  # timeoutSeconds of 1500, so any HH:00 run can still be restarting the server
+  # until HH:25. This clears that worst case by fifteen minutes.
+  #
+  # Two actors driving the same save protocol at once is the hazard being
+  # avoided, not CPU contention -- see the census schedule comment above, which
+  # works the same three windows out in more detail. Re-check all three before
+  # moving this.
+  #
+  # UTC, because nothing in this chart sets timeZone on any CronJob.
+  schedule: "40 9 * * *"
+
+  # The delay a player experiences, so it is the one number here worth arguing
+  # about. Matches deployAnnounce.leadSeconds deliberately: a player should not
+  # have to learn two different countdowns depending on which actor is
+  # restarting the server.
+  leadSeconds: 120
+
+  # How long the server gets to come back Ready before the run is called a
+  # failure. A cold start on this world is well under a minute; this is sized
+  # for a bad night rather than a normal one, because the cost of waiting is a
+  # job that runs slightly longer and the cost of giving up early is a red
+  # alert about a server that was fine.
+  readyTimeoutSeconds: 300
+
+  # Must exceed leadSeconds (120) + the restart wait (120) + readyTimeout (300)
+  # with slack. A deadline that lands mid-sequence kills the job after the stop
+  # has been delivered and before anything has verified the server came back --
+  # the one state this job must never leave behind.
+  timeoutSeconds: 900
+
+  # Same reasoning as the census job: KubeJobFailed reads the object rather
+  # than the run, so a failed Job with no TTL pages until history eviction.
+  ttlSecondsAfterFinished: 86400
+
+  # Drives the console through kubectl exec, so it tracks the cluster's minor
+  # version for the same reason the backup and census images do.
+  image: alpine/k8s:1.36.2
+
+tpsAlert:
+  # Nothing was watching tick rate. Between 2026-09-16 and 09-18 it fell from
+  # 20.00 to 12.3 -- a 38% loss of simulation speed -- with no alert, and it
+  # surfaced only because someone was asked to look.
+  enabled: true
+
+  # Of a possible 20. On healthy days the 10th percentile sits at 19.5-20.0, so
+  # 17 is well outside normal jitter; the onset day had already reached 15.91
+  # by its final hour, so this fires during a decay rather than after it.
+  threshold: 17
+
+  # Long enough that a restart, a backup hold or a version check cannot fire
+  # it. The decay this watches for takes days, so there is nothing to gain from
+  # reacting in minutes.
+  for: 30m
+
+  # serverTPS deliberately holds its last good reading rather than resetting on
+  # a failed measurement, so the threshold rule is joined against the age of
+  # that reading. Without this a probe that died an hour ago keeps a stale low
+  # value alerting, or a stale high value suppressing.
+  freshnessSeconds: 900
+
+  # The measurement going away is its own failure, and a silent one: a
+  # threshold rule cannot fire on a series that stopped being produced.
+  staleSeconds: 1800
+  staleFor: 15m

@@ -229,9 +229,26 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v5.0.1
 
-      # Both suites drive a fake kubectl, so they need no cluster. The recovery
-      # one extracts its subject from the rendered chart, which is why helm is
-      # set up above.
+      # The suites need no cluster: the ones that touch kubectl drive a fake
+      # one. Several extract their subject from the rendered chart, which is
+      # why helm is set up above.
+      #
+      # promtool is for the alert-rule suite, which unit-tests the rendered
+      # PrometheusRule. That suite skips itself when promtool is missing, so
+      # without this step it would pass by doing nothing -- which is the one
+      # outcome an alert test must not have. Pinned rather than "latest" for
+      # the usual reason: a silent upstream change to rule semantics should
+      # break on a version bump someone reviewed.
+      - name: Set up promtool
+        env:
+          PROMETHEUS_VERSION: "3.5.0"
+        run: |
+          curl -fsSL -o /tmp/prometheus.tar.gz \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          tar -xzf /tmp/prometheus.tar.gz -C /tmp
+          sudo install -m 0755 "/tmp/prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool --version
+
       - name: Shellcheck the operator tools
         run: shellcheck -s bash tools/mc tools/tests/*.sh
 

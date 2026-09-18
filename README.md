@@ -290,6 +290,45 @@ to a day old. `via snapshot` means they are minutes old.
 It is off by default (`census.enabled`), because the binary ships in the agent
 image and a release carrying it has to be published before the job can run.
 
+### The nightly restart, and why it exists
+
+`scheduled-restart` stops the server at 09:40 UTC every night. It is a
+mitigation with a known expiry, not maintenance, and it should be deleted
+rather than inherited once the defect under it is gone.
+
+On Bedrock 1.26.51.1 the server's tick rate decays with process age rather than
+with load. Measured across 2026-09-10..09-18 from the server's own `Gametime
+is` lines: a 1.26.45 process held a median of 20.00 TPS for 4.7 days, while
+every 1.26.51.1 process starts at 20.00 and loses roughly 3.5 TPS per day,
+reaching 12.3 by the second day. Entity count, player count, world size and
+tick/view distance were unchanged across that boundary, and a restart restores
+full speed immediately. Downgrading is not an option — retail clients
+auto-updated to 1.26.51 and a 1.26.45 server rejects them, which is the outage
+in [docs/incidents/2026-09-15-fwb-version-check-nethernet.md](docs/incidents/2026-09-15-fwb-version-check-nethernet.md).
+
+Two things about it are worth knowing before changing anything:
+
+**The slot is not arbitrary.** 09:40 UTC is the quietest point in the session
+history and the one slot in the hour clear of everything else that drives this
+server's save protocol: the backup starts at 04:00 and may still hold the save
+at 05:00, the census runs at 05:40, and the hourly version check can be
+restarting the server until HH:25. Re-check all three before moving it — the
+hazard is two actors holding the same save at once, not CPU contention.
+
+**It stops the server over its console and never deletes the pod.** The job
+asserts afterwards that the pod UID did not change, and fails the run if it
+did. Restarting the container in place leaves the world volume mounted;
+recreating the pod migrates it, which is what cost 11 `.ldb` files on
+2026-08-30. The job holds no `delete` on pods and nothing on the StatefulSet,
+so it could not recreate the pod even if the script were wrong.
+
+Tick rate is alerted on separately (`tpsAlert`), at under 17 TPS sustained for
+30 minutes. That rule is joined against the age of the last successful
+measurement, because `mc_agent_server_tps` deliberately holds its last good
+reading rather than resetting when a probe fails — without the join, a dead
+probe reads as either a slow server or a healthy one depending on what it
+happened to be holding. A second rule covers the measurement disappearing.
+
 ### Restoring a backup
 
 The chart also carries a restore mechanism alongside the backup CronJob:
