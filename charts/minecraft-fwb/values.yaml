@@ -1144,10 +1144,18 @@ agent:
   # leaving rather than into a session the server may still think is live, so
   # it is not the same test.
   #
-  # Turn it on once that rejoin has been watched once. The alert that covers
-  # the failure ships with it: see JdwillmsenMinecraftAgentSessionStale, which
-  # fires when no session has reached spawn in two and a half cycles.
-  sessionRecycleMs: 0
+  # One hour while that rejoin is being watched, rather than the six it wants
+  # to settle at. An hour is the shortest cadence the agent will accept (ten
+  # reconnect ceilings) and it puts the first recycle inside the window
+  # somebody is actually looking at it, which is the whole point of the
+  # exercise: the concern is a single event, and waiting six hours to observe
+  # it once only makes the observation less likely to happen.
+  #
+  # Raise to 21600000 once a cycle has been seen reconnecting cleanly. If one
+  # does not, JdwillmsenMinecraftAgentSessionStale fires at two and a half
+  # cycles -- two and a half hours here rather than fifteen, which is the
+  # other reason to start short.
+  sessionRecycleMs: 3600000
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
   # other players see.

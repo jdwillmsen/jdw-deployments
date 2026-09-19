@@ -73,8 +73,13 @@ spec:
             # means off, and omitting the variable would instead leave the
             # binary's own default in charge. Those agree today and there is
             # no reason to build a chart whose "off" depends on that.
+            # int64 before quote, because Helm decodes every values number as
+            # a float64 and Go renders one at or above a million in scientific
+            # notation -- 3600000 becomes "3.6e+06", which the agent rejects as
+            # not an integer. Under a million it happens to look fine, which is
+            # how this would have shipped unnoticed at a smaller default.
             - name: SESSION_RECYCLE_MS
-              value: {{ .Values.agent.sessionRecycleMs | quote }}
+              value: {{ .Values.agent.sessionRecycleMs | int64 | quote }}
             # !online, !version and !backup read these two exporters directly.
             # Full paths, not hosts: the backup exporter serves /metrics.txt
             # while mc-monitor serves /metrics, and assembling that in code
