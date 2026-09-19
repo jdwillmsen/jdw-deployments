@@ -377,9 +377,12 @@ not the NodePort, which would also be testing HAProxy and the DNAT rules — and
 publishes how far it got:
 
 ```bash
-kubectl exec -n <namespace> deploy/<release>-join-probe -- \
-  wget -qO- localhost:9103/metrics | grep mc_joinprobe
+kubectl port-forward -n <namespace> deploy/<release>-join-probe 9103:9103 &
+curl -s localhost:9103/metrics | grep mc_joinprobe
 ```
+
+`port-forward` rather than `kubectl exec`: the agent image is distroless, so
+there is no shell and no `wget` in that container to exec into.
 
 `mc_joinprobe_joinable` is the one to read; `mc_joinprobe_stage` says where it
 stopped (0 unreachable, 1 answered the ping, 2 refused the session) and
@@ -392,14 +395,20 @@ It needs no Microsoft account, because the protocol verdict arrives before any
 credential is examined. What it cannot prove is that a real client can
 authenticate and spawn.
 
-**`agent.sessionRecycleMs`** covers that half. The agent holds a real account,
-so every six hours it drops its own session and reconnects, and each cycle is a
-real client authenticating and reaching spawn —
-`mc_agent_session_established_timestamp_seconds` is when that last worked. The
-cost is the agent leaving chat for the length of a reconnect, four times a day,
-which is the same gap a deployment already causes; open player sessions are
-credited before the drop, the way a handover does, so nobody loses playtime to
-it. Set it to `0` to switch it off.
+**`agent.sessionRecycleMs`** covers that half, and **ships off (`0`)**. Set to
+six hours the agent drops its own session and reconnects four times a day, and
+each cycle is a real client authenticating and reaching spawn —
+`mc_agent_session_established_timestamp_seconds` is when that last worked, and
+`JdwillmsenMinecraftAgentSessionStale` fires if two and a half cycles pass
+without one. Open player sessions are credited before the drop, the way a
+leadership handover does, so nobody loses playtime to it.
+
+The reason it is off: this server holds a session open after a client leaves
+(`playerIdleTimeout: 0`, and freeing an account has needed `tools/mc run kick`
+before), so a rejoin by the same account six hours later may be refused as
+already connected. The rolling handover performs the same rejoin and works, but
+it does so while the outgoing pod is leaving rather than into a session the
+server may still believe is live. Watch one recycle before turning it on.
 
 ### Restoring a backup
 

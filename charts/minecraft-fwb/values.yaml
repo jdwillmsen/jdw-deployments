@@ -1131,12 +1131,23 @@ agent:
   # outage is exactly the case where a client already holding a session could
   # not have noticed, since every session that mattered predated the fault.
   #
-  # Six hours: four proofs a day, against a failure measured in hours of
-  # nobody being able to join. The cost is the agent leaving chat for the
-  # length of a reconnect, four times a day, which is the same gap a
-  # deployment already causes. Zero switches it off; the agent rejects
-  # anything under ten reconnect ceilings.
-  sessionRecycleMs: 21600000
+  # Six hours is the intended setting: four proofs a day, against a failure
+  # measured in hours of nobody being able to join, at the cost of the agent
+  # leaving chat for the length of a reconnect four times a day -- the same gap
+  # a deployment already causes.
+  #
+  # Shipped at 0 for one unverified step. This server holds a session open
+  # after a client leaves (playerIdleTimeout is 0, and freeing an account has
+  # needed `tools/mc run kick` before), so a rejoin by the same account six
+  # hours later may be refused as already connected. The rolling handover does
+  # the same rejoin and works, but it happens while the outgoing pod is
+  # leaving rather than into a session the server may still think is live, so
+  # it is not the same test.
+  #
+  # Turn it on once that rejoin has been watched once. The alert that covers
+  # the failure ships with it: see JdwillmsenMinecraftAgentSessionStale, which
+  # fires when no session has reached spawn in two and a half cycles.
+  sessionRecycleMs: 0
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
   # other players see.

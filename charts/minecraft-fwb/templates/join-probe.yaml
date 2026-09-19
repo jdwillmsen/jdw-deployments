@@ -15,6 +15,38 @@
 # before any credential is examined. What it cannot prove is that a real
 # account can authenticate and spawn; agent.sessionRecycleMs is the half that
 # covers that.
+# The probe's own way to the server, which exists so the check does not depend
+# on the thing it is checking.
+#
+# The subchart's Service drops the pod from its endpoints the moment readiness
+# fails, and readiness is an `mc-monitor status-bedrock` RakNet ping -- so a
+# probe dialling that Service would find no endpoint at all precisely when the
+# server is in trouble, and would report "unreachable" for every cause alike.
+# Worse, under NetherNet that readiness is switched off and left failing on
+# purpose (see minecraft-bedrock.startupProbe in values.yaml), which would make
+# this a permanent critical page about a healthy server.
+#
+# publishNotReadyAddresses is the same answer nethernet-service.yaml already
+# gives, for the same reason: this route has to reach the pod whatever the
+# kubelet thinks of it, so that the probe's own verdict is the one that counts.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "joinProbe.name" . }}-target
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "joinProbe.name" . }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: {{ include "backup.serverStatefulSet" . }}
+  ports:
+    - name: bedrock
+      protocol: UDP
+      port: {{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" }}
+      targetPort: {{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -45,11 +77,12 @@ spec:
           command: ["/joinprobe"]
           args:
             - "-address"
-            # The in-cluster Service, not the NodePort. A probe through the
-            # node address would also be testing HAProxy and the DNAT rules,
-            # which have their own failure modes and their own checks; this
-            # one is about the server.
-            - "{{ include "bot.serverHost" . }}:{{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" }}"
+            # The headless Service above rather than the subchart's, and
+            # in-cluster rather than the NodePort: a probe through the node
+            # address would also be testing HAProxy and the DNAT rules, which
+            # have their own failure modes and their own checks. This one is
+            # about whether the server will start a session.
+            - "{{ include "joinProbe.name" . }}-target.{{ .Release.Namespace }}.svc.cluster.local:{{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" }}"
             - "-interval"
             - {{ .Values.joinProbe.interval | quote }}
             - "-listen"
@@ -145,6 +178,35 @@ spec:
         # `== 0` never matches a series that has stopped being produced, and a
         # probe that is not running is the case where nothing at all is
         # watching joinability.
+{{- if .Values.agent.sessionRecycleMs }}
+        # The recycle's own failure mode, which nothing else can see. TPS and
+        # chat both flow over the console bridge, so an agent that dropped its
+        # Bedrock session and never got back in leaves every other series in
+        # this namespace green -- the exact silence the rest of this rule
+        # group exists to remove.
+        #
+        # The window is two and a half recycles: one missed cycle is a
+        # reconnect that took its time, three would be an outage nobody was
+        # told about.
+        - alert: JdwillmsenMinecraftAgentSessionStale
+          expr: |
+            (time() - mc_agent_session_established_timestamp_seconds{namespace="{{ .Release.Namespace }}"})
+              > {{ div (mul .Values.agent.sessionRecycleMs 5) 2000 }}
+          for: 10m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB agent has not re-established its session
+            description: >-
+              The agent recycles its Bedrock session every
+              {{ div .Values.agent.sessionRecycleMs 3600000 }}h so that a real
+              account joining is measured rather than assumed, and it has not
+              reached spawn for more than two and a half cycles. Either the
+              reconnect is failing or the recycle stopped running; the agent
+              answers over the console bridge either way, so chat and TPS will
+              look normal.
+{{- end }}
         - alert: JdwillmsenMinecraftJoinProbeMissing
           expr: absent(mc_joinprobe_joinable{namespace="{{ .Release.Namespace }}"})
           for: 15m
