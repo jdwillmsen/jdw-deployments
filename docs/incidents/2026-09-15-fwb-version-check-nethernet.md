@@ -208,7 +208,7 @@ stopped loading chunks for 104 minutes and bought nothing.
 | 4 | Set `transport` explicitly in the chart so a restored or fresh world cannot come up NetherNet-only and invisible | prevent | Open — needs an image whose property definitions include it |
 | 5 | Decide what this fleet does when RakNet is actually removed | prevent | Open, and no longer urgent. The NetherNet Service and probe stay in the chart disabled, and the README records what a second attempt needs — starting with a verified client join before anything is taken offline |
 | 6 | Vendor the workload template so probes do not assume a transport | detect | Open, not urgent. The subchart's RakNet probes went green the moment the transport was reverted; this only bites on a future NetherNet attempt |
-| 7 | Alert on "reachable but unjoinable" — every existing check passed throughout this outage | detect | **Open, and the one that matters.** Untouched by any of tonight's work |
+| 7 | Alert on "reachable but unjoinable" — every existing check passed throughout this outage | detect | **Done 2026-09-19.** Two checks: a `join-probe` Deployment performing the pre-login handshake every minute, and the agent recycling its own session every six hours so a real account reaching spawn is measured rather than assumed. `JdwillmsenMinecraftUnjoinable` fires on the first, `JdwillmsenMinecraftAgentSessionStale` on the second. Reproduced against the live server at `stage=refused, play_status=2` — this outage's exact conditions — and the runbook for it is `docs/minecraft-fwb-joinability-runbook.md` |
 | 8 | Require a verified client join before changing transport, in the README | prevent | Done — see "NetherNet, and why this server is not on it" |
 
 ## Assumptions invalidated
@@ -221,8 +221,10 @@ stopped loading chunks for 104 minutes and bought nothing.
 - A client connecting proves the server is joinable. Every client that
   connected during this outage was a Go library client implementing RakNet
   itself; none of them could have detected what was wrong.
-- The monitoring covers "can players play". It covers "does the server answer a
-  RakNet ping", which stayed true for the whole outage.
+- The monitoring covers "can players play". It covered "does the server answer a
+  RakNet ping", which stayed true for the whole outage. As of 2026-09-19 a probe
+  asks the next question — will the server start a session — and the agent's own
+  session recycle asks the one after it, whether a real account can reach spawn.
 - A vendor's own startup banner describes the release it ships in. 1.26.51
   states NetherNet is "the only supported transport type" and that players
   cannot connect without it. Retail clients joined over RakNet on that exact
