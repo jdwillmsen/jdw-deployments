@@ -1131,31 +1131,22 @@ agent:
   # outage is exactly the case where a client already holding a session could
   # not have noticed, since every session that mattered predated the fault.
   #
-  # Six hours is the intended setting: four proofs a day, against a failure
-  # measured in hours of nobody being able to join, at the cost of the agent
-  # leaving chat for the length of a reconnect four times a day -- the same gap
-  # a deployment already causes.
+  # Six hours: four proofs a day, against a failure measured in hours of nobody
+  # being able to join, at the cost of the agent leaving chat for the length of
+  # a reconnect four times a day -- the same gap a deployment already causes.
   #
-  # Shipped at 0 for one unverified step. This server holds a session open
-  # after a client leaves (playerIdleTimeout is 0, and freeing an account has
-  # needed `tools/mc run kick` before), so a rejoin by the same account six
-  # hours later may be refused as already connected. The rolling handover does
-  # the same rejoin and works, but it happens while the outgoing pod is
-  # leaving rather than into a session the server may still think is live, so
-  # it is not the same test.
+  # It ran at one hour first, because one step was unverified: this server
+  # holds a session open after a client leaves (playerIdleTimeout is 0, and
+  # freeing an account has needed `tools/mc run kick` before), so a rejoin by
+  # the same account might have been refused as already connected. It is not.
+  # The first recycle, 2026-09-19 06:27:50 UTC, credited two players' open
+  # sessions, dropped, and was spawned again 10.2 seconds later on the same
+  # account.
   #
-  # One hour while that rejoin is being watched, rather than the six it wants
-  # to settle at. An hour is the shortest cadence the agent will accept (ten
-  # reconnect ceilings) and it puts the first recycle inside the window
-  # somebody is actually looking at it, which is the whole point of the
-  # exercise: the concern is a single event, and waiting six hours to observe
-  # it once only makes the observation less likely to happen.
-  #
-  # Raise to 21600000 once a cycle has been seen reconnecting cleanly. If one
-  # does not, JdwillmsenMinecraftAgentSessionStale fires at two and a half
-  # cycles -- two and a half hours here rather than fifteen, which is the
-  # other reason to start short.
-  sessionRecycleMs: 3600000
+  # A recycle that does not come back raises
+  # JdwillmsenMinecraftAgentSessionStale after two and a half cycles -- fifteen
+  # hours at this cadence.
+  sessionRecycleMs: 21600000
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
   # other players see.
