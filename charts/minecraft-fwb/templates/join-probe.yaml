@@ -160,8 +160,16 @@ spec:
           # The alert the 2026-09-15 outage did not have. Critical rather than
           # warning: a server nobody can join is down as far as a player is
           # concerned, whatever its pod status says.
-          expr: mc_joinprobe_joinable{namespace="{{ .Release.Namespace }}"} == 0
-          for: {{ .Values.joinProbe.alert.for }}
+          #
+          # A majority of the window rather than `== 0` held by `for`, which
+          # needs every evaluation to fail and so cannot fire on a server that
+          # refuses most joins and accepts the occasional one. The tick-rate
+          # rule had exactly that defect and never fired through a real
+          # degradation; the shape is cheap to get right here before it
+          # matters.
+          expr: |
+            avg_over_time(mc_joinprobe_joinable{namespace="{{ .Release.Namespace }}"}[{{ .Values.joinProbe.alert.for }}]) < 0.5
+          for: 2m
           labels:
             severity: critical
             namespace: {{ .Release.Namespace }}

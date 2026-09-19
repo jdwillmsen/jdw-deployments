@@ -30,13 +30,24 @@ spec:
           # Plain `and` rather than `and on(...)`: both series come from the
           # agent's one metrics endpoint and carry identical labels, so the
           # exact match is free and says so.
+          #
+          # The window lives in avg_over_time rather than in `for`, and that is
+          # the whole difference between an alert and a decoration. An
+          # instantaneous comparison held by `for` needs *every* evaluation
+          # under the threshold, and this server's tick rate oscillates: over
+          # the twelve hours to 2026-09-19 05:25 it was under 17 for 171
+          # minutes, in 51 separate spans, not one of which lasted the 30 the
+          # `for` required. It never fired, with the server sitting at 12-15
+          # TPS. The same window as an average produced two spans over 30
+          # minutes, which is what a degraded server should look like to a
+          # rule.
           expr: |
-            mc_agent_server_tps{namespace="{{ .Release.Namespace }}"} < {{ .Values.tickRateAlert.threshold }}
+            avg_over_time(mc_agent_server_tps{namespace="{{ .Release.Namespace }}"}[{{ .Values.tickRateAlert.window }}])
+              < {{ .Values.tickRateAlert.threshold }}
               and
             (time() - mc_agent_tps_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"}) < {{ .Values.tickRateAlert.freshnessSeconds }}
-          # Long enough that a chunk-loading spike, a backup's save hold or a
-          # census scan cannot page; far shorter than the day and a half the
-          # last decay went unnoticed.
+          # Short, because the averaging window above is already the patience.
+          # This only stops a single evaluation at the boundary from paging.
           for: {{ .Values.tickRateAlert.for }}
           labels:
             severity: warning
@@ -44,9 +55,9 @@ spec:
           annotations:
             summary: Minecraft FWB is running below {{ .Values.tickRateAlert.threshold }} TPS
             description: >-
-              Server tick rate has been under {{ .Values.tickRateAlert.threshold }}
-              of 20 for {{ .Values.tickRateAlert.for }}, so mobs, redstone and farms
-              are all running slow. A restart is the known remedy for the decay this
+              Server tick rate has averaged under {{ .Values.tickRateAlert.threshold }}
+              of 20 across {{ .Values.tickRateAlert.window }}, so mobs, redstone and
+              farms are all running slow. A restart is the known remedy for the decay this
               server shows on Bedrock 1.26.51.1; the scheduled restart does it nightly,
               and doing it early is `send-command stop` through the server console --
               never a pod delete.
