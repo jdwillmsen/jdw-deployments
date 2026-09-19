@@ -400,20 +400,24 @@ When the alert fires — or when someone just says they cannot get in —
 walks each stage the probe can report, and separates "server down" from "server
 up but unjoinable", which look identical from a player's chair.
 
-**`agent.sessionRecycleMs`** covers that half, and **ships off (`0`)**. Set to
-six hours the agent drops its own session and reconnects four times a day, and
-each cycle is a real client authenticating and reaching spawn —
+**`agent.sessionRecycleMs`** covers that half. It is currently **one hour**,
+which is the shortest cadence the agent accepts and a deliberately temporary
+setting: it puts the first few recycles where someone is watching them. Six
+hours is where it belongs once they have been. Each cycle is a real client
+authenticating and reaching spawn —
 `mc_agent_session_established_timestamp_seconds` is when that last worked, and
 `JdwillmsenMinecraftAgentSessionStale` fires if two and a half cycles pass
 without one. Open player sessions are credited before the drop, the way a
 leadership handover does, so nobody loses playtime to it.
 
-The reason it is off: this server holds a session open after a client leaves
+What is being watched: this server holds a session open after a client leaves
 (`playerIdleTimeout: 0`, and freeing an account has needed `tools/mc run kick`
-before), so a rejoin by the same account six hours later may be refused as
-already connected. The rolling handover performs the same rejoin and works, but
-it does so while the outgoing pod is leaving rather than into a session the
-server may still believe is live. Watch one recycle before turning it on.
+before), so a rejoin by the same account may be refused as already connected.
+The rolling handover performs the same rejoin and works, but it does so while
+the outgoing pod is leaving rather than into a session the server may still
+believe is live. A recycle that never comes back raises
+`JdwillmsenMinecraftAgentSessionStale` after two and a half cycles, and
+`sessionRecycleMs: 0` switches the whole thing off.
 
 ### Restoring a backup
 
