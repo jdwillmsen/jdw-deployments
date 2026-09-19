@@ -1601,10 +1601,21 @@ tickRateAlert:
   # warning.
   threshold: 17
 
-  # Thirty minutes. A backup's save hold, a census scan or a chunk-loading
-  # spike all clear well inside it, and the failure being caught here takes
-  # days rather than minutes to develop.
-  for: 30m
+  # Thirty minutes of *average* tick rate, which is where the patience in this
+  # rule lives. A backup's save hold, a census scan or a chunk-loading spike
+  # all clear well inside it, and the failure being caught here takes days
+  # rather than minutes to develop.
+  #
+  # An average rather than requiring every sample under the threshold, because
+  # this server's tick rate oscillates. Measured over the twelve hours to
+  # 2026-09-19 05:25, while it sat at 12-15 TPS: 171 minutes under 17, in 51
+  # separate spans, longest 8 minutes. A rule needing 30 unbroken minutes saw
+  # nothing at all. The same window averaged gives two spans over 30 minutes.
+  window: 30m
+
+  # Short on purpose: the averaging window above is the patience, and this only
+  # stops a single evaluation at the boundary from paging.
+  for: 5m
 
   # How recent a reading has to be to count. The agent samples the game clock
   # once a minute and Prometheus scrapes every 60s, so five minutes is several
