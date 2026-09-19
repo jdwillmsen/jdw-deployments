@@ -134,6 +134,10 @@ stays quiet.
 {{ .Release.Name }}-census
 {{- end -}}
 
+{{- define "joinProbe.name" -}}
+{{ .Release.Name }}-join-probe
+{{- end -}}
+
 {{- define "census.metricsConfigMap" -}}
 {{ .Release.Name }}-census-metrics
 {{- end -}}

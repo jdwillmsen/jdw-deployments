@@ -64,6 +64,14 @@ spec:
               value: {{ .Values.agent.bridge.timeoutMs | quote }}
             - name: HTTP_ADDR
               value: ":{{ .Values.agent.metrics.port }}"
+{{- if .Values.agent.sessionRecycleMs }}
+            # Drops and re-establishes the Bedrock session on this interval,
+            # so that "a real account can still join" is measured rather than
+            # assumed between incidents. The agent leaves chat for the length
+            # of a reconnect each time -- the same gap a deployment causes.
+            - name: SESSION_RECYCLE_MS
+              value: {{ .Values.agent.sessionRecycleMs | quote }}
+{{- end }}
             # !online, !version and !backup read these two exporters directly.
             # Full paths, not hosts: the backup exporter serves /metrics.txt
             # while mc-monitor serves /metrics, and assembling that in code

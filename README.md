@@ -359,6 +359,48 @@ since a comparison never matches a series nobody is producing. Replayed against
 the 2026-09-16 decay the first rule would have fired at 20:15 that evening,
 about thirteen hours in — the real thing went unnoticed for two days.
 
+### Knowing whether players can actually join
+
+Every check in this chart passed for the whole of the 2026-09-15 outage while
+nobody could join. The RakNet ping answered, `mc-monitor` reported the server
+online with players on it, and all three kubelet probes were green — the server
+was a version behind its clients and refuses a mismatched protocol *before*
+login, which is past everything being checked. The two clients that were
+connected had joined before the fault and speak RakNet themselves, so their
+presence argued the server was fine.
+
+Two things now ask the question those checks could not.
+
+**`joinProbe`** runs `/joinprobe` from the agent image as its own Deployment. It
+performs the pre-login handshake once a minute against the in-cluster Service —
+not the NodePort, which would also be testing HAProxy and the DNAT rules — and
+publishes how far it got:
+
+```bash
+kubectl exec -n <namespace> deploy/<release>-join-probe -- \
+  wget -qO- localhost:9103/metrics | grep mc_joinprobe
+```
+
+`mc_joinprobe_joinable` is the one to read; `mc_joinprobe_stage` says where it
+stopped (0 unreachable, 1 answered the ping, 2 refused the session) and
+`mc_joinprobe_play_status` carries the server's own reason for a refusal, where
+`2` is the version skew from September. `JdwillmsenMinecraftUnjoinable` fires
+after ten minutes of that, which clears both an ordinary restart and the
+nightly one with its countdown.
+
+It needs no Microsoft account, because the protocol verdict arrives before any
+credential is examined. What it cannot prove is that a real client can
+authenticate and spawn.
+
+**`agent.sessionRecycleMs`** covers that half. The agent holds a real account,
+so every six hours it drops its own session and reconnects, and each cycle is a
+real client authenticating and reaching spawn —
+`mc_agent_session_established_timestamp_seconds` is when that last worked. The
+cost is the agent leaving chat for the length of a reconnect, four times a day,
+which is the same gap a deployment already causes; open player sessions are
+credited before the drop, the way a handover does, so nobody loses playtime to
+it. Set it to `0` to switch it off.
+
 ### Restoring a backup
 
 The chart also carries a restore mechanism alongside the backup CronJob:

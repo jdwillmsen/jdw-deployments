@@ -1,0 +1,161 @@
+{{- if .Values.joinProbe.enabled }}
+# Asks the one question nothing else here asks: can a client still start a
+# session?
+#
+# Every check this chart runs passed for the whole of the 2026-09-15 outage
+# while no player could join. The RakNet ping answered, mc-monitor reported
+# the server online with players on it, and all three kubelet probes were
+# green -- the server was a version behind its clients and refuses a
+# mismatched protocol before login, which is past everything being checked.
+# The two clients that were connected had joined before the fault and speak
+# RakNet themselves, so their presence argued the server was fine.
+#
+# This performs the pre-login handshake, which is exactly the step that
+# failed, and needs no Xbox Live account because the protocol verdict comes
+# before any credential is examined. What it cannot prove is that a real
+# account can authenticate and spawn; agent.sessionRecycleMs is the half that
+# covers that.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "joinProbe.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "joinProbe.name" . }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: {{ include "joinProbe.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "joinProbe.name" . }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: joinprobe
+          image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
+          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          command: ["/joinprobe"]
+          args:
+            - "-address"
+            # The in-cluster Service, not the NodePort. A probe through the
+            # node address would also be testing HAProxy and the DNAT rules,
+            # which have their own failure modes and their own checks; this
+            # one is about the server.
+            - "{{ include "bot.serverHost" . }}:{{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" }}"
+            - "-interval"
+            - {{ .Values.joinProbe.interval | quote }}
+            - "-listen"
+            - ":{{ .Values.joinProbe.port }}"
+{{- if .Values.joinProbe.protocol }}
+            - "-protocol"
+            - {{ .Values.joinProbe.protocol | quote }}
+{{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+{{- toYaml .Values.joinProbe.resources | nindent 12 }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.joinProbe.port }}
+          # Liveness only, and deliberately no readiness gate on the probe
+          # succeeding: a server nobody can join must leave this pod Ready and
+          # publishing zeros. A pod that goes NotReady stops being scraped,
+          # and an alert cannot fire on a series nobody is collecting.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "joinProbe.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "joinProbe.name" . }}
+spec:
+  selector:
+    app: {{ include "joinProbe.name" . }}
+  ports:
+    - name: metrics
+      port: {{ .Values.joinProbe.port }}
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "joinProbe.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "joinProbe.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "joinProbe.name" . }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s
+{{- if .Values.joinProbe.alert.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "joinProbe.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-joinability
+      rules:
+        - alert: JdwillmsenMinecraftUnjoinable
+          # The alert the 2026-09-15 outage did not have. Critical rather than
+          # warning: a server nobody can join is down as far as a player is
+          # concerned, whatever its pod status says.
+          expr: mc_joinprobe_joinable{namespace="{{ .Release.Namespace }}"} == 0
+          for: {{ .Values.joinProbe.alert.for }}
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB cannot be joined
+            description: >-
+              The join probe has not completed a session handshake for
+              {{ .Values.joinProbe.alert.for }}. mc_joinprobe_stage says how far it
+              got (0 unreachable, 1 answered the ping, 2 refused the session) and
+              mc_joinprobe_play_status carries the server's own reason when it
+              refused -- 2 means the server is older than the client it was asked
+              about, which is the version skew that locked everyone out in
+              September 2026.
+        # `== 0` never matches a series that has stopped being produced, and a
+        # probe that is not running is the case where nothing at all is
+        # watching joinability.
+        - alert: JdwillmsenMinecraftJoinProbeMissing
+          expr: absent(mc_joinprobe_joinable{namespace="{{ .Release.Namespace }}"})
+          for: 15m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB join probe is not reporting
+            description: >-
+              No mc_joinprobe_joinable series for 15 minutes, so the alert above
+              cannot fire whatever the server is doing. Check the join-probe
+              Deployment and its ServiceMonitor.
+{{- end }}
+{{- end }}
