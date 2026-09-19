@@ -395,6 +395,11 @@ It needs no Microsoft account, because the protocol verdict arrives before any
 credential is examined. What it cannot prove is that a real client can
 authenticate and spawn.
 
+When the alert fires — or when someone just says they cannot get in —
+[docs/minecraft-fwb-joinability-runbook.md](docs/minecraft-fwb-joinability-runbook.md)
+walks each stage the probe can report, and separates "server down" from "server
+up but unjoinable", which look identical from a player's chair.
+
 **`agent.sessionRecycleMs`** covers that half, and **ships off (`0`)**. Set to
 six hours the agent drops its own session and reconnects four times a day, and
 each cycle is a real client authenticating and reaching spawn —
