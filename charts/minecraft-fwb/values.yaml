@@ -1112,8 +1112,42 @@ agent:
     # -metrics-file, which is what census.metrics above needs: the counts the
     # nightly scan already computes, written as a Prometheus payload instead
     # of only into a Job log that is evicted within three days.
-    tag: "0.17.0"
+    #
+    # 0.18.0 carries /joinprobe for the Deployment below, and teaches the
+    # agent SESSION_RECYCLE_MS -- the two halves of "can a client still start
+    # a session", which nothing here asked before. The recycle is the one that
+    # changes the agent's own behaviour: it drops its session on a schedule,
+    # crediting everyone's playtime first, so the reconnect that follows is a
+    # measurement rather than an outage.
+    tag: "0.18.0"
     pullPolicy: IfNotPresent
+
+  # Drops and re-establishes the agent's own Bedrock session this often.
+  #
+  # The join probe below stops one step short of an account: it proves the
+  # server will start a session, not that a real client can authenticate and
+  # spawn. The agent holds an account, so recycling its session turns it into
+  # the only thing that periodically proves the whole path -- and the 09-15
+  # outage is exactly the case where a client already holding a session could
+  # not have noticed, since every session that mattered predated the fault.
+  #
+  # Six hours is the intended setting: four proofs a day, against a failure
+  # measured in hours of nobody being able to join, at the cost of the agent
+  # leaving chat for the length of a reconnect four times a day -- the same gap
+  # a deployment already causes.
+  #
+  # Shipped at 0 for one unverified step. This server holds a session open
+  # after a client leaves (playerIdleTimeout is 0, and freeing an account has
+  # needed `tools/mc run kick` before), so a rejoin by the same account six
+  # hours later may be refused as already connected. The rolling handover does
+  # the same rejoin and works, but it happens while the outgoing pod is
+  # leaving rather than into a session the server may still think is live, so
+  # it is not the same test.
+  #
+  # Turn it on once that rejoin has been watched once. The alert that covers
+  # the failure ships with it: see JdwillmsenMinecraftAgentSessionStale, which
+  # fires when no session has reached spawn in two and a half cycles.
+  sessionRecycleMs: 0
 
   # Same distinction as bot.username: the token-cache key, not the gamertag
   # other players see.
@@ -1286,6 +1320,51 @@ netherNet:
     interval: 30s
     target: 192.168.1.87:31134
     blackboxHost: platform-blackbox-exporter-prometheus-blackbox-exporter.monitoring.svc.cluster.local:9115
+
+# Asks whether a client can still start a session, which is the one question
+# nothing else in this chart asks.
+#
+# Every check here passed for the whole of the 2026-09-15 outage while nobody
+# could join: the RakNet ping answered, mc-monitor reported players online, and
+# all three kubelet probes were green. The server was a version behind its
+# clients and refuses a mismatched protocol before login begins -- a step past
+# everything being checked -- and the only clients connected had joined before
+# the fault and speak RakNet themselves.
+joinProbe:
+  # Needs an agent image carrying /joinprobe, which is 0.18.0 and later.
+  enabled: true
+
+  # A minute. The check is one ping and one handshake against a server on the
+  # same node, so the cost is noise; what it buys is that an outage is noticed
+  # in minutes rather than by the first player who tries.
+  interval: 1m
+
+  # 9101 is the backup exporter, 9102 the census exporter.
+  port: 9103
+
+  # The protocol number the handshake announces. Empty means "whatever the
+  # server advertises", which asks whether the server is consistent with
+  # itself. Setting a number asks whether a client built against *that*
+  # version could join, which is the sharper question -- and the one the
+  # September outage turned on -- but it has to be maintained by hand against
+  # Mojang's releases, and a stale number here would page about a version
+  # nobody runs any more.
+  protocol: ""
+
+  alert:
+    enabled: true
+    # Ten minutes. A server restart takes about a minute and the nightly
+    # scheduled restart takes two with its countdown, so this clears both
+    # without ever paging for them; the failure it does catch lasted hours.
+    for: 10m
+
+  resources:
+    requests:
+      memory: 32Mi
+      cpu: 10m
+    limits:
+      memory: 128Mi
+      cpu: 100m
 
 # Reads the world and reports which 9x9-chunk regions have hit Bedrock's mob
 # spawn cap -- the question "why is nothing spawning near my base" turned into
