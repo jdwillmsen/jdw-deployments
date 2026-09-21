@@ -3,24 +3,46 @@
   "description": [
     "platformCommit: Renovate's own git commits are unsigned and authored as renovate@whitesourcesoftware.com, which is not a verified address on this account -- so verify-pr-signatures rejected every Renovate PR on both counts, and each one had to be re-signed and force-pushed by hand before it could merge. 'enabled' makes Renovate create commits through the GitHub API instead, which signs them itself and authors them as the token's user, so they verify without anyone touching the branch."
   ],
-  "extends": ["config:recommended"],
+  "extends": [
+    "config:recommended"
+  ],
   "platformCommit": "enabled",
   "packageRules": [
     {
+      "description": "GitHub Actions only, and deliberately not the container images. Merging this repository is deploying -- the Application auto-syncs with selfHeal -- so an automerge here has to be something that cannot change a rendered manifest. A workflow file is exactly that: helm renders the same output before and after, so the sync is a no-op and nothing in the cluster moves. Every image tag fails that test, including the agent and console-bridge ones that are not otherwise excluded: they recreate a pod, and an unattended pod recreation is what cost ~29 MB of world data on 2026-08-30.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "automerge": true
+    },
+    {
       "description": "PR-only, not auto-merged. The original reasoning was that clients need a current server, with RollingUpdate and the nightly backup as the safety net -- but image.tag only versions itzg's tooling, not the server binary, so this never delivered a game version at all. What kept the server current was the pod restart it happened to cause, and versionCheck now does that deliberately every hour with player notice. Meanwhile RollingUpdate is the mechanism that recreates the pod, and an unattended recreation is what migrated the world PVC and cost ~29 MB on 2026-08-30 -- so the cited safety net was the hazard, and a backup is a recovery path rather than a guard. Merging these by hand costs nothing in client connectivity and keeps pod recreations attended. See docs/incidents/2026-08-30-fwb-world-data-loss.md.",
-      "matchPackageNames": ["itzg/minecraft-bedrock-server"],
+      "matchPackageNames": [
+        "itzg/minecraft-bedrock-server"
+      ],
       "automerge": false
     },
     {
       "description": "kubectl/bash toolbox and the backup exporter's busybox -- version drift here has no client-compatibility pressure, so these stay PR-only for a human to merge.",
-      "matchPackageNames": ["alpine/k8s", "busybox"],
+      "matchPackageNames": [
+        "alpine/k8s",
+        "busybox"
+      ],
       "groupName": "utility images",
       "automerge": false
     },
     {
       "description": "AFK bot image bakes in protocol data for exactly one Bedrock version and must move in lockstep with a deliberate, hand-reviewed server bump -- never on its own.",
-      "matchPackageNames": ["ghcr.io/jdwillmsen/minecraft-afk-bot"],
+      "matchPackageNames": [
+        "ghcr.io/jdwillmsen/minecraft-afk-bot"
+      ],
       "enabled": false
     }
-  ]
+  ],
+  "platformAutomerge": true
 }
