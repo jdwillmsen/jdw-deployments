@@ -1,12 +1,13 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
-    "platformCommit: Renovate's own git commits are unsigned and authored as renovate@whitesourcesoftware.com, which is not a verified address on this account -- so verify-pr-signatures rejected every Renovate PR on both counts, and each one had to be re-signed and force-pushed by hand before it could merge. 'enabled' makes Renovate create commits through the GitHub API instead, which signs them itself and authors them as the token's user, so they verify without anyone touching the branch."
+    "Renovate runs as the GitHub App on this account, not as a self-hosted workflow. That is what makes its commits signed: an App installation token creates them through the API and GitHub signs them with its web-flow key, which verify-pr-signatures requires. A PAT gets attribution but no signature, which is why the self-hosted setup needed every PR re-signed by hand.",
+    "platformCommit is gone with it. It moved the committer off renovate@whitesourcesoftware.com and onto this account, which fixed attribution and left the signature failing -- the App fixes both, and the option does nothing for an App.",
+    "The shared jdwlabs preset supplies the schedule, limits, labels and vulnerability handling, so those are not restated here. Only the rules that are specific to this repository stay below: merging this repo is deploying."
   ],
   "extends": [
-    "config:recommended"
+    "github>jdwlabs/.github"
   ],
-  "platformCommit": "enabled",
   "packageRules": [
     {
       "description": "GitHub Actions only, and deliberately not the container images. Merging this repository is deploying -- the Application auto-syncs with selfHeal -- so an automerge here has to be something that cannot change a rendered manifest. A workflow file is exactly that: helm renders the same output before and after, so the sync is a no-op and nothing in the cluster moves. Every image tag fails that test, including the agent and console-bridge ones that are not otherwise excluded: they recreate a pod, and an unattended pod recreation is what cost ~29 MB of world data on 2026-08-30.",
