@@ -317,6 +317,33 @@ minecraft-bedrock:
       ports:
         - name: bridge-http
           containerPort: 8766
+      # Liveness only, and deliberately not readiness, though the bridge serves
+      # /readyz and it is the more informative endpoint.
+      #
+      # This is a sidecar in the server's own pod, and five Services select
+      # that pod -- minecraft-bedrock and nethernet on the game port,
+      # join-probe-target, mc-monitor, console-bridge. Readiness is a property
+      # of the whole pod, so a bridge that lost its console would take the game
+      # server out of every one of them and disconnect everybody, to report a
+      # fault in a sidecar nobody was playing through. The console path being
+      # down is worth an alert, not an eviction.
+      #
+      # /healthz answers for the process rather than the console -- it stays
+      # green while the console is down, because restarting cannot fix a server
+      # that has not opened its console yet. That makes it exactly right for
+      # liveness: it fires when the HTTP server itself has wedged, which a
+      # restart does fix, and stays quiet for the outage shapes it would only
+      # make worse.
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: bridge-http
+        # Generous: the bridge reconnects to the console with backoff, and a
+        # restart during that is churn rather than repair.
+        initialDelaySeconds: 15
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 4
       volumeMounts:
         # Read-only: the bridge only ever reads permissions.json/allowlist.json
         # from the world volume, never writes to it. It is the same PVC the
