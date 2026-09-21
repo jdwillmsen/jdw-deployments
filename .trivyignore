@@ -1,0 +1,49 @@
+# Trivy findings this repository has decided against, with the decision.
+#
+# Only rules whose answer is the same for every workload here belong in this
+# file. A finding that could be right somewhere in the chart is dismissed on
+# the alert instead, so it still stops a pull request when it means something.
+#
+# The reason this file exists rather than a growing pile of dismissals: a
+# dismissal is per alert instance, and editing a template raises a fresh
+# instance of everything that was already dismissed on it. Touching one
+# CronJob re-raised six findings that had been triaged a week earlier, so the
+# toil scales with how often the chart is edited and trains whoever is doing it
+# to dismiss without reading.
+
+# Runs with UID <= 10000
+#
+# Every workload here sets runAsUser 1000 with runAsNonRoot true,
+# seccompProfile RuntimeDefault, allowPrivilegeEscalation false and
+# capabilities drop ALL. Trivy wants a uid above 10000 so a container uid
+# cannot collide with a host user account.
+#
+# These are single-tenant nodes with no such accounts, and 1000 is chosen to
+# match the ownership of the world and backup PersistentVolumes. Raising it
+# would mean rewriting ownership on volumes holding a live Minecraft world for
+# no change in what the container can reach.
+KSV-0020
+
+# Runs with GID <= 10000
+#
+# Same decision as KSV-0020. fsGroup 2000 is what makes the world and backup
+# claims readable by the non-root uid above; the number is a consequence of the
+# volumes, not a default nobody looked at.
+KSV-0021
+
+# Deliberately NOT ignored, and dismissed per instance instead:
+#
+#   KSV-0125  restrict images to trusted registries. Everything here is
+#             ghcr.io/jdwillmsen, which Trivy's default list does not know --
+#             but a template pulling from a registry nobody controls is exactly
+#             what this rule should stop, so it stays able to.
+#
+#   KSV-0049  manage configmaps. The backup job's grant is scoped by
+#             resourceNames to the single metrics ConfigMap it writes, and only
+#             `create` is unscoped because Kubernetes RBAC cannot scope it. An
+#             unscoped grant somewhere else would be a real finding.
+#
+#   KSV-0053  exec into pods. Inherent: Bedrock has no RCON, so pods/exec is
+#             the only route to the server console.
+#
+#   KSV-0014  read-only root filesystem. Fixed rather than ignored, in #113.
