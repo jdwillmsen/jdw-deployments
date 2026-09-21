@@ -1573,8 +1573,9 @@ scheduledRestart:
   #   countdown       leadSeconds + 6 announce timeouts   = 210
   #   stop                                  timeout       =  30
   #   restart poll   120 + 10 (get) + 3 (sleep)           = 133
+  #   statistics      3 x (15 exec + 5 sleep)              =  60
   #
-  # About 425s of worst case. 600 leaves margin without letting a wedged run
+  # About 485s of worst case. 600 leaves margin without letting a wedged run
   # sit long enough to matter -- and with concurrencyPolicy Forbid, a run that
   # never ends would otherwise suspend every future restart silently.
   timeoutSeconds: 600

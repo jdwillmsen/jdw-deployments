@@ -79,6 +79,21 @@ if [[ "$1" == "exec" ]]; then
     exit 0
   fi
   [[ "$*" == *"tellraw"* ]] && { echo "__TELLRAW__ $*" >> "$STATE_DIR/calls"; exit 0; }
+  # The statistics file the server writes as it shuts down. Unset stands in a
+  # realistic file; "none" stages a read that fails, as it would on a
+  # container that is not yet accepting exec.
+  if [[ "$*" == *"packet-statistics.txt"* ]]; then
+    [[ "${FAKE_STATS:-}" == "none" ]] && exit 1
+    printf '%s\n' "${FAKE_STATS:-Network Stats for the last 86400 seconds:
+
+Total Sent Spatial Packets: 1000
+Total Requested to Send Spatial Packets: 3000
+
+Total Sent: 5000, 0B (1.00MB)
+111 MoveActorDeltaPacket              1.00MB, Num 4000, Avg 16B
+39  SetActorDataPacket                0.10MB, Num 500, Avg 17B}"
+    exit 0
+  fi
   exit 0
 fi
 if [[ "$1" == "get" ]]; then
@@ -192,6 +207,22 @@ assert_contains "pod recreation is reported as a failure" "pod was recreated" \
 # the success it is.
 assert_contains "same uid with a higher count is a success" "restartCount 3 -> 4" \
   FAKE_STATE="uid-1 3" FAKE_STATE_AFTER="uid-1 4"
+
+# The statistics the server wrote on its way down are kept, as one structured
+# line, because nothing else keeps them -- the file is overwritten at every
+# shutdown and the backups copy only the world. The counters are asserted by
+# value, not by presence, so a parser that silently drops them fails here.
+assert_contains "the stopped process's network statistics are recorded" '"seconds": 86400' \
+  FAKE_STATE="uid-1 3" FAKE_STATE_AFTER="uid-1 4"
+assert_contains "the replication counters are parsed" '"move_actor_delta": 4000' \
+  FAKE_STATE="uid-1 3" FAKE_STATE_AFTER="uid-1 4"
+
+# Statistics are a by-product of a restart that has already succeeded. A read
+# that fails must say so and must not turn that success into a failed run.
+assert_contains "unreadable statistics are reported" "packet_statistics_unavailable" \
+  FAKE_STATE="uid-1 3" FAKE_STATE_AFTER="uid-1 4" FAKE_STATS=none
+assert_missing "unreadable statistics do not fail the run" '"event":"failed"' \
+  FAKE_STATE="uid-1 3" FAKE_STATE_AFTER="uid-1 4" FAKE_STATS=none
 
 # The stop landed and the container never came back. Takes the full two-minute
 # poll, which is why this case is last.

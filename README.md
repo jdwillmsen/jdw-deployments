@@ -351,6 +351,20 @@ job fails loudly if it sees a new pod UID afterwards rather than an incremented
 restart count. Players online get a 120-second countdown first
 (`scheduledRestart.leadSeconds`); an empty server is restarted immediately.
 
+After each restart the job also records the network statistics the server
+wrote for the process that just stopped. Bedrock writes them to
+`/data/packet-statistics.txt` on every shutdown and overwrites the file each
+time, and the backups copy only the world, so nothing else keeps them. They
+come out as one JSON line, which makes a day's worth of processes comparable
+in Loki:
+
+```bash
+logcli query '{namespace="<namespace>", container="scheduled-restart"} |= "packet_statistics" | json'
+```
+
+`seconds` is how long that process ran, and every count is a total over it.
+Divide by `seconds` before comparing two nights.
+
 `tickRateAlert` is the other half, and separately switchable. It fires when
 `mc_agent_server_tps` sits under 17 for 30 minutes, paired with the agent's
 freshness timestamp so a stale reading suppresses the alert instead of paging
