@@ -31,6 +31,37 @@ mkdir -p "$work/sa"
 echo -n "test-ns" > "$work/sa/namespace"
 sed -i "s|/var/run/secrets/kubernetes.io/serviceaccount/namespace|$work/sa/namespace|" "$work/restart.sh"
 
+# Every wait in the copy under test is shortened, because this suite was two
+# thirds of the whole CI critical path: 146s of a 231s tools-tests job, while
+# the nine other jobs in the workflow finish inside 25s each. Almost all of it
+# was spent sitting still.
+#
+# The restart poll is the bulk. One case stages a server that never comes back,
+# and the only way the script can report that is to run its 120s deadline out.
+# Shortening it is safe in a way the version-check deadlines were not: this
+# shim is state-driven rather than count-driven -- FAKE_STATE_AFTER flips the
+# moment `stopped` exists -- so the success case breaks on its first check and
+# no case depends on getting a particular number of iterations. The margin
+# argument that suite needed does not arise here.
+#
+# The counts are asserted before the literals move, the same convention the
+# deadlines and sleeps already follow, so a new wait added to the job fails
+# this suite rather than quietly adding two minutes back.
+found="$(grep -c 'SECONDS + 120' "$work/restart.sh" || true)"
+[ "$found" = "1" ] || fail "expected one 120s restart deadline to shorten, found $found"
+sed -i 's/SECONDS + 120/SECONDS + 6/' "$work/restart.sh"
+
+found="$(grep -c '^ *sleep 3$' "$work/restart.sh" || true)"
+[ "$found" = "1" ] || fail "expected one 3s restart poll sleep to shorten, found $found"
+sed -i 's/^\( *\)sleep 3$/\1sleep 0.2/' "$work/restart.sh"
+
+# The settle after `send-command list`, waiting for the server to print its
+# player line. The shim answers immediately, so every case paid two seconds for
+# nothing.
+found="$(grep -c '^ *sleep 2$' "$work/restart.sh" || true)"
+[ "$found" = "1" ] || fail "expected one 2s player-count settle to shorten, found $found"
+sed -i 's/^\( *\)sleep 2$/\1sleep 0.2/' "$work/restart.sh"
+
 mkdir -p "$work/bin"
 cat > "$work/bin/kubectl" <<'SHIM'
 #!/usr/bin/env bash
