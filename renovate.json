@@ -1,6 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "platformCommit: Renovate's own git commits are unsigned and authored as renovate@whitesourcesoftware.com, which is not a verified address on this account -- so verify-pr-signatures rejected every Renovate PR on both counts, and each one had to be re-signed and force-pushed by hand before it could merge. 'enabled' makes Renovate create commits through the GitHub API instead, which signs them itself and authors them as the token's user, so they verify without anyone touching the branch."
+  ],
   "extends": ["config:recommended"],
+  "platformCommit": "enabled",
   "packageRules": [
     {
       "description": "PR-only, not auto-merged. The original reasoning was that clients need a current server, with RollingUpdate and the nightly backup as the safety net -- but image.tag only versions itzg's tooling, not the server binary, so this never delivered a game version at all. What kept the server current was the pod restart it happened to cause, and versionCheck now does that deliberately every hour with player notice. Meanwhile RollingUpdate is the mechanism that recreates the pod, and an unattended recreation is what migrated the world PVC and cost ~29 MB on 2026-08-30 -- so the cited safety net was the hazard, and a backup is a recovery path rather than a guard. Merging these by hand costs nothing in client connectivity and keeps pod recreations attended. See docs/incidents/2026-08-30-fwb-world-data-loss.md.",
