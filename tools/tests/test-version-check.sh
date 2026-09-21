@@ -50,6 +50,40 @@ found="$(grep -c 'SECONDS + 60 ' "$work/version-check.sh" || true)"
 [ "$found" = "2" ] || fail "expected two 60s loops to shorten, found $found"
 sed -i 's/SECONDS + 60 /SECONDS + 4 /' "$work/version-check.sh"
 
+# The poll interval has to shrink with the deadlines, and leaving it at 2s is
+# what made this suite flaky.
+#
+# Those loops poll, sleep, and re-check against a wall clock, so the number of
+# iterations a case gets is (deadline / sleep). At 3s and 4s against a 2s
+# sleep that is two -- and the stale-candidate case needs exactly two, because
+# the shim's linger counter clears on the second get. Zero margin: about a
+# second of extra latency in one iteration moves the second check from
+# `2 < 3` to `3 < 3`, the loop gives up, and the run reports "a previous
+# candidate pod was still terminating" instead of recovering.
+#
+# It survives CPU pressure, which is why it looked unreproducible; what it
+# cannot survive is fork/exec latency, which is what a full suite run and a
+# busy CI runner actually produce. Injecting 1.1s per fake kubectl call fails
+# it every time.
+#
+# So the sleep shrinks and the deadlines stay where they are. At 0.2s a 3s
+# deadline offers about fourteen iterations where a case needs two, and the
+# cases that exist to run a deadline out still finish in the same three
+# seconds.
+#
+# Lengthening the deadlines instead was tried and reverted: it cost eleven
+# seconds of suite time and bought no margin at all, because past roughly a
+# second of per-call latency the binding constraint stops being the deadline
+# and becomes the 25s `timeout` around the whole run. Spending longer inside
+# that budget makes the run more likely to be cut off, not less.
+#
+# Asserted before rewriting, like the deadlines above, so adding a
+# differently-spaced sleep to the job fails the suite rather than silently
+# restoring the old margin.
+found="$(grep -c '^ *sleep 2$' "$work/version-check.sh" || true)"
+[ "$found" = "3" ] || fail "expected three 2s poll sleeps to shorten, found $found"
+sed -i 's/^\( *\)sleep 2$/\1sleep 0.2/' "$work/version-check.sh"
+
 mkdir -p "$work/bin"
 
 # curl only carries the bot dispatch now. Production's own version is read by
