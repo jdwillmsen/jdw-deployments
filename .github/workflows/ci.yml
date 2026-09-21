@@ -232,6 +232,23 @@ jobs:
       # Both suites drive a fake kubectl, so they need no cluster. The recovery
       # one extracts its subject from the rendered chart, which is why helm is
       # set up above.
+
+      # promtool is for the tick-rate alert suite, which unit-tests the
+      # rendered PrometheusRule. That suite skips itself when promtool is
+      # missing, so without this step it would pass by doing nothing -- the one
+      # outcome an alert test must not have. Pinned rather than "latest": a
+      # change to rule evaluation semantics should break on a version bump
+      # somebody reviewed, not on a Tuesday.
+      - name: Set up promtool
+        env:
+          PROMETHEUS_VERSION: "3.5.0"
+        run: |
+          curl -fsSL -o /tmp/prometheus.tar.gz \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          tar -xzf /tmp/prometheus.tar.gz -C /tmp
+          sudo install -m 0755 "/tmp/prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool --version
+
       - name: Shellcheck the operator tools
         run: shellcheck -s bash tools/mc tools/ci-local tools/tests/*.sh
 
