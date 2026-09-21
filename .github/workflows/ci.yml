@@ -255,9 +255,30 @@ jobs:
       # Discovered rather than listed, so a suite added alongside a new tool
       # is run without a second edit here -- a listed set silently skips
       # whatever nobody remembered to add.
+      #
+      # Run together rather than one after another. This job is the whole
+      # critical path of the workflow -- the nine others finish inside 25s --
+      # and the suites are independent: each renders its own chart copy into
+      # its own mktemp directory and shims its own PATH, so nothing is shared
+      # to contend over. Sequentially they take 88s and the longest is 21s.
+      #
+      # One runner, several processes: this costs no extra concurrency, which
+      # matters more than minutes here. Splitting into parallel *jobs* would
+      # take slots from every other repository on the account.
+      #
+      # Output is buffered per suite and printed in order when it finishes, so
+      # a failure reads as one block rather than interleaved with ten others.
       - name: Operator tool tests
         run: |
+          declare -a pids names
           for suite in tools/tests/test-*.sh; do
-            echo "== $suite"
-            bash "$suite"
+            bash "$suite" > "/tmp/$(basename "$suite").log" 2>&1 &
+            pids+=("$!"); names+=("$suite")
           done
+          rc=0
+          for i in "${!pids[@]}"; do
+            if wait "${pids[$i]}"; then status=PASS; else status=FAIL; rc=1; fi
+            echo "== ${names[$i]} ($status)"
+            cat "/tmp/$(basename "${names[$i]}").log"
+          done
+          exit "$rc"

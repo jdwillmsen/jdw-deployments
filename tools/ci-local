@@ -154,12 +154,22 @@ g_smoke_test() {
   [ "$ready" = "true" ] || { echo "ERROR: $image never logged \"Server started.\""; return 1; }
 }
 
+# Mirrors ci.yml: the suites run together, not one after another. They are
+# independent -- each renders its own chart copy into its own mktemp directory
+# and shims its own PATH -- and sequentially they are 88s against a 21s
+# longest. Output is buffered per suite so a failure reads as one block.
 g_tools_tests() {
-  local rc=0 suite
+  local rc=0 i status
+  local -a pids names
   shellcheck -s bash tools/mc tools/ci-local tools/tests/*.sh || rc=1
   for suite in tools/tests/test-*.sh; do
-    echo "== $suite"
-    bash "$suite" || rc=1
+    bash "$suite" > "/tmp/$(basename "$suite").log" 2>&1 &
+    pids+=("$!"); names+=("$suite")
+  done
+  for i in "${!pids[@]}"; do
+    if wait "${pids[$i]}"; then status=PASS; else status=FAIL; rc=1; fi
+    echo "== ${names[$i]} ($status)"
+    cat "/tmp/$(basename "${names[$i]}").log"
   done
   return "$rc"
 }
