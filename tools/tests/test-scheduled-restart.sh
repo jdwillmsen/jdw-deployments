@@ -62,6 +62,13 @@ found="$(grep -c '^ *sleep 2$' "$work/restart.sh" || true)"
 [ "$found" = "1" ] || fail "expected one 2s player-count settle to shorten, found $found"
 sed -i 's/^\( *\)sleep 2$/\1sleep 0.2/' "$work/restart.sh"
 
+# The pause between attempts to read the packet statistics, which covers a new
+# container not yet accepting exec. The shim answers or fails at once, so the
+# two cases staging an unreadable file paid three of these each for nothing.
+found="$(grep -c '^ *sleep 5$' "$work/restart.sh" || true)"
+[ "$found" = "1" ] || fail "expected one 5s statistics retry sleep to shorten, found $found"
+sed -i 's/^\( *\)sleep 5$/\1sleep 0.2/' "$work/restart.sh"
+
 mkdir -p "$work/bin"
 cat > "$work/bin/kubectl" <<'SHIM'
 #!/usr/bin/env bash
