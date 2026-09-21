@@ -220,4 +220,54 @@ spec:
                   fi
 
                   emit restarted "restarted in place, restartCount $before_count -> $after_count"
+
+                  # The server writes network statistics for its whole lifetime
+                  # to /data/packet-statistics.txt as it shuts down, and
+                  # overwrites the file every time. Nothing else keeps it -- the
+                  # backups copy only the world -- so without this each night's
+                  # numbers are gone by the next restart.
+                  #
+                  # They are kept because the tick decay on this version grows
+                  # with process hours rather than with anything the world or
+                  # its players do, and actor replication is per-tick main-thread
+                  # work that could grow that way. One structured line a night,
+                  # every night, is what makes a 24-hour process comparable with
+                  # a 4-hour one without anyone having to be watching.
+                  #
+                  # Best-effort in every branch: the restart has already
+                  # succeeded, and a missing statistic must never turn that into
+                  # a failed run. The retries cover the new container not yet
+                  # accepting exec in the seconds after it starts.
+                  stats=""
+                  for _ in 1 2 3; do
+                    stats="$(timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                      -- cat /data/packet-statistics.txt 2>/dev/null || true)"
+                    [[ -n "$stats" ]] && break
+                    sleep 5
+                  done
+                  if [[ -z "$stats" ]]; then
+                    emit packet_statistics_unavailable "could not read /data/packet-statistics.txt after the restart"
+                  else
+                    STATS="$stats" python3 -c '
+                  import json, os, re
+                  text = os.environ["STATS"]
+                  def num(pattern):
+                      m = re.search(pattern, text, re.MULTILINE)
+                      return int(m.group(1)) if m else None
+                  def packets(name):
+                      m = re.search(r"^\s*\d+\s+" + name + r"\s+.*?Num (\d+)", text, re.MULTILINE)
+                      return int(m.group(1)) if m else None
+                  print(json.dumps({
+                      "event": "packet_statistics",
+                      # How long the process that just stopped had been running,
+                      # which is what every count below is a total over.
+                      "seconds": num(r"Network Stats for the last (\d+) seconds"),
+                      "spatial_sent": num(r"^Total Sent Spatial Packets: (\d+)"),
+                      "spatial_requested": num(r"^Total Requested to Send Spatial Packets: (\d+)"),
+                      "total_sent": num(r"^Total Sent: (\d+)"),
+                      "move_actor_delta": packets("MoveActorDeltaPacket"),
+                      "set_actor_data": packets("SetActorDataPacket"),
+                      "raw": text,
+                  }))' || emit packet_statistics_unavailable "statistics were read but could not be parsed"
+                  fi
 {{- end }}
