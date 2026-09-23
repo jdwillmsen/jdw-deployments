@@ -330,18 +330,21 @@ own. The full metric list is in the agent repo's README.
 
 ### The nightly restart, and the tick rate alert
 
-`scheduledRestart` stops and restarts the server every night at **09:40 UTC**
-(04:40 CDT). It exists because Bedrock 1.26.51.1 loses tick rate with process
+`scheduledRestart` stops and restarts the server every day at **16:40 UTC**
+(11:40 CDT). It exists because Bedrock 1.26.51.1 loses tick rate with process
 age: 20.00 TPS after a restart, roughly 3.5 TPS/day lost after that, down to
 12.5 by the second day. The same world on 1.26.45 held 20.00 flat across a
 4.7-day process, and a restart puts it straight back — 12.8 to 19.98 TPS,
 measured on 2026-09-18. The decay itself has no fix yet.
 
-The slot is picked against the other actors that drive this same server, not
-for being quiet: the backup starts at 04:00 and may hold the save until 05:00,
-the census runs at 05:40, and the hourly version check can be restarting the
-server until HH:25. 09:40 clears the worst of those by fifteen minutes, and is
-also the emptiest point in this server's session history.
+The slot is picked for where it leaves the decay. TPS holds near 20 for about
+twelve hours of process age and falls after that, and players are online from
+22:00 to 07:00 UTC with the peak at 02:00-03:00. 16:40 puts that peak at ten
+hours of age, and had no players beyond the always-on bots in fourteen days of
+session history. The slot also clears the other actors that drive this same
+server: the backup starts at 04:00 and may hold the save until 05:00, the
+census runs at 05:40, and the hourly version check can be restarting the
+server until HH:25.
 
 The restart is `send-command stop` through the server's own console — never
 `kubectl rollout restart`, never a pod delete. The container comes back inside

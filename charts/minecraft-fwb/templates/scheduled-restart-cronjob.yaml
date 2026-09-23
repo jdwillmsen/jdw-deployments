@@ -120,7 +120,7 @@ spec:
                   if [[ -z "$ONLINE" ]]; then
                     # An unreadable count is not evidence of an empty server,
                     # and the cost of the two mistakes is not symmetric: a
-                    # countdown nobody reads costs two minutes at 09:40 UTC,
+                    # countdown nobody reads costs two minutes at 16:40 UTC,
                     # while a silent disconnect costs whatever someone was
                     # standing in.
                     emit unknown "could not read the player count; announcing anyway"
