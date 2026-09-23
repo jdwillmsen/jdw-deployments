@@ -1155,7 +1155,19 @@ agent:
     # database in 112 ms. It now waits up to 90 seconds with /healthz
     # answering. It also moves gophertunnel to 1.62.0, and the census prints
     # a cluster's extent rather than only a centre that can be empty ground.
-    tag: "0.19.0"
+    #
+    # 0.19.1 changes only how the image is built and published; nothing in
+    # the agent or the census moved.
+    #
+    # 0.20.0 has the census read each farm animal's climate variant off its
+    # actor record. The report gains a variant section - cows, pigs and
+    # chickens per temperate, warm and cold, mooshrooms per colour, each with
+    # its nearest herds measured from base - and the metrics payload gains
+    # mc_census_variant. A record saved before variants existed reports as
+    # legacy rather than temperate, so the graph shows how much of the herd
+    # the save never assigned. "Where is the nearest cold cow" is now one
+    # census run instead of a hand-pulled world and a scratch scanner.
+    tag: "0.20.0"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
