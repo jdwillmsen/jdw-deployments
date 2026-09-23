@@ -704,7 +704,7 @@ bot:
   # account takeover without deleting its PVC/token cache — see README's
   # "Relocating a bot". Explicit rather than templated-default: Sprig's
   # `default` coerces 0 back to 1.
-  replicas: 0
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
@@ -818,7 +818,7 @@ bot2:
   # the server registers the disconnect. Freeing the *account* also needs
   # `tools/mc run kick <gamertag>` -- the server holds the session open for a
   # while after the client is gone.
-  replicas: 0
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
@@ -950,7 +950,7 @@ agent:
   # account also needs `tools/mc run kick JDWServerAgent` because the server
   # holds the session open after the client goes. `kubectl scale` does not
   # work -- selfHeal reverts it within seconds.
-  replicas: 0
+  replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-server-agent
