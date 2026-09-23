@@ -1543,20 +1543,30 @@ census:
 scheduledRestart:
   enabled: true
 
-  # 09:40 UTC (04:40 CDT), chosen against every other schedule that touches
-  # this server rather than picked for being quiet:
+  # 16:40 UTC (11:40 CDT), chosen for where it leaves the decay rather than
+  # for when the restart itself lands. The decay does not start at the
+  # restart: TPS holds near 20 for about twelve hours of process age and
+  # falls from there. Players are online from 22:00 to 07:00 UTC, peaking at
+  # 02:00-03:00, so the slot has to put that peak well inside the clean
+  # twelve hours. 16:40 puts it at ten hours of age, and only the thin
+  # 05:00-07:00 tail runs past twelve, where it has lost one to two TPS.
+  # A slot late enough to cover the tail too lands in hours that do have
+  # players in them.
+  #
+  # It also has to clear every other schedule that touches this server:
   #
   #   backup        04:00, activeDeadlineSeconds 3600 -- can hold the save
   #                 until 05:00
   #   census        05:40
-  #   version-check hourly, timeoutSeconds 1500 -- its 09:00 run can be
-  #                 restarting the server until 09:25
+  #   version-check hourly, timeoutSeconds 1500 -- its 16:00 run can be
+  #                 restarting the server until 16:25
   #
-  # 09:40 clears the worst of those by fifteen minutes, and it is the
-  # emptiest point in this server's session history. Every time in this chart
-  # is UTC, because no CronJob here sets timeZone -- which is what makes the
-  # windows comparable at all.
-  schedule: "40 9 * * *"
+  # 16:40 clears the version check by fifteen minutes, and had no players
+  # beyond the always-on bots in any of the fourteen days of session history
+  # it was picked from. Every
+  # time in this chart is UTC, because no CronJob here sets timeZone -- which
+  # is what makes the windows comparable at all.
+  schedule: "40 16 * * *"
 
   # Ten minutes, for the same reason the census sets it: left unset, the
   # controller admits the most recent missed run of every CronJob at once
@@ -1574,7 +1584,7 @@ scheduledRestart:
   # about. Two minutes matches the deploy announcement's lead: long enough to
   # reach somewhere safe, short enough that a nightly event is not a nightly
   # interruption. It is skipped entirely when nobody is online, which at
-  # 09:40 UTC is most nights.
+  # 16:40 UTC is most days.
   leadSeconds: 120
 
   # Counted per loop *ceiling* rather than per deadline, because a wall-clock
