@@ -140,6 +140,15 @@ global:
     - {id: afk-bot-1, kind: afk-bot, valuesKey: bot, gamertag: LightBlaz3, defaultState: present, groups: [agent]}
     - {id: afk-bot-2, kind: afk-bot, valuesKey: bot2, gamertag: Dotablaze7321, defaultState: present, groups: [bots]}'
 
+# The agent checks groups once every id is known, so a group naming an actor
+# listed after it is as ambiguous as one naming an actor listed before.
+expect_refused "a group named like a later actor" "is also an actor id" '
+global:
+  actors:
+    - {id: agent, kind: agent, gamertag: JDWServerAgent, defaultState: present, groups: []}
+    - {id: afk-bot-1, kind: afk-bot, valuesKey: bot, gamertag: LightBlaz3, defaultState: present, groups: [afk-bot-2]}
+    - {id: afk-bot-2, kind: afk-bot, valuesKey: bot2, gamertag: Dotablaze7321, defaultState: present, groups: [bots]}'
+
 expect_refused "no agent" "exactly one actor of kind agent" '
 global:
   actors:
