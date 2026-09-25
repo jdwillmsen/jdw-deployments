@@ -148,6 +148,9 @@ account) and bringing it back after:
    the only thing gated here, not `enabled`: `enabled: false` would also
    delete the PVC and wipe the token cache, forcing another device-code
    login for no reason.
+
+   Do not park the bot for this instead (see "Parking actors"): the agent
+   kicks a parked actor's gamertag from the server, and that would be you.
 2. Sign into that Microsoft account on your own device (phone, console, PC —
    same credentials as the device-code login) and move the character where
    you want it.
@@ -266,6 +269,123 @@ Closing this properly needs the sidecar to send a fixed `Origin` of its own,
 released as a new `mc-console-bridge` image; the chart can then name that value
 in `WEBSOCKET_ALLOWED_ORIGINS` and drop `WEBSOCKET_DISABLE_ORIGIN_CHECK`. Until
 that image exists, changing the setting here is an outage, not a hardening.
+
+### Parking actors
+
+The agent and both AFK bots are *actors*: accounts that put a player into the
+world and keep the chunks around it loaded and ticking. Parking an actor
+disconnects it, and that frees those chunks for Bedrock's global limits. It
+does not move the actor. Lowering a bot's `viewDistance` does not do this,
+because ticking follows the server's simulation distance around every player.
+
+The actors are listed once, in `global.actors` in `values.yaml`. Each entry's
+`defaultState` is the baseline git owns. A park is an *override* on top of
+it, stored in Postgres with who set it, why, and usually when it expires. It
+survives pod restarts, rollouts and leader handovers. Removing the override
+always returns the actor to what git says.
+
+Three ways in, all equivalent:
+
+| From | Read | Park | Restore |
+|---|---|---|---|
+| In-game chat | `!presence` | `!park <target> [duration]` (operator) | `!unpark <target>` |
+| `tools/mc` | `tools/mc presence` | `tools/mc presence park <target> --reason "<why>" [--for 2h]` | `tools/mc presence unpark <target>` |
+| HTTP | `GET /v1/actors` | `PUT /v1/actors/{id}/presence`, `PUT /v1/groups/{group}/presence` | `DELETE /v1/actors/{id}/presence` |
+
+`<target>` is an actor id (`agent`, `afk-bot-1`, `afk-bot-2`), a group
+(`bots`) or `all`. Durations use Go syntax: `30m`, `2h`, `1h30m`.
+
+```bash
+tools/mc presence                                              # who is where, and why
+tools/mc presence park bots --for 2h --reason "TPS recovery"  # both bots out for two hours
+tools/mc presence unpark bots                                  # back to the git default now
+```
+
+There is no presence-only Service. `tools/mc presence` port-forwards to the
+agent's existing `<release>-server-agent-metrics` Service on port 9090 — the
+same one the bots poll — and authenticates with the `presence_token_tools_mc`
+key of the `<release>-presence` Secret. It never prints the token.
+`MC_PRESENCE_TOKEN` and `MC_PRESENCE_URL` override both, for use from outside
+the cluster's kubeconfig. That Service already carries a parked leader and a
+standby as ready; only a pod still starting is not, and answers `/v1` with a
+plain 404 for up to 90 seconds — which is why parking the agent does not cost
+the bots their endpoint.
+
+**What to expect.** Bots poll every 10 seconds, and about 20 seconds after an
+actor is parked the agent kicks its gamertag if the server still lists it,
+because Bedrock holds a session open after the client leaves. So a parked
+actor is gone from `tools/mc players` within about 30 seconds. After an unpark
+or an expiry it is back once its next poll lands and its login completes,
+usually within 30 seconds. A deliberately parked actor does not page anyone.
+An actor that should be present and is not still does.
+
+**Unpark clears the override unconditionally** — no version check, no
+conflict, straight back to whatever `defaultState` says. There is no group
+`DELETE` route, so unparking a group or `all` sends one `DELETE` per member;
+a member already at its default is left alone, which makes a repeat of the
+command a no-op rather than an error. If a later member's `DELETE` fails, the
+output names what already came back before the failure, and the command
+exits 1.
+
+**Parking the agent.** It leaves the world but keeps monitoring: TPS, the
+scheduler, the server watcher and the policy loop all keep running. What stops
+is chat. While the agent is parked nobody can use `!` commands or `@server`,
+including `!unpark`. A chat park of the agent (`@server leave`, or `!park all`)
+therefore always carries a way back: one hour unless given a duration, and it
+wakes when any player joins. A park from `tools/mc` or the API carries only
+what you give it. Give `--for` when you park `agent` or `all`, or be ready to
+`tools/mc presence unpark agent` yourself.
+
+**If the agent is down,** the bots keep acting on the last answer they got,
+and a bot that never got one uses its `defaultState`. An agent outage never
+makes the bots flap. Expiries and wakes wait for an agent to hold the leader
+lock again.
+
+**Not for relocating a bot.** While an actor is parked the agent kicks its
+gamertag from the server, which would kick *you* if you are signed in as that
+account to move it. Relocation keeps its own procedure, "Relocating a bot"
+above, through `replicas: 0`.
+
+**Changing a default** (an actor that should normally be away) is a PR to
+`defaultState` in `global.actors`. That restarts the actor's own pod and the
+agent, but not the server.
+
+**Adding a bot** means its values block and Deployment template (see "The AFK
+bot(s)"), its key in `actors.botKeys` in `templates/_actors.tpl`, an entry in
+`global.actors`, and a token. The render refuses an enabled bot with no actor
+entry. The token is a new `presence_token_<id with - as _>` property in the
+`kv/minecraft-fwb` Vault document, added the same way as the others (below).
+
+**Tokens.** Three properties in `kv/minecraft-fwb`: `presence_token_afk_bot_1`,
+`presence_token_afk_bot_2` and `presence_token_tools_mc`. The `<release>-presence`
+ExternalSecret assembles them into the agent's `PRESENCE_TOKENS` and each
+bot's own `PRESENCE_TOKEN`, so a bot's copy can never differ from the agent's.
+Create or rotate them yourself, in your own terminal, never through an agent's
+shell (`AGENTS.md`). Use `patch`, not `put`: `put` replaces the whole document,
+and with it the console bridge's secrets.
+
+```bash
+vault kv patch kv/minecraft-fwb \
+  presence_token_afk_bot_1="$(openssl rand -hex 32)" \
+  presence_token_afk_bot_2="$(openssl rand -hex 32)" \
+  presence_token_tools_mc="$(openssl rand -hex 32)"
+kubectl -n jdwillmsen-prd annotate externalsecret jdwillmsen-minecraft-fwb-prd-presence \
+  force-sync="$(date +%s)" --overwrite
+kubectl -n jdwillmsen-prd get externalsecret jdwillmsen-minecraft-fwb-prd-presence   # SecretSynced / True
+```
+
+The tokens are hex because ESO substitutes them into a JSON string. After a
+rotation, delete the agent and bot pods so they read the new values. Env from
+a Secret is fixed at pod start. Use `kubectl delete pod`, not `kubectl rollout
+restart`: selfHeal reverts the restart annotation.
+
+**The switch** is `global.presence.enabled`. Off, the agent mounts no `/v1`
+routes, the bots run exactly as they did before, and the bridge refuses every
+`kick`. It needs bridge v0.4.0 or later, agent 0.22.0 or later and bot 1.2.0
+or later — the first release of each that reads the presence variables (and,
+for the bridge, `BRIDGE_KICKABLE`). Turning it on or off restarts the server
+pod once, because the bridge sidecar's kick list changes. The deploy-announce
+hook counts that down like any other server restart.
 
 ### Reading the mob census
 

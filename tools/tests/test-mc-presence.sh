@@ -335,4 +335,19 @@ for args in "park bots --for 2h --reason token-check" "unpark afk-bot-1"; do
 done
 echo "  ok: park and unpark keep the token off argv and out of an xtrace"
 
+# --- the runbook's own commands --------------------------------------------------
+# README's "Parking actors" is where an operator copies these from, so each one
+# must still parse. Anything but a usage error (exit 2) is fine here: the fakes
+# decide the outcome, the grammar is what is under test.
+mapfile -t documented < <(grep -oE '^tools/mc presence[^#]*' "$here/README.md" | sed 's/ *$//')
+[ "${#documented[@]}" -ge 3 ] || fail "README shows fewer than three tools/mc presence commands"
+for line in "${documented[@]}"; do
+  mapfile -t argv < <(python3 -c 'import shlex, sys; print("\n".join(shlex.split(sys.argv[1])[1:]))' "$line")
+  set +e
+  out="$(run bash "$mc" "${argv[@]}")"; rc=$?
+  set -e
+  [ "$rc" != 2 ] || fail "README documents a command the CLI rejects: $line -> $out"
+done
+echo "  ok: every tools/mc presence command in the README parses"
+
 echo "PASS"
