@@ -364,9 +364,129 @@ environment:
 USAGE
 }
 
+ID_RE='^[a-z0-9][a-z0-9-]{0,62}$'
+
+# Resolves a target against the live actor list, so a typo is refused before
+# anything is written. Sets TARGET_KIND (actor|group) and TARGET_IDS.
+presence_resolve() {
+  local target="$1"
+  if jq -e --arg t "$target" 'any(.[]; .id == $t)' <<<"$ACTORS" >/dev/null; then
+    TARGET_KIND=actor
+  elif [ "$target" = all ] || jq -e --arg t "$target" 'any(.[]; (.groups // []) | index($t))' <<<"$ACTORS" >/dev/null; then
+    TARGET_KIND=group
+  else
+    err "unknown target: $target" \
+      "targets are $(jq -r '[.[].id] + ([.[].groups[]?] | unique) + ["all"] | join(", ")' <<<"$ACTORS")"
+  fi
+  mapfile -t TARGET_IDS < <(jq -r --arg t "$target" --arg k "$TARGET_KIND" '
+    .[] | select($k == "group" and ($t == "all" or ((.groups // []) | index($t)))
+                 or ($k == "actor" and .id == $t)) | .id' <<<"$ACTORS")
+}
+
+presence_park() {
+  local target="" duration="" reason=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) presence_usage; return 0 ;;
+      --for) [ $# -gt 1 ] || usage_err "--for needs a duration" "$SELF presence park bots --for 2h --reason \"<text>\""
+             duration="$2"; shift 2 ;;
+      --reason) [ $# -gt 1 ] || usage_err "--reason needs text" "$SELF presence park bots --reason \"<text>\""
+                reason="$2"; shift 2 ;;
+      -*) usage_err "unknown flag for presence park: $1" "valid flags for presence park: --for, --reason, --help" ;;
+      *) [ -z "$target" ] || usage_err "presence park takes one target, got a second: $1" "$SELF presence park <id|group|all> --reason \"<text>\""
+         target="$1"; shift ;;
+    esac
+  done
+  [ -n "$target" ] || usage_err "presence park needs a target" "$SELF presence park <id|group|all> --reason \"<text>\" [--for 2h]"
+  [[ "$target" =~ $ID_RE ]] || usage_err "not an actor id, group or all: $target" "$SELF presence ls"
+  [ -n "${reason// /}" ] || usage_err "--reason is required" "$SELF presence park $target --reason \"<why>\""
+  # The agent refuses a zero duration, and one without a non-zero digit is zero.
+  if [ -n "$duration" ] && ! { [[ "$duration" =~ ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$ ]] && [[ "$duration" =~ [1-9] ]]; }; then
+    usage_err "not a positive Go duration: $duration" "use units like 30m, 2h or 1h30m"
+  fi
+
+  presence_need; presence_connect; presence_token; presence_actors
+  presence_resolve "$target"
+
+  local body result
+  if [ "$TARGET_KIND" = actor ]; then
+    # The version read is the one written against: a 409 means someone else
+    # changed this actor in between, and their change is shown, not overwritten.
+    local version
+    version="$(jq -r --arg t "$target" '.[] | select(.id == $t) | .override.version // 0' <<<"$ACTORS")"
+    body="$(jq -nc --arg r "$reason" --arg d "$duration" --argjson v "$version" \
+      '{state: "parked", reason: $r, version: $v} + (if $d == "" then {} else {duration: $d} end)')"
+    api PUT "/v1/actors/$target/presence" "$body"
+    if [ "$API_STATUS" = 409 ]; then
+      echo "error: $target was changed by someone else while this ran"
+      jq -r "$TOON_JQ"'.current | "current: " + ([.actor_id, .effective, (.override.set_by // "default")] | map(tv) | join(","))' \
+        <<<"$API_BODY" 2>/dev/null
+      echo "hint: $SELF presence ls, then re-run if it is still wanted"
+      exit 1
+    fi
+    [ "$API_STATUS" = 200 ] || api_fail
+    result="[$API_BODY]"
+  else
+    body="$(jq -nc --arg r "$reason" --arg d "$duration" \
+      '{state: "parked", reason: $r, version: 0} + (if $d == "" then {} else {duration: $d} end)')"
+    api PUT "/v1/groups/$target/presence" "$body"
+    [ "$API_STATUS" = 200 ] || api_fail
+    result="$API_BODY"
+  fi
+  jq -r "$TOON_JQ"'
+    "parked[\(length)]{id,effective,until}:",
+    (.[] | "  " + ([.actor_id, .effective, (.override.until // null)] | map(tv) | join(","))),
+    "help[1]:",
+    "  Run `'"$SELF"' presence unpark '"$target"'` to return to the default"
+  ' <<<"$result"
+}
+
+presence_unpark() {
+  local target=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) presence_usage; return 0 ;;
+      -*) usage_err "unknown flag for presence unpark: $1" "valid flags for presence unpark: --help" ;;
+      *) [ -z "$target" ] || usage_err "presence unpark takes one target, got a second: $1" "$SELF presence unpark <id|group|all>"
+         target="$1"; shift ;;
+    esac
+  done
+  [ -n "$target" ] || usage_err "presence unpark needs a target" "$SELF presence unpark <id|group|all>"
+  [[ "$target" =~ $ID_RE ]] || usage_err "not an actor id, group or all: $target" "$SELF presence ls"
+
+  presence_need; presence_connect; presence_token; presence_actors
+  presence_resolve "$target"
+
+  # There is no group DELETE, so a group is removed one member at a time. An
+  # actor with no override is already at its default and is left alone, which
+  # makes a repeat of this command a no-op rather than an error.
+  local id rows=() unchanged=()
+  for id in "${TARGET_IDS[@]}"; do
+    if ! jq -e --arg id "$id" '.[] | select(.id == $id) | .override' <<<"$ACTORS" >/dev/null; then
+      unchanged+=("$id")
+      continue
+    fi
+    api DELETE "/v1/actors/$id/presence"
+    if [ "$API_STATUS" != 200 ]; then
+      [ "${#rows[@]}" -eq 0 ] || printf 'unparked_before_failure: %s\n' "$(printf '%s\n' "${rows[@]}" | cut -d, -f1 | paste -sd, -)"
+      api_fail
+    fi
+    rows+=("$(jq -r "$TOON_JQ"'[.actor_id, .effective] | map(tv) | join(",")' <<<"$API_BODY")")
+  done
+  if [ "${#rows[@]}" -eq 0 ]; then
+    echo "unparked: 0 of ${#TARGET_IDS[@]} had an override, nothing to do (no-op)"
+    return 0
+  fi
+  echo "unparked[${#rows[@]}]{id,effective}:"
+  printf '  %s\n' "${rows[@]}"
+  [ "${#unchanged[@]}" -eq 0 ] || echo "unchanged[${#unchanged[@]}]: $(IFS=,; echo "${unchanged[*]}")"
+}
+
 cmd_presence() {
   case "${1:-}" in
     ""|ls)  shift || true; presence_ls "$@" ;;
+    park)   shift; presence_park "$@" ;;
+    unpark) shift; presence_unpark "$@" ;;
     -h|--help|help) presence_usage ;;
     *) usage_err "unknown presence command: $1" "$SELF presence --help" ;;
   esac
