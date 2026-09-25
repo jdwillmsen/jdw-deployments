@@ -175,6 +175,20 @@ global:
     - {id: agent, kind: agent, gamertag: JDWServerAgent, defaultState: present, groups: []}
     - {id: afk-bot-1, kind: afk-bot, valuesKey: bot, gamertag: LightBlaz3, defaultState: present, groups: [bots]}'
 
+# The operator token shares PRESENCE_TOKENS with the bots' tokens, which are
+# named after their actors, and names its own Secret key the same way.
+expect_refused "an operator token named after an actor" "operatorToken.name \"afk-bot-1\" is also an actor id" '
+global:
+  presence:
+    operatorToken:
+      name: afk-bot-1'
+
+expect_refused "an operator token name that is not an id" "operatorToken.name \"Tools_MC\" must match" '
+global:
+  presence:
+    operatorToken:
+      name: Tools_MC'
+
 # --- the presence secret -----------------------------------------------------
 # ESO renders target.template with the Vault properties as `.<key>`. Doing the
 # same substitution here proves the three things that matter: the agent's JSON
