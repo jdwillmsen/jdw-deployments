@@ -439,6 +439,12 @@ presence_park() {
     "help[1]:",
     "  Run `'"$SELF"' presence unpark '"$target"'` to return to the default"
   ' <<<"$result"
+  # A parked agent reads no chat, so without an expiry nothing but this tool
+  # or the API brings it back.
+  if [ -z "$duration" ] && jq -e --args '[.[] | select(.kind == "agent" and (.id | IN($ARGS.positional[])))] | length > 0' \
+      "${TARGET_IDS[@]}" <<<"$ACTORS" >/dev/null; then
+    echo "warning: agent parked with no expiry; chat cannot unpark it; run: $SELF presence unpark agent"
+  fi
 }
 
 presence_unpark() {
