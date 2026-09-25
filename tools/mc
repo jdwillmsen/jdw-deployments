@@ -177,6 +177,201 @@ cmd_run() {
   kubectl logs -n "$NAMESPACE" "$pod" --tail=5 2>/dev/null | sed 's/^/  /'
 }
 
+# --- presence ----------------------------------------------------------------
+#
+# A thin client over the agent's /v1 presence API. The API is not published
+# outside the cluster, so each call port-forwards to the agent's metrics
+# Service, which serves /v1 on the same port, for its own lifetime.
+
+RELEASE="${MC_RELEASE:-jdwillmsen-minecraft-fwb-prd}"
+PRESENCE_PORT="${MC_PRESENCE_PORT:-9090}"
+# global.presence.operatorToken.name in the chart. The key mirrors the
+# chart's presence.tokenKey helper, which swaps - for _.
+PRESENCE_TOKEN_NAME="tools-mc"
+PRESENCE_TOKEN_KEY="presence_token_${PRESENCE_TOKEN_NAME//-/_}"
+PRESENCE_OFF_HINT="presence may be off (global.presence.enabled in charts/minecraft-fwb/values.yaml)"
+
+# Usage errors exit 2 rather than err's 1, so a caller can tell "you asked
+# wrongly" from "what you asked for could not be done".
+usage_err() {
+  echo "error: $1"
+  [ $# -gt 1 ] && echo "hint: $2"
+  exit 2
+}
+
+# xtrace prints every assignment expanded, so it is paused wherever the token
+# is in hand; `bash -x tools/mc` stays usable for debugging without leaking it.
+xtrace_pause() {
+  case $- in
+    *x*) XTRACE_WAS_ON=1; set +x ;;
+    *) XTRACE_WAS_ON="" ;;
+  esac
+}
+xtrace_resume() {
+  if [ -n "$XTRACE_WAS_ON" ]; then set -x; fi
+}
+
+presence_need() {
+  command -v jq >/dev/null 2>&1 || err "jq is required for presence" "install jq, then re-run"
+  command -v curl >/dev/null 2>&1 || err "curl is required for presence" "install curl, then re-run"
+}
+
+# MC_PRESENCE_URL skips the port-forward, for a caller that already has a
+# route in (and for the tests, which have no cluster).
+presence_connect() {
+  if [ -n "${MC_PRESENCE_URL:-}" ]; then
+    PRESENCE_BASE="$MC_PRESENCE_URL"
+    return 0
+  fi
+  PF_LOG="$(mktemp)"
+  kubectl port-forward -n "$NAMESPACE" "svc/${RELEASE}-server-agent-metrics" ":$PRESENCE_PORT" \
+    >"$PF_LOG" 2>&1 &
+  PF_PID=$!
+  trap 'kill "$PF_PID" 2>/dev/null; rm -f "$PF_LOG"' EXIT
+  local port="" _
+  for _ in $(seq 1 50); do
+    port="$(grep -oE '127\.0\.0\.1:[0-9]+' "$PF_LOG" | head -1 | cut -d: -f2)"
+    [ -n "$port" ] && break
+    kill -0 "$PF_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  [ -n "$port" ] || err "could not reach the presence API" \
+    "the server agent may be off or restarting: kubectl get svc,pods -n $NAMESPACE | grep ${RELEASE}-server-agent"
+  PRESENCE_BASE="http://127.0.0.1:$port"
+}
+
+# The token lives only in this variable: never echoed, never in argv (which
+# any user on the machine can read from ps), never in a file. It travels
+# through pipes from builtins, because a here-string may be spooled to a temp
+# file.
+presence_token() {
+  xtrace_pause
+  if [ -n "${MC_PRESENCE_TOKEN:-}" ]; then
+    PRESENCE_TOKEN="$MC_PRESENCE_TOKEN"
+    xtrace_resume
+    return 0
+  fi
+  local encoded
+  if ! encoded="$(kubectl get secret -n "$NAMESPACE" "${RELEASE}-presence" \
+      -o jsonpath="{.data.$PRESENCE_TOKEN_KEY}" 2>/dev/null)"; then
+    err "no operator token in secret ${RELEASE}-presence" \
+      "$PRESENCE_OFF_HINT, or: kubectl get externalsecret -n $NAMESPACE ${RELEASE}-presence"
+  fi
+  PRESENCE_TOKEN="$(printf '%s' "$encoded" | base64 -d 2>/dev/null)"
+  encoded=""
+  [ -n "$PRESENCE_TOKEN" ] || err "no operator token in secret ${RELEASE}-presence" \
+    "key $PRESENCE_TOKEN_KEY is missing or empty; check it has synced: kubectl get externalsecret -n $NAMESPACE ${RELEASE}-presence"
+  xtrace_resume
+}
+
+# api METHOD PATH [JSON]; sets API_STATUS (000 when nothing answered) and
+# API_BODY.
+api() {
+  local out
+  local -a args=(-sS -X "$1" --max-time 10 -H @- -w '\n%{http_code}')
+  [ $# -gt 2 ] && args+=(-H 'Content-Type: application/json' --data-binary "$3")
+  xtrace_pause
+  out="$(printf 'Authorization: Bearer %s\n' "$PRESENCE_TOKEN" | curl "${args[@]}" "$PRESENCE_BASE$2" 2>/dev/null)" || true
+  xtrace_resume
+  API_STATUS="${out##*$'\n'}"
+  API_BODY="${out%$'\n'*}"
+  [[ "$API_STATUS" =~ ^[0-9]{3}$ ]] || { API_STATUS=000; API_BODY=""; }
+}
+
+# Translates a failed call into the CLI's own error. The API's message is ours
+# and safe to show; the raw body never is printed.
+api_fail() {
+  local code msg
+  code="$(jq -r '.code // empty' <<<"$API_BODY" 2>/dev/null)"
+  msg="$(jq -r '.message // empty' <<<"$API_BODY" 2>/dev/null)"
+  case "$API_STATUS" in
+    000) err "the presence API did not answer" "the agent may be restarting: $SELF presence ls" ;;
+    401) err "the presence API rejected the operator token" \
+           "the secret may have rotated since this ran; re-run, or: kubectl get externalsecret -n $NAMESPACE ${RELEASE}-presence" ;;
+    403) err "the operator token may not do this${msg:+: $msg}" "check its scopes in global.presence of the chart" ;;
+    # Every 404 from a mounted API carries the contract's Error. A bare one is
+    # Go's mux answering for a /v1 the agent never mounted.
+    404) [ -n "$code" ] || err "the agent is not serving the presence API" \
+           "$PRESENCE_OFF_HINT, or the agent is still starting; retry in a minute"
+         err "${msg:-no such actor or group}" "$SELF presence ls" ;;
+    503) err "the presence store is unavailable${msg:+: $msg}" \
+           "the bots keep their last state meanwhile; retry: $SELF presence ls" ;;
+    *)   err "the presence API answered $API_STATUS${msg:+: $msg}" "$SELF presence ls" ;;
+  esac
+}
+
+# TOON scalar: quoted only where the format requires it.
+TOON_JQ='def tv: if . == null then "null"
+  elif (type == "boolean" or type == "number") then tostring
+  elif test("^$|^[\\s-]|\\s$|[,:\"\\\\\\[\\]{}#]|^(true|false|null)$|^-?[0-9]") then tojson
+  else . end;'
+
+presence_actors() {
+  api GET /v1/actors
+  [ "$API_STATUS" = 200 ] || api_fail
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$API_BODY" \
+    || err "the presence API answered something other than a list of actors" \
+         "the agent and this tool may disagree on the API version: $SELF presence ls"
+  ACTORS="$API_BODY"
+}
+
+presence_ls() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) presence_usage; return 0 ;;
+      *) usage_err "unknown argument for presence ls: $1" "valid flags for presence ls: --help" ;;
+    esac
+  done
+  presence_need; presence_connect; presence_token; presence_actors
+  jq -r "$TOON_JQ"'
+    "count: \(length)",
+    if length == 0 then "actors: none" else
+      "actors[\(length)]{id,effective,source,until,connected}:",
+      (.[] | "  " + ([.id, .effective,
+                      (if .override then .override.set_by else "default" end),
+                      (.override.until // null),
+                      (if .status then .status.connected else null end)] | map(tv) | join(",")))
+    end,
+    (([.[].groups[]?] | unique) + ["all"]) as $g
+    | "groups[\($g | length)]: " + ($g | map(tv) | join(",")),
+    "help[2]:",
+    "  Run `'"$SELF"' presence park <id|group|all> --reason \"<text>\" [--for 2h]` to park",
+    "  Run `'"$SELF"' presence unpark <id|group|all>` to return to the default"
+  ' <<<"$ACTORS"
+}
+
+presence_usage() {
+  cat <<USAGE
+$SELF presence — park and restore the accounts that hold the world's chunks
+
+  $SELF presence [ls]                                   every actor and its state
+  $SELF presence park <target> --reason <text> [--for <duration>]
+  $SELF presence unpark <target>                        back to the default in git
+
+  <target>    an actor id, a group, or all
+  --for       Go duration (30m, 2h); without it the park lasts until unparked
+  --reason    required; recorded with the override
+
+examples:
+  $SELF presence park bots --for 2h --reason "farm rebuild"
+  $SELF presence unpark bots
+
+environment:
+  MC_RELEASE          release name (default: $RELEASE)
+  MC_PRESENCE_PORT    agent port serving /v1 (default: $PRESENCE_PORT)
+  MC_PRESENCE_TOKEN   operator token, instead of reading the cluster secret
+  MC_PRESENCE_URL     API base URL, instead of a port-forward
+USAGE
+}
+
+cmd_presence() {
+  case "${1:-}" in
+    ""|ls)  shift || true; presence_ls "$@" ;;
+    -h|--help|help) presence_usage ;;
+    *) usage_err "unknown presence command: $1" "$SELF presence --help" ;;
+  esac
+}
+
 usage() {
   cat <<EOF
 $SELF — console access to the Minecraft Bedrock server
@@ -186,6 +381,7 @@ $SELF — console access to the Minecraft Bedrock server
   $SELF announce <message>         broadcast it highlighted
   $SELF players                    who is online
   $SELF run <command> [args...]    any console command
+  $SELF presence [ls|park|unpark]  park or restore the bots and the agent
 
 environment:
   MC_NAMESPACE   namespace to look in (default: $NAMESPACE)
@@ -199,6 +395,7 @@ case "${1:-}" in
   announce)   shift; cmd_announce "$@" ;;
   players)    shift; cmd_players ;;
   run)        shift; cmd_run "$@" ;;
+  presence)   shift; cmd_presence "$@" ;;
   -h|--help|help) usage ;;
   *)          err "unknown command: $1" "$SELF --help" ;;
 esac
