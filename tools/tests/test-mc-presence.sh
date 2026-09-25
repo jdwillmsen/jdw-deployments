@@ -224,4 +224,115 @@ grep -q 'presence unpark <target>' <<<"$out" || fail "presence ls --help must pr
 grep -q 'presence \[ls|park|unpark\]' <<<"$(run bash "$mc" --help)" || fail "mc --help must list presence"
 echo "  ok: presence --help documents every subcommand"
 
+# --- park --------------------------------------------------------------------
+cat > "$work/fx/PUT_v1_groups_bots_presence.json" <<'JSON'
+[{"actor_id":"afk-bot-1","effective":"parked","default":"present","override":{"state":"parked","until":"2026-09-23T12:00:00Z","reason":"farm rebuild","set_by":"api:tools-mc","set_at":"2026-09-23T10:00:00Z","version":4}},
+ {"actor_id":"afk-bot-2","effective":"parked","default":"present","override":{"state":"parked","until":"2026-09-23T12:00:00Z","reason":"farm rebuild","set_by":"api:tools-mc","set_at":"2026-09-23T10:00:00Z","version":1}}]
+JSON
+out="$(run bash "$mc" presence park bots --for 2h --reason "farm rebuild")"
+grep -qx 'PUT /v1/groups/bots/presence {"state":"parked","reason":"farm rebuild","version":0,"duration":"2h"}' "$work/capture" \
+  || fail "a group park must PUT the group route with the duration: $(cat "$work/capture")"
+grep -qx 'parked\[2\]{id,effective,until}:' <<<"$out" || fail "park must list what it parked: $out"
+grep -qx '  afk-bot-2,parked,"2026-09-23T12:00:00Z"' <<<"$out" || fail "park must show each expiry: $out"
+grep -q 'presence unpark bots' <<<"$out" || fail "park must say how to undo it: $out"
+echo "  ok: parking a group sends one group write with the duration"
+
+cat > "$work/fx/PUT_v1_actors_afk-bot-1_presence.json" <<'JSON'
+{"actor_id":"afk-bot-1","effective":"parked","default":"present","override":{"state":"parked","reason":"moving it","set_by":"api:tools-mc","set_at":"2026-09-23T10:00:00Z","version":4}}
+JSON
+out="$(run bash "$mc" presence park afk-bot-1 --reason "moving it")"
+grep -qx 'PUT /v1/actors/afk-bot-1/presence {"state":"parked","reason":"moving it","version":3}' "$work/capture" \
+  || fail "an actor park must carry the version it read and no duration: $(cat "$work/capture")"
+grep -qx '  afk-bot-1,parked,null' <<<"$out" || fail "a park without --for has no expiry: $out"
+echo "  ok: parking one actor writes against the version it read"
+
+echo 409 > "$work/fx/PUT_v1_actors_afk-bot-1_presence.code"
+cat > "$work/fx/PUT_v1_actors_afk-bot-1_presence.json" <<'JSON'
+{"code":"conflict","message":"version mismatch","current":{"actor_id":"afk-bot-1","effective":"present","default":"present","override":{"state":"present","reason":"back now","set_by":"chat:Steve","set_at":"2026-09-23T10:01:00Z","version":4}}}
+JSON
+set +e
+out="$(run bash "$mc" presence park afk-bot-1 --reason "moving it")"; rc=$?
+set -e
+rm "$work/fx/PUT_v1_actors_afk-bot-1_presence.code"
+[ "$rc" = 1 ] || fail "a conflict must exit 1, got $rc"
+grep -qx 'current: afk-bot-1,present,"chat:Steve"' <<<"$out" || fail "a conflict must show who changed it: $out"
+[ "$(grep -c '^PUT' "$work/capture")" = 1 ] || fail "a conflict must not be retried over someone else's change"
+echo "  ok: a conflicting edit is shown, not overwritten"
+
+for args in "park bots --for 2h" "park bots --reason x --for soon" "park bots --reason x --for 0s" "park --reason x" "park Bots --reason x" \
+            "park bots --reason x --force" "park bots extra --reason x"; do
+  set +e
+  # shellcheck disable=SC2086  # word splitting is the point: each case is an argv
+  out="$(run bash "$mc" presence $args)"; rc=$?
+  set -e
+  [ "$rc" = 2 ] || fail "'presence $args' must be a usage error (exit 2), got $rc: $out"
+  grep -q '^error:' <<<"$out" || fail "'presence $args' must say what is wrong: $out"
+  grep -q '^hint:' <<<"$out" || fail "'presence $args' must say what to run instead: $out"
+done
+[ ! -s "$work/kubectl" ] || fail "usage errors must be caught before touching the cluster"
+echo "  ok: a missing reason, bad duration, bad target or unknown flag exits 2 before any call"
+
+set +e
+out="$(run bash "$mc" presence park bost --reason x)"; rc=$?
+set -e
+[ "$rc" = 1 ] || fail "an unknown target must exit 1, got $rc"
+grep -q '^hint: targets are agent, afk-bot-1, afk-bot-2, bots, all' <<<"$out" || fail "an unknown target must list the real ones: $out"
+grep -q '^PUT' "$work/capture" && fail "an unknown target must write nothing"
+echo "  ok: an unknown target is refused before anything is written"
+
+# --- unpark ------------------------------------------------------------------
+cat > "$work/fx/DELETE_v1_actors_afk-bot-1_presence.json" <<'JSON'
+{"actor_id":"afk-bot-1","effective":"present","default":"present"}
+JSON
+out="$(run bash "$mc" presence unpark bots)"
+[ "$(grep -c '^DELETE' "$work/capture")" = 1 ] || fail "only actors with an override are unparked: $(cat "$work/capture")"
+grep -qx 'DELETE /v1/actors/afk-bot-1/presence ' "$work/capture" || fail "unpark must DELETE the override: $(cat "$work/capture")"
+grep -qx 'unparked\[1\]{id,effective}:' <<<"$out" || fail "unpark must print a TOON table: $out"
+grep -qx '  afk-bot-1,present' <<<"$out" || fail "unpark must show the restored state: $out"
+grep -qx 'unchanged\[1\]: afk-bot-2' <<<"$out" || fail "unpark must name what was already at its default: $out"
+echo "  ok: unparking a group removes each member's override"
+
+set +e
+out="$(run bash "$mc" presence unpark afk-bot-2)"; rc=$?
+set -e
+[ "$rc" = 0 ] || fail "unparking an actor at its default is a no-op, not an error (rc=$rc)"
+grep -q 'no-op' <<<"$out" || fail "a no-op must say so: $out"
+grep -q '^DELETE' "$work/capture" && fail "a no-op must write nothing"
+echo "  ok: unparking what is not parked is an explicit no-op"
+
+# Both bots parked, the second DELETE fails: what already happened is stated.
+jq '.[2].override = .[1].override' "$work/fx/GET_v1_actors.json" > "$work/fx/both.json"
+mv "$work/fx/both.json" "$work/fx/GET_v1_actors.json"
+echo 503 > "$work/fx/DELETE_v1_actors_afk-bot-2_presence.code"
+echo '{"code":"unavailable","message":"store unavailable"}' > "$work/fx/DELETE_v1_actors_afk-bot-2_presence.json"
+set +e
+out="$(run bash "$mc" presence unpark bots)"; rc=$?
+set -e
+[ "$rc" = 1 ] || fail "a failed member must fail the command, got $rc"
+grep -qx 'unparked_before_failure: afk-bot-1' <<<"$out" || fail "a partial unpark must name what it already did: $out"
+grep -q '^error: the presence store is unavailable' <<<"$out" || fail "the failure must be translated: $out"
+echo "  ok: a partial group unpark reports what it did before failing"
+
+# --- the token on writes -------------------------------------------------------
+# park and unpark carry the token too, and a write is where a leak would cost
+# most: the same argv and xtrace checks as ls, per write command.
+for args in "park bots --for 2h --reason token-check" "unpark afk-bot-1"; do
+  # shellcheck disable=SC2086  # word splitting is the point: each case is an argv
+  run bash "$mc" presence $args >/dev/null || fail "'presence $args' must succeed"
+  grep -qx "Authorization: Bearer $TOKEN" "$work/headers" || fail "'presence $args' must send the token as a stdin header"
+  grep -qF "$TOKEN" "$work/argv" && fail "'presence $args' put the token in curl's argv"
+  grep -qF "$TOKEN" "$work/kubectl" && fail "'presence $args' put the token in a kubectl argv"
+  set +e
+  # shellcheck disable=SC2086
+  traced="$(run bash -x "$mc" presence $args 2>&1)"; rc=$?
+  # shellcheck disable=SC2086
+  traced_env="$(run env MC_PRESENCE_URL=http://agent.test MC_PRESENCE_TOKEN=env-token-value bash -x "$mc" presence $args 2>&1)"
+  set -e
+  [ "$rc" = 0 ] || fail "'presence $args' must still work under xtrace: $traced"
+  grep -qF "$TOKEN" <<<"$traced" && fail "the cluster token appeared in an xtrace of 'presence $args'"
+  grep -qF "$(printf '%s' "$TOKEN" | base64)" <<<"$traced" && fail "the encoded token appeared in an xtrace of 'presence $args'"
+  grep -qF "env-token-value" <<<"$traced_env" && fail "MC_PRESENCE_TOKEN appeared in an xtrace of 'presence $args'"
+done
+echo "  ok: park and unpark keep the token off argv and out of an xtrace"
+
 echo "PASS"
