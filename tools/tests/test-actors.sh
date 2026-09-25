@@ -367,4 +367,46 @@ assert got == "JDWServerAgent,LightBlaz4,Dotablaze7321", got
 PY
 echo "  ok: the bridge may kick every actor and nobody else"
 
+# --- what ships --------------------------------------------------------------
+# Every case above sets presence explicitly. This one reads the values as they
+# ship, which have presence on: every consumer carries its variables, and every
+# token arrives through a secretKeyRef rather than a literal.
+python3 - "$work/default.yaml" <<'PY'
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+def env_of(kind, name, container):
+    w = next(d for d in docs if d["kind"] == kind and d["metadata"]["name"] == name)
+    c = next(c for c in w["spec"]["template"]["spec"]["containers"] if c["name"] == container)
+    return {e["name"]: e for e in c.get("env") or []}
+secret = "jdwillmsen-minecraft-fwb-prd-presence"
+url = "http://jdwillmsen-minecraft-fwb-prd-server-agent-metrics.jdwillmsen-prd.svc.cluster.local:9090"
+
+agent = env_of("Deployment", "jdwillmsen-minecraft-fwb-prd-server-agent", "agent")
+for name in ("PRESENCE_ACTORS", "PRESENCE_TOKENS", "PRESENCE_SELF_ID"):
+    assert name in agent, f"the shipped agent has no {name}"
+assert agent["PRESENCE_TOKENS"]["valueFrom"]["secretKeyRef"]["name"] == secret, agent["PRESENCE_TOKENS"]
+
+sts = next(d for d in docs if d["kind"] == "StatefulSet")
+bridge = env_of("StatefulSet", sts["metadata"]["name"], "console-bridge")
+assert "BRIDGE_KICKABLE" in bridge, "the shipped bridge has no kick list"
+
+for name, container in (("jdwillmsen-minecraft-fwb-prd-afk-bot", "bot"),
+                        ("jdwillmsen-minecraft-fwb-prd-afk-bot-2", "bot2")):
+    env = env_of("Deployment", name, container)
+    for var in ("PRESENCE_URL", "PRESENCE_ACTOR_ID", "PRESENCE_DEFAULT", "PRESENCE_TOKEN"):
+        assert var in env, f"the shipped {name} has no {var}"
+    assert env["PRESENCE_URL"]["value"] == url, env["PRESENCE_URL"]
+    assert env["PRESENCE_TOKEN"]["valueFrom"]["secretKeyRef"]["name"] == secret, env["PRESENCE_TOKEN"]
+
+for d in docs:
+    if d["kind"] not in ("Deployment", "StatefulSet"):
+        continue
+    for c in d["spec"]["template"]["spec"]["containers"]:
+        for e in c.get("env") or []:
+            if e["name"] in ("PRESENCE_TOKENS", "PRESENCE_TOKEN"):
+                assert "value" not in e and "secretKeyRef" in e.get("valueFrom", {}), \
+                    f"{d['metadata']['name']}/{c['name']} {e['name']} is not read from a Secret"
+PY
+echo "  ok: the shipped values run presence, with every token from a Secret"
+
 echo "PASS"
