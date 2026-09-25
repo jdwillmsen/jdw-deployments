@@ -229,7 +229,9 @@ presence_connect() {
   PF_PID=$!
   trap 'kill "$PF_PID" 2>/dev/null; rm -f "$PF_LOG"' EXIT
   local port="" _
-  for _ in $(seq 1 50); do
+  # Up to 15s: the port is printed only once kubectl has resolved the Service
+  # to a pod through the API server, which takes seconds over a slow link.
+  for _ in $(seq 1 150); do
     port="$(grep -oE '127\.0\.0\.1:[0-9]+' "$PF_LOG" | head -1 | cut -d: -f2)"
     [ -n "$port" ] && break
     kill -0 "$PF_PID" 2>/dev/null || break
