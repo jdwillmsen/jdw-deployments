@@ -67,6 +67,28 @@ global:
       defaultState: present
       groups: [bots]
 
+  # Runtime parking of the actors above: the agent's /v1 presence API, each
+  # bot's reconciler and the bridge's kick allowlist. Under `global:` for the
+  # same reason as `actors`, so this one switch reaches the bridge sidecar too.
+  presence:
+    # Off, the agent mounts no /v1 routes, the bots run exactly as before and
+    # the bridge refuses every kick. It needs images that read the variables
+    # and a synced secret -- see README, "Parking actors".
+    enabled: false
+
+    secret:
+      # Renders the ExternalSecret on its own, ahead of anything reading it,
+      # the order the console-bridge secret follows: a missing Vault property
+      # then fails this one object, visibly, instead of a workload.
+      create: true
+
+    # The token `tools/mc presence` authenticates with, scoped read and write.
+    # Its name is what the audit trail records for a CLI write, as
+    # api:tools-mc. Bot tokens are derived from `actors`, one per afk-bot,
+    # named and bound after that actor and scoped read and report.
+    operatorToken:
+      name: tools-mc
+
 minecraft-bedrock:
   image:
     repository: itzg/minecraft-bedrock-server

@@ -140,3 +140,12 @@ The actor entry for a bot values block, as JSON; call with
 {{- if eq (toString .valuesKey) $key -}}{{- toJson . -}}{{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/* The presence Secret key holding one token; call with an actor id or token name. */}}
+{{- define "presence.tokenKey" -}}
+presence_token_{{ . | replace "-" "_" }}
+{{- end -}}
+
+{{- define "presence.secret.name" -}}
+{{ .Release.Name }}-presence
+{{- end -}}

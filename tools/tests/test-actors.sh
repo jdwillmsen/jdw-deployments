@@ -175,4 +175,32 @@ global:
     - {id: agent, kind: agent, gamertag: JDWServerAgent, defaultState: present, groups: []}
     - {id: afk-bot-1, kind: afk-bot, valuesKey: bot, gamertag: LightBlaz3, defaultState: present, groups: [bots]}'
 
+# --- the presence secret -----------------------------------------------------
+# ESO renders target.template with the Vault properties as `.<key>`. Doing the
+# same substitution here proves the three things that matter: the agent's JSON
+# parses, every bot's own key holds exactly the token the agent binds to it,
+# and the operator token cannot report as a bot.
+python3 - "$work/default.yaml" <<'PY'
+import json, re, sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+es = next((d for d in docs if d["kind"] == "ExternalSecret"
+           and d["metadata"]["name"] == "jdwillmsen-minecraft-fwb-prd-presence"), None)
+assert es, "the presence ExternalSecret is not rendered while presence is off; it must sync before anything reads it"
+props = {r["secretKey"]: r["remoteRef"] for r in es["spec"]["data"]}
+assert set(props) == {"presence_token_afk_bot_1", "presence_token_afk_bot_2", "presence_token_tools_mc"}, sorted(props)
+for key, ref in props.items():
+    assert ref["key"] == "minecraft-fwb" and ref["property"] == key, (key, ref)
+fake = {k: "tok-" + k for k in props}
+rendered = {k: re.sub(r"\{\{ \.(\w+) \}\}", lambda m: fake[m.group(1)], v)
+            for k, v in es["spec"]["target"]["template"]["data"].items()}
+tokens = {t["name"]: t for t in json.loads(rendered["presence_tokens"])}
+assert set(tokens) == {"afk-bot-1", "afk-bot-2", "tools-mc"}, sorted(tokens)
+for bot in ("afk-bot-1", "afk-bot-2"):
+    key = "presence_token_" + bot.replace("-", "_")
+    assert rendered[key] == tokens[bot]["token"], f"{bot}'s own key and the agent's list disagree"
+    assert tokens[bot]["actor"] == bot and sorted(tokens[bot]["scopes"]) == ["presence:read", "presence:report"], tokens[bot]
+assert "actor" not in tokens["tools-mc"] and sorted(tokens["tools-mc"]["scopes"]) == ["presence:read", "presence:write"], tokens["tools-mc"]
+PY
+echo "  ok: the presence secret binds each bot's token to its own actor"
+
 echo "PASS"
