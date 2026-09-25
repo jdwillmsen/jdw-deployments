@@ -183,14 +183,22 @@ global:
     operatorToken:
       name: afk-bot-1'
 
-# The bots' PRESENCE_URL is the agent's metrics Service, which renders only
-# with the agent.
-expect_refused "presence without the agent" "global.presence.enabled needs agent.enabled" '
+# The bots' PRESENCE_URL is the agent's metrics Service, and the agent behind
+# it renders only with the bridge too. Dropping values-console-bridge.yaml is
+# how the bridge is undone, and must not strand a parked bot.
+expect_refused "presence without the agent" "global.presence.enabled needs the agent Deployment" '
 global:
   presence:
     enabled: true
 agent:
   enabled: false'
+
+expect_refused "presence without the console bridge" "global.presence.enabled needs the agent Deployment" '
+global:
+  presence:
+    enabled: true
+  consoleBridge:
+    enabled: false'
 
 expect_refused "an operator token name that is not an id" "operatorToken.name \"Tools_MC\" must match" '
 global:
@@ -408,5 +416,15 @@ for d in docs:
                     f"{d['metadata']['name']}/{c['name']} {e['name']} is not read from a Secret"
 PY
 echo "  ok: the shipped values run presence, with every token from a Secret"
+
+# Removing values-console-bridge.yaml is how the bridge is undone. That must
+# still render, and take presence off with the agent it needs.
+helm template jdwillmsen-minecraft-fwb-prd "$chart" -n jdwillmsen-prd \
+  -f "$chart/values.yaml" -f "$chart/values-prd.yaml" > "$work/no-bridge.yaml" \
+  || fail "the chart does not render without values-console-bridge.yaml"
+if grep -qE 'name: (PRESENCE_[A-Z_]+|BRIDGE_KICKABLE)$' "$work/no-bridge.yaml"; then
+  fail "presence consumers render without the bridge, and so without the agent they poll"
+fi
+echo "  ok: undoing the bridge turns presence off with it"
 
 echo "PASS"
