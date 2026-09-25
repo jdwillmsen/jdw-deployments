@@ -369,6 +369,13 @@ minecraft-bedrock:
           value: /data
         - name: HTTP_ADDR
           value: ":8766"
+        {{- if .Values.global.presence.enabled }}
+        # The only gamertags `kick` is accepted for, so a leaked bridge token
+        # cannot remove a real player. Built from global.actors, the list the
+        # agent parks from.
+        - name: BRIDGE_KICKABLE
+          value: {{ include "actors.kickable" . | quote }}
+        {{- end }}
       ports:
         - name: bridge-http
           containerPort: 8766
