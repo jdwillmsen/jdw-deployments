@@ -21,6 +21,7 @@ mkdir -p "$work/bin" "$work/fx" "$work/fx-off"
 cat > "$work/bin/kubectl" <<'SHIM'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$KUBECTL_LOG"
+printf 'kubectl %s\n' "${MC_PRESENCE_TOKEN-}" >> "$ENV_LOG"
 case "$1" in
   get)
     [ -n "${FAKE_NO_SECRET:-}" ] && { echo 'Error from server (NotFound): secrets not found' >&2; exit 1; }
@@ -38,6 +39,7 @@ SHIM
 cat > "$work/bin/curl" <<'SHIM'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$ARGV_LOG"
+printf 'curl %s\n' "${MC_PRESENCE_TOKEN-}" >> "$ENV_LOG"
 method=GET body="" url=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -58,7 +60,14 @@ code=200
 [ -f "$FIXTURES/$slug.json" ] && cat "$FIXTURES/$slug.json"
 printf '\n%s' "$code"
 SHIM
-chmod +x "$work/bin/kubectl" "$work/bin/curl"
+
+# jq only records what it inherited, then runs for real.
+cat > "$work/bin/jq" <<SHIM
+#!/usr/bin/env bash
+printf 'jq %s\\n' "\${MC_PRESENCE_TOKEN-}" >> "\$ENV_LOG"
+exec $(command -v jq) "\$@"
+SHIM
+chmod +x "$work/bin/kubectl" "$work/bin/curl" "$work/bin/jq"
 
 # afk-bot-1 parked from the CLI with an expiry; afk-bot-2 and the agent at
 # their defaults. The agent reports no status, so `connected` must say null
@@ -78,9 +87,10 @@ printf '404 page not found' > "$work/fx-off/GET_v1_actors.json"
 echo 404 > "$work/fx-off/GET_v1_actors.code"
 
 run() {
-  : > "$work/capture"; : > "$work/argv"; : > "$work/headers"; : > "$work/kubectl"
+  : > "$work/capture"; : > "$work/argv"; : > "$work/headers"; : > "$work/kubectl"; : > "$work/env"
   env PATH="$work/bin:$PATH" MC_NAMESPACE=test-ns FIXTURES="$work/fx" FAKE_TOKEN="$TOKEN" \
       CAPTURE="$work/capture" ARGV_LOG="$work/argv" HEADERS="$work/headers" KUBECTL_LOG="$work/kubectl" \
+      ENV_LOG="$work/env" \
       "$@"
 }
 
@@ -146,6 +156,19 @@ out="$(run env MC_PRESENCE_URL=http://agent.test MC_PRESENCE_TOKEN=from-env bash
 grep -qx "Authorization: Bearer from-env" "$work/headers" || fail "MC_PRESENCE_TOKEN must override the cluster secret"
 [ ! -s "$work/kubectl" ] || fail "with URL and token given, nothing may touch the cluster: $(cat "$work/kubectl")"
 echo "  ok: MC_PRESENCE_URL and MC_PRESENCE_TOKEN bypass the cluster"
+
+# A child's environment is readable from /proc by the same user for as long as
+# it runs, and the port-forward runs for the whole command.
+for args in "ls" "park bots --for 2h --reason env-check" "unpark afk-bot-1"; do
+  # shellcheck disable=SC2086  # word splitting is the point: each case is an argv
+  out="$(run env MC_PRESENCE_TOKEN=env-token-value bash "$mc" presence $args)" || fail "'presence $args' must succeed: $out"
+  for child in kubectl curl jq; do
+    grep -q "^$child " "$work/env" \
+      || fail "'presence $args' did not run $child, so its environment went unchecked: $(cat "$work/env")"
+  done
+  grep -qF "env-token-value" "$work/env" && fail "'presence $args' passed MC_PRESENCE_TOKEN on to a child: $(cat "$work/env")"
+done
+echo "  ok: MC_PRESENCE_TOKEN is not inherited by kubectl, curl or jq"
 
 # --- errors ----------------------------------------------------------------------
 set +e
