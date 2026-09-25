@@ -92,6 +92,12 @@ shared name would hand one of them the other's token. */ -}}
 {{- if hasKey $ids $operator -}}
 {{- fail (printf "global.presence.operatorToken.name %q is also an actor id, so it would collide with that actor's token" $operator) -}}
 {{- end -}}
+{{- /* Every bot's PRESENCE_URL names the agent's metrics Service, which
+renders only with the agent: without it the bots would poll a Service that
+does not exist and never leave their default. */ -}}
+{{- if and .Values.global.presence.enabled (not .Values.agent.enabled) -}}
+{{- fail "global.presence.enabled needs agent.enabled: the bots find the presence API through the agent's metrics Service, which renders only with the agent" -}}
+{{- end -}}
 {{- if ne $agents 1 -}}
 {{- fail (printf "global.actors must list exactly one actor of kind agent, found %d" $agents) -}}
 {{- end -}}
