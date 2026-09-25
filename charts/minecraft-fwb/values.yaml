@@ -34,6 +34,39 @@ global:
       # that is the whole point of being able to turn it on first.
       create: true
 
+  # Every account that puts a player into the world. One list, read by three
+  # processes: the agent's registry (PRESENCE_ACTORS), each bot's own identity
+  # (PRESENCE_ACTOR_ID, PRESENCE_DEFAULT) and the bridge's kick allowlist
+  # (BRIDGE_KICKABLE). Under `global:` because the bridge sidecar is
+  # tpl-rendered in the vendored subchart's scope, which reaches nothing else.
+  #
+  # defaultState is the baseline git owns. Parking at runtime is an override
+  # on top of it with an owner, a reason and usually an expiry -- see README,
+  # "Parking actors". Changing it here is for a change of intent that should
+  # outlive any override.
+  #
+  # valuesKey ties an afk-bot to the values block its Deployment renders from.
+  # The render fails if an enabled bot block has no entry here, so a bot
+  # cannot run unregistered.
+  actors:
+    - id: agent
+      kind: agent
+      gamertag: JDWServerAgent
+      defaultState: present
+      groups: []
+    - id: afk-bot-1
+      kind: afk-bot
+      valuesKey: bot
+      gamertag: LightBlaz3
+      defaultState: present
+      groups: [bots]
+    - id: afk-bot-2
+      kind: afk-bot
+      valuesKey: bot2
+      gamertag: Dotablaze7321
+      defaultState: present
+      groups: [bots]
+
 minecraft-bedrock:
   image:
     repository: itzg/minecraft-bedrock-server
@@ -739,8 +772,8 @@ bot:
   # credentials and forces another interactive login.
   username: fwb-afk-bot
 
-  # See bot2.gamertag for why this is recorded. Documentation only.
-  gamertag: LightBlaz3
+  # The gamertag this account plays as is afk-bot-1's in global.actors, which
+  # the agent parks by and the bridge kicks by.
 
   # Live as of the 1.1.0 bump above. It was inert under the TypeScript build,
   # whose client library read the requested radius from `client.viewDistance`
@@ -845,16 +878,11 @@ bot2:
   # Distinct from bot.username so the two token caches never collide.
   username: fwb-afk-bot-2
 
-  # The gamertag this account actually appears as in game. Recorded because
-  # nothing else in the system maps a Deployment to a player: `username` above
-  # is only the token-cache key, the bot never logs its own identity, and the
-  # gamertag lives inside an encoded JWT in the token cache. Working it out on
-  # 2026-09-08 took correlating this pod's spawn timestamp against the server's
-  # "Player connected" line three seconds earlier.
-  #
-  # Documentation only -- nothing reads it. It is here so the next person
-  # asked to move a specific bot can answer "which one is that" in one grep.
-  gamertag: Dotablaze7321
+  # The gamertag this account plays as is afk-bot-2's in global.actors. It was
+  # recorded here first, as documentation only, because nothing else mapped a
+  # Deployment to a player -- `username` is only the token-cache key and the
+  # gamertag sits inside an encoded JWT. The actor list is that map now, and
+  # the agent and the bridge both read it.
 
   # Matched to the server's tickDistance (12), which is Bedrock's maximum.
   #
