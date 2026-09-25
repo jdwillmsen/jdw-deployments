@@ -60,6 +60,26 @@ spec:
               value: {{ .Values.bot.username | quote }}
             - name: MC_VIEW_DISTANCE
               value: {{ .Values.bot.viewDistance | quote }}
+            {{- if .Values.global.presence.enabled }}
+            {{- $actor := include "actors.forValuesKey" (dict "root" . "key" "bot") | fromJson }}
+            # PRESENCE_DEFAULT is what the bot acts on until the agent first
+            # answers; after that it keeps the last answer through an agent
+            # outage, so a restarting agent never makes the bots flap. The
+            # metrics Service carries only ready pods, which is what the bot
+            # wants: a parked leader and a standby are ready and answer /v1,
+            # while a pod still starting answers it with a bare 404.
+            - name: PRESENCE_URL
+              value: "http://{{ include "agent.name" . }}-metrics.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.agent.metrics.port }}"
+            - name: PRESENCE_ACTOR_ID
+              value: {{ $actor.id | quote }}
+            - name: PRESENCE_DEFAULT
+              value: {{ $actor.defaultState | quote }}
+            - name: PRESENCE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "presence.secret.name" . }}
+                  key: {{ include "presence.tokenKey" $actor.id }}
+            {{- end }}
           resources:
             {{- toYaml .Values.bot.resources | nindent 12 }}
           volumeMounts:

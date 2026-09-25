@@ -134,6 +134,21 @@ spec:
                   name: {{ . | quote }}
                   key: {{ $.Values.agent.announceApi.secretKey | quote }}
             {{- end }}
+            {{- if .Values.global.presence.enabled }}
+            {{- $self := include "actors.agent" . | fromJson }}
+            # The registry rides the same switch as the tokens: an agent that
+            # knew its actors but mounted no /v1 routes would park and kick on
+            # its own policy with no API to undo it.
+            - name: PRESENCE_ACTORS
+              value: {{ include "actors.json" . | quote }}
+            - name: PRESENCE_SELF_ID
+              value: {{ $self.id | quote }}
+            - name: PRESENCE_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "presence.secret.name" . }}
+                  key: presence_tokens
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.agent.metrics.port }}
