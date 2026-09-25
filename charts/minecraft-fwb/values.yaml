@@ -75,10 +75,12 @@ global:
     # the bridge refuses every kick. It needs images that read the variables
     # and a synced secret -- see README, "Parking actors".
     #
-    # On once the agent, bridge and bot releases that read these variables
-    # were published and the presence ExternalSecret was observed SecretSynced
-    # -- the order every secret in this chart follows.
-    enabled: true
+    # Off here and on in values-console-bridge.yaml. Presence needs the agent,
+    # which renders only with the bridge, so the file that switches the bridge
+    # on switches presence on with it, and removing that file to undo the
+    # bridge turns presence off in the same change instead of leaving a
+    # parked bot polling a Service with no agent behind it.
+    enabled: false
 
     secret:
       # Renders the ExternalSecret on its own, ahead of anything reading it,

@@ -25,6 +25,12 @@
 global:
   consoleBridge:
     enabled: true
+  # Here rather than in values.yaml because presence needs the agent, and the
+  # agent renders only with the bridge -- see values.yaml's global.presence.
+  # Turned on only once the presence ExternalSecret reads SecretSynced and the
+  # V8 presence tables exist.
+  presence:
+    enabled: true
 
 minecraft-bedrock:
   # mc-server-runner (inside this image) reads these directly — no
