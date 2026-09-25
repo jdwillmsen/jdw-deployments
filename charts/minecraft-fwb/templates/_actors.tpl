@@ -50,17 +50,6 @@ on the name.
 {{- if not (has $a.defaultState (list "present" "parked")) -}}
 {{- fail (printf "%s.defaultState must be present or parked, got %q" $where (toString $a.defaultState)) -}}
 {{- end -}}
-{{- range $a.groups -}}
-{{- if eq . "all" -}}
-{{- fail (printf "%s.groups lists \"all\", which every actor is already in" $where) -}}
-{{- end -}}
-{{- if not (regexMatch "^[a-z0-9][a-z0-9-]{0,62}$" (toString .)) -}}
-{{- fail (printf "%s.groups entry %q must match ^[a-z0-9][a-z0-9-]{0,62}$" $where (toString .)) -}}
-{{- end -}}
-{{- if hasKey $ids . -}}
-{{- fail (printf "%s.groups entry %q is also an actor id, so a target naming it is ambiguous" $where .) -}}
-{{- end -}}
-{{- end -}}
 {{- if eq $a.kind "agent" -}}
 {{- $agents = add1 $agents -}}
 {{- if $a.valuesKey -}}
@@ -76,6 +65,21 @@ on the name.
 {{- $_ := set $usedKeys $a.valuesKey true -}}
 {{- else -}}
 {{- fail (printf "%s.kind must be agent or afk-bot, got %q" $where (toString $a.kind)) -}}
+{{- end -}}
+{{- end -}}
+{{- /* A second pass, so a group naming an actor listed after it is caught too. */ -}}
+{{- range $i, $a := .Values.global.actors -}}
+{{- $where := printf "global.actors[%d]" $i -}}
+{{- range $a.groups -}}
+{{- if eq . "all" -}}
+{{- fail (printf "%s.groups lists \"all\", which every actor is already in" $where) -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9][a-z0-9-]{0,62}$" (toString .)) -}}
+{{- fail (printf "%s.groups entry %q must match ^[a-z0-9][a-z0-9-]{0,62}$" $where (toString .)) -}}
+{{- end -}}
+{{- if hasKey $ids . -}}
+{{- fail (printf "%s.groups entry %q is also an actor id, so a target naming it is ambiguous" $where .) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if ne $agents 1 -}}
