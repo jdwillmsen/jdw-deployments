@@ -183,6 +183,15 @@ global:
     operatorToken:
       name: afk-bot-1'
 
+# The bots' PRESENCE_URL is the agent's metrics Service, which renders only
+# with the agent.
+expect_refused "presence without the agent" "global.presence.enabled needs agent.enabled" '
+global:
+  presence:
+    enabled: true
+agent:
+  enabled: false'
+
 expect_refused "an operator token name that is not an id" "operatorToken.name \"Tools_MC\" must match" '
 global:
   presence:
