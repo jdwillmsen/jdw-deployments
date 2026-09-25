@@ -316,8 +316,22 @@ actor is parked the agent kicks its gamertag if the server still lists it,
 because Bedrock holds a session open after the client leaves. So a parked
 actor is gone from `tools/mc players` within about 30 seconds. After an unpark
 or an expiry it is back once its next poll lands and its login completes,
-usually within 30 seconds. A deliberately parked actor does not page anyone.
-An actor that should be present and is not still does.
+usually within 30 seconds.
+
+**Alerts do not know about parks yet.** Until they are rewritten, which is a
+separate change, parking the agent for more than 10 minutes fires
+`JdwillmsenMinecraftAgentDisconnected` (critical), because a parked agent
+reports `mc_agent_connected` 0 just as a disconnected one does. Before a
+longer agent park, create an Alertmanager silence with the matchers
+`alertname=JdwillmsenMinecraftAgentDisconnected` and `namespace=jdwillmsen-prd`,
+lasting as long as the park; with `amtool` against the cluster's
+Alertmanager, that is
+`amtool silence add alertname=JdwillmsenMinecraftAgentDisconnected namespace=jdwillmsen-prd --duration=2h --comment="agent parked: <why>"`.
+The bots' only alert, `JdwillmsenMinecraftAfkBotsDegraded`, watches their
+Deployments rather than their connections, and a parked bot's pod keeps
+running, so parking a bot pages nobody. By the same token, a bot that should
+be in the world and is not pages nobody either, as long as its pod runs; only
+the agent's absence pages.
 
 **Unpark clears the override unconditionally** — no version check, no
 conflict, straight back to whatever `defaultState` says. There is no group
@@ -382,8 +396,11 @@ restart`: selfHeal reverts the restart annotation.
 **The switch** is `global.presence.enabled`. Off, the agent mounts no `/v1`
 routes, the bots run exactly as they did before, and the bridge refuses every
 `kick`. It needs bridge v0.4.0 or later, agent 0.22.0 or later and bot 1.2.0
-or later — the first release of each that reads the presence variables (and,
-for the bridge, `BRIDGE_KICKABLE`). Turning it on or off restarts the server
+or later. The agent and bot releases are the first to read the presence
+variables. The bridge is v0.4.0 not for `BRIDGE_KICKABLE`, which v0.3.0
+already reads, but for the `backfill` field it sets on events replayed from
+log history, so that history the bridge replays on a reconnect is never
+mistaken for a player joining and cannot wake a park. Turning it on or off restarts the server
 pod once, because the bridge sidecar's kick list changes. The deploy-announce
 hook counts that down like any other server restart.
 
