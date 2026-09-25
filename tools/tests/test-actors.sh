@@ -340,4 +340,22 @@ read -r global_server _ < <(digests "$work/global-change.yaml")
 [ "$off_agent" != "$on_agent" ] || fail "turning presence on must move the agent digest"
 echo "  ok: only what reaches a workload moves its digest"
 
+# --- the bridge's kick list ---------------------------------------------------
+# Read from the rendered sidecar, and from a render with a gamertag renamed, so
+# the list is shown to follow global.actors rather than merely to match today.
+python3 - "$work/on.yaml" "$work/rename-on.yaml" <<'PY'
+import sys, yaml
+def kickable(path):
+    docs = [d for d in yaml.safe_load_all(open(path)) if d]
+    sts = next(d for d in docs if d["kind"] == "StatefulSet")
+    bridge = next(c for c in sts["spec"]["template"]["spec"]["containers"] if c["name"] == "console-bridge")
+    env = {e["name"]: e for e in bridge["env"]}
+    return env["BRIDGE_KICKABLE"]["value"]
+got = kickable(sys.argv[1])
+assert got == "JDWServerAgent,LightBlaz3,Dotablaze7321", got
+got = kickable(sys.argv[2])
+assert got == "JDWServerAgent,LightBlaz4,Dotablaze7321", got
+PY
+echo "  ok: the bridge may kick every actor and nobody else"
+
 echo "PASS"
