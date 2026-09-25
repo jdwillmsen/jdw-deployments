@@ -393,7 +393,9 @@ rotation, delete the agent and bot pods so they read the new values. Env from
 a Secret is fixed at pod start. Use `kubectl delete pod`, not `kubectl rollout
 restart`: selfHeal reverts the restart annotation.
 
-**The switch** is `global.presence.enabled`. Off, the agent mounts no `/v1`
+**The switch** is `global.presence.enabled`, set in
+`values-console-bridge.yaml` beside the bridge's own, so removing that file to
+undo the bridge turns presence off with it. Off, the agent mounts no `/v1`
 routes, the bots run exactly as they did before, and the bridge refuses every
 `kick`. It needs bridge v0.4.0 or later, agent 0.22.0 or later and bot 1.2.0
 or later. The agent and bot releases are the first to read the presence
