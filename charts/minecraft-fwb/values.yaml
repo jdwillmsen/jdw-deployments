@@ -1167,7 +1167,15 @@ agent:
     # legacy rather than temperate, so the graph shows how much of the herd
     # the save never assigned. "Where is the nearest cold cow" is now one
     # census run instead of a hand-pulled world and a scratch scanner.
-    tag: "0.20.0"
+    #
+    # 0.21.0 separates the agent's in-world session from its monitoring:
+    # TPS sampling and the server watcher follow the leader lock, and the
+    # session runs under a presence gate that is always open in this
+    # release, so nothing a player sees changes. It is the groundwork for
+    # parking the agent out of the world while it keeps monitoring; with the
+    # gate closed, the online roster comes from the console bridge's list
+    # and event log instead of the game connection.
+    tag: "0.21.0"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
