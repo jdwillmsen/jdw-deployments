@@ -74,7 +74,11 @@ global:
     # Off, the agent mounts no /v1 routes, the bots run exactly as before and
     # the bridge refuses every kick. It needs images that read the variables
     # and a synced secret -- see README, "Parking actors".
-    enabled: false
+    #
+    # On once the agent, bridge and bot releases that read these variables
+    # were published and the presence ExternalSecret was observed SecretSynced
+    # -- the order every secret in this chart follows.
+    enabled: true
 
     secret:
       # Renders the ExternalSecret on its own, ahead of anything reading it,
@@ -340,7 +344,12 @@ minecraft-bedrock:
       # The image ref has no such value to reach for at all (this sidecar
       # has no separate image/tag value — see consoleBridge's own comment
       # below) and is a literal for that reason.
-      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.2.0"
+      #
+      # 0.4.0 accepts `kick` for the gamertags in BRIDGE_KICKABLE below and
+      # refuses it for everyone else (0.3.0), and marks the joins it replays
+      # from the server log as backfill, which the agent needs so an old join
+      # cannot wake it from a park.
+      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.4.0"
       env:
         # CONSOLE_ADDR, not CONSOLE_ADDRESS: the bridge reads the former, and
         # the misspelling was inert -- it only ever worked because the value
@@ -793,7 +802,12 @@ bot:
     # holds was written by the TypeScript build and cannot be reused, so the
     # first pod on this tag will sit unauthenticated until someone completes
     # the device-code login by hand. See README, "Relocating a bot".
-    tag: "1.1.0"
+    #
+    # 1.2.0 is the presence release. It adds the reconciler: with PRESENCE_URL
+    # set, the bot asks the agent every 10 seconds whether it should be in the
+    # world, and closes its session and stops reconnecting while parked. With
+    # it unset the bot behaves exactly as before.
+    tag: "1.2.0"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -901,7 +915,10 @@ bot2:
     #
     # Rolling back is this value. The TypeScript image is not going anywhere
     # until the farm says the Go one works.
-    tag: "1.1.0"
+    #
+    # 1.2.0 is the presence release, the same as bot above and for the same
+    # reason.
+    tag: "1.2.0"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
@@ -1232,7 +1249,18 @@ agent:
     # parking the agent out of the world while it keeps monitoring; with the
     # gate closed, the online roster comes from the console bridge's list
     # and event log instead of the game connection.
-    tag: "0.21.0"
+    #
+    # 0.22.0 is the presence release that gate was built for. It adds the /v1
+    # presence API, the leader's loop that expires, wakes and kicks parked
+    # actors, !presence, !park, !unpark, !leave and @server leave, and the
+    # mc_presence_* metrics, and closes the gate while the agent itself is
+    # parked. All of it reads global.actors and the presence tokens, switched
+    # on in the same change as this bump. It needs the V8 presence tables,
+    # without which every presence call answers 503, and a console bridge of
+    # 0.4.0 or later: an older one replays old joins from the server log
+    # without marking them backfill, and a parked agent would take one for an
+    # arrival and wake.
+    tag: "0.22.0"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
