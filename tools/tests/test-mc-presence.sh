@@ -280,6 +280,30 @@ grep -q '^hint: targets are agent, afk-bot-1, afk-bot-2, bots, all' <<<"$out" ||
 grep -q '^PUT' "$work/capture" && fail "an unknown target must write nothing"
 echo "  ok: an unknown target is refused before anything is written"
 
+# A parked agent reads no chat, so a park of it with no expiry has no way back
+# but this tool. The warning says so; any other park stays quiet.
+cat > "$work/fx/PUT_v1_actors_agent_presence.json" <<'JSON'
+{"actor_id":"agent","effective":"parked","default":"present","override":{"state":"parked","reason":"quiet","set_by":"api:tools-mc","set_at":"2026-09-23T10:00:00Z","version":1}}
+JSON
+cat > "$work/fx/PUT_v1_groups_all_presence.json" <<'JSON'
+[{"actor_id":"agent","effective":"parked","default":"present","override":{"state":"parked","reason":"quiet","set_by":"api:tools-mc","set_at":"2026-09-23T10:00:00Z","version":1}}]
+JSON
+warning='warning: agent parked with no expiry; chat cannot unpark it; run: mc presence unpark agent'
+for args in "park agent --reason quiet" "park all --reason quiet"; do
+  set +e
+  # shellcheck disable=SC2086  # word splitting is the point: each case is an argv
+  out="$(run bash "$mc" presence $args)"; rc=$?
+  set -e
+  [ "$rc" = 0 ] || fail "'presence $args' is a warning, not an error (rc=$rc): $out"
+  grep -qxF "$warning" <<<"$out" || fail "'presence $args' must warn that only this tool can bring the agent back: $out"
+done
+for args in "park agent --for 1h --reason quiet" "park bots --reason quiet" "park afk-bot-1 --reason quiet"; do
+  # shellcheck disable=SC2086
+  out="$(run bash "$mc" presence $args)" || fail "'presence $args' must succeed: $out"
+  grep -q '^warning:' <<<"$out" && fail "'presence $args' must not warn: $out"
+done
+echo "  ok: only a park of the agent with no expiry warns, and still exits 0"
+
 # --- unpark ------------------------------------------------------------------
 cat > "$work/fx/DELETE_v1_actors_afk-bot-1_presence.json" <<'JSON'
 {"actor_id":"afk-bot-1","effective":"present","default":"present"}
