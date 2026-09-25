@@ -241,13 +241,15 @@ presence_connect() {
 }
 
 # The token lives only in this variable: never echoed, never in argv (which
-# any user on the machine can read from ps), never in a file. It travels
-# through pipes from builtins, because a here-string may be spooled to a temp
-# file.
+# any user on the machine can read from ps), never in a file, never in a
+# child's environment (readable from /proc the same way). It travels through
+# pipes from builtins, because a here-string may be spooled to a temp file.
+# Read before any child starts, the port-forward included.
 presence_token() {
   xtrace_pause
-  if [ -n "${MC_PRESENCE_TOKEN:-}" ]; then
-    PRESENCE_TOKEN="$MC_PRESENCE_TOKEN"
+  PRESENCE_TOKEN="${MC_PRESENCE_TOKEN:-}"
+  unset MC_PRESENCE_TOKEN
+  if [ -n "$PRESENCE_TOKEN" ]; then
     xtrace_resume
     return 0
   fi
@@ -322,7 +324,7 @@ presence_ls() {
       *) usage_err "unknown argument for presence ls: $1" "valid flags for presence ls: --help" ;;
     esac
   done
-  presence_need; presence_connect; presence_token; presence_actors
+  presence_need; presence_token; presence_connect; presence_actors
   jq -r "$TOON_JQ"'
     "count: \(length)",
     if length == 0 then "actors: none" else
@@ -405,7 +407,7 @@ presence_park() {
     usage_err "not a positive Go duration: $duration" "use units like 30m, 2h or 1h30m"
   fi
 
-  presence_need; presence_connect; presence_token; presence_actors
+  presence_need; presence_token; presence_connect; presence_actors
   presence_resolve "$target"
 
   local body result
@@ -460,7 +462,7 @@ presence_unpark() {
   [ -n "$target" ] || usage_err "presence unpark needs a target" "$SELF presence unpark <id|group|all>"
   [[ "$target" =~ $ID_RE ]] || usage_err "not an actor id, group or all: $target" "$SELF presence ls"
 
-  presence_need; presence_connect; presence_token; presence_actors
+  presence_need; presence_token; presence_connect; presence_actors
   presence_resolve "$target"
 
   # There is no group DELETE, so a group is removed one member at a time. An
