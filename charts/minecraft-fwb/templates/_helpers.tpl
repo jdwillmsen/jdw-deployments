@@ -86,9 +86,23 @@ That approximation is deliberate and has one known gap: bumping the vendored
 subchart version changes the rendered pod template without changing these
 values, so that one case would not warn. Every change made through this chart
 does.
+
+global.* is merged into the subchart's values, so global.actors and
+global.presence would move this digest on every edit, though the StatefulSet
+reads only the kick list derived from them: a bot's default flipped there
+would count down a server restart that never comes. They are swapped for what
+the bridge sidecar renders from them, and with presence off the digest is the
+one it was before either existed.
 */}}
 {{- define "deployAnnounce.serverSpecHash" -}}
-{{ index .Values "minecraft-bedrock" | toYaml | sha256sum | trunc 16 }}
+{{- /* A copy, because set writes into the map it is given, and the original is the live subchart values every later template reads. */ -}}
+{{- $values := deepCopy (index .Values "minecraft-bedrock") -}}
+{{- $global := omit $values.global "actors" "presence" -}}
+{{- if .Values.global.presence.enabled -}}
+{{- $_ := set $global "bridgeKickable" (include "actors.kickable" .) -}}
+{{- end -}}
+{{- $_ := set $values "global" $global -}}
+{{ $values | toYaml | sha256sum | trunc 16 }}
 {{- end -}}
 
 {{/*
@@ -114,11 +128,19 @@ Same approximation as the server's, for the same reason, with the same gap: a
 change to the agent's template rather than to these values -- a probe, a
 rollout strategy -- moves the pod without moving this digest, and that sync
 stays quiet.
+
+The actor list reaches the agent as PRESENCE_ACTORS, so it is part of what
+restarts the agent once presence is on -- and nothing while it is off, which
+keeps this digest unchanged until then.
 */}}
 {{- define "deployAnnounce.agentSpecHash" -}}
 {{- if and .Values.agent.enabled .Values.global.consoleBridge.enabled
           (gt (int .Values.agent.replicas) 0) -}}
-{{ .Values.agent | toYaml | sha256sum | trunc 16 }}
+{{- $values := .Values.agent -}}
+{{- if .Values.global.presence.enabled -}}
+{{- $values = dict "agent" .Values.agent "actors" (include "actors.json" .) -}}
+{{- end -}}
+{{ $values | toYaml | sha256sum | trunc 16 }}
 {{- end -}}
 {{- end -}}
 

@@ -203,4 +203,127 @@ assert "actor" not in tokens["tools-mc"] and sorted(tokens["tools-mc"]["scopes"]
 PY
 echo "  ok: the presence secret binds each bot's token to its own actor"
 
+# --- consumers, off and on ---------------------------------------------------
+# Off must read exactly as before this feature: no variable a bot or the agent
+# would act on, and no kick allowlist. Both states are set explicitly, so the
+# suite means the same whichever one values.yaml ships.
+render --set global.presence.enabled=false > "$work/presence-off.yaml"
+python3 - "$work/presence-off.yaml" <<'PY'
+import sys, yaml
+for d in yaml.safe_load_all(open(sys.argv[1])):
+    if not d or d["kind"] not in ("Deployment", "StatefulSet"):
+        continue
+    for c in d["spec"]["template"]["spec"]["containers"]:
+        names = {e["name"] for e in c.get("env") or []}
+        stray = {n for n in names if n.startswith("PRESENCE_") or n == "BRIDGE_KICKABLE"}
+        assert not stray, f"{d['metadata']['name']}/{c['name']} carries {sorted(stray)} while presence is off"
+PY
+echo "  ok: presence off renders no consumer"
+
+render --set global.presence.enabled=true > "$work/on.yaml" || fail "the chart does not render with presence on"
+python3 - "$work/on.yaml" <<'PY'
+import json, sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+def workload(kind, name):
+    return next(d for d in docs if d["kind"] == kind and d["metadata"]["name"] == name)
+def env_of(kind, name, container):
+    c = next(c for c in workload(kind, name)["spec"]["template"]["spec"]["containers"] if c["name"] == container)
+    return {e["name"]: e for e in c.get("env") or []}
+
+agent = env_of("Deployment", "jdwillmsen-minecraft-fwb-prd-server-agent", "agent")
+actors = json.loads(agent["PRESENCE_ACTORS"]["value"])
+assert actors == [
+    {"id": "agent", "gamertag": "JDWServerAgent", "kind": "agent", "groups": [], "default_state": "present"},
+    {"id": "afk-bot-1", "gamertag": "LightBlaz3", "kind": "afk-bot", "groups": ["bots"], "default_state": "present"},
+    {"id": "afk-bot-2", "gamertag": "Dotablaze7321", "kind": "afk-bot", "groups": ["bots"], "default_state": "present"},
+], actors
+assert agent["PRESENCE_SELF_ID"]["value"] == "agent"
+ref = agent["PRESENCE_TOKENS"]["valueFrom"]["secretKeyRef"]
+assert ref == {"name": "jdwillmsen-minecraft-fwb-prd-presence", "key": "presence_tokens"}, ref
+
+# The agent's worst-case clean shutdown takes about 22s. Unset means the
+# default 30s, which covers it; a shorter one would SIGKILL it partway.
+grace = workload("Deployment", "jdwillmsen-minecraft-fwb-prd-server-agent")["spec"]["template"]["spec"].get(
+    "terminationGracePeriodSeconds", 30)
+assert grace >= 25, f"the agent gets {grace}s to stop; it needs at least 25"
+
+# The ready-only metrics Service, on purpose: a parked leader and a standby
+# both report ready, and the only not-ready pod is one still starting, which
+# answers /v1 with a bare 404 until its routes mount.
+url = "http://jdwillmsen-minecraft-fwb-prd-server-agent-metrics.jdwillmsen-prd.svc.cluster.local:9090"
+svc = workload("Service", "jdwillmsen-minecraft-fwb-prd-server-agent-metrics")
+assert svc["spec"]["ports"][0]["port"] == 9090, svc["spec"]["ports"]
+for d in docs:
+    if d["kind"] == "Service" and d["spec"].get("selector") == {"app": "jdwillmsen-minecraft-fwb-prd-server-agent"}:
+        assert not d["spec"].get("publishNotReadyAddresses"), f"{d['metadata']['name']} routes to agent pods that cannot answer yet"
+for name, container, actor in (("jdwillmsen-minecraft-fwb-prd-afk-bot", "bot", "afk-bot-1"),
+                               ("jdwillmsen-minecraft-fwb-prd-afk-bot-2", "bot2", "afk-bot-2")):
+    env = env_of("Deployment", name, container)
+    assert env["PRESENCE_URL"]["value"] == url, env["PRESENCE_URL"]
+    assert env["PRESENCE_ACTOR_ID"]["value"] == actor
+    assert env["PRESENCE_DEFAULT"]["value"] == "present"
+    assert "PRESENCE_POLL_MS" not in env, "the bot's own default poll interval applies"
+    ref = env["PRESENCE_TOKEN"]["valueFrom"]["secretKeyRef"]
+    assert ref == {"name": "jdwillmsen-minecraft-fwb-prd-presence",
+                   "key": "presence_token_" + actor.replace("-", "_")}, ref
+PY
+echo "  ok: presence on wires the agent and both bots to the agent's metrics Service"
+
+# --- the deploy-announce digests ----------------------------------------------
+# global.* is merged into the subchart's values, so the server digest would
+# see every edit to global.actors and global.presence. Only the rendered kick
+# list can reach the StatefulSet: a default flipped here restarts a bot, not
+# the server, and must not buy players a restart countdown.
+digests() {
+  python3 -c '
+import sys, yaml
+for d in yaml.safe_load_all(open(sys.argv[1])):
+    if d and d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-server-spec-hash"):
+        print(d["data"]["hash"], d["data"]["agentHash"])
+' "$1"
+}
+cat > "$work/flip.yaml" <<'YAML'
+global:
+  actors:
+    - {id: agent, kind: agent, gamertag: JDWServerAgent, defaultState: present, groups: []}
+    - {id: afk-bot-1, kind: afk-bot, valuesKey: bot, gamertag: LightBlaz3, defaultState: parked, groups: [bots, night]}
+    - {id: afk-bot-2, kind: afk-bot, valuesKey: bot2, gamertag: Dotablaze7321, defaultState: present, groups: [bots]}
+  presence:
+    secret:
+      create: false
+    operatorToken:
+      name: tools-mc-2
+YAML
+cat > "$work/rename.yaml" <<'YAML'
+global:
+  actors:
+    - {id: agent, kind: agent, gamertag: JDWServerAgent, defaultState: present, groups: []}
+    - {id: afk-bot-1, kind: afk-bot, valuesKey: bot, gamertag: LightBlaz4, defaultState: present, groups: [bots]}
+    - {id: afk-bot-2, kind: afk-bot, valuesKey: bot2, gamertag: Dotablaze7321, defaultState: present, groups: [bots]}
+YAML
+render -f "$work/flip.yaml" --set global.presence.enabled=false > "$work/flip-off.yaml"
+render -f "$work/flip.yaml" --set global.presence.enabled=true > "$work/flip-on.yaml"
+render -f "$work/rename.yaml" --set global.presence.enabled=false > "$work/rename-off.yaml"
+render -f "$work/rename.yaml" --set global.presence.enabled=true > "$work/rename-on.yaml"
+render --set global.presence.enabled=false --set minecraft-bedrock.image.tag=0.0.0 > "$work/server-change.yaml"
+render --set global.presence.enabled=false --set global.consoleBridge.secret.name=elsewhere > "$work/global-change.yaml"
+read -r off_server off_agent < <(digests "$work/presence-off.yaml")
+read -r on_server on_agent < <(digests "$work/on.yaml")
+read -r flip_off_server flip_off_agent < <(digests "$work/flip-off.yaml")
+read -r flip_on_server flip_on_agent < <(digests "$work/flip-on.yaml")
+read -r rename_off_server _ < <(digests "$work/rename-off.yaml")
+read -r rename_on_server _ < <(digests "$work/rename-on.yaml")
+read -r changed_server _ < <(digests "$work/server-change.yaml")
+read -r global_server _ < <(digests "$work/global-change.yaml")
+[ "$off_server" = "$flip_off_server" ] || fail "an actor or presence edit moved the server digest while presence is off"
+[ "$off_server" = "$rename_off_server" ] || fail "a gamertag moved the server digest while presence is off, when no kick list renders"
+[ "$on_server" = "$flip_on_server" ] || fail "an actor or presence edit moved the server digest though the kick list is unchanged"
+[ "$on_server" != "$rename_on_server" ] || fail "a renamed gamertag changes the bridge's kick list, so it must move the server digest"
+[ "$off_server" != "$changed_server" ] || fail "a server image change must move the server digest"
+[ "$off_server" != "$global_server" ] || fail "global keys outside actors and presence still reach the server"
+[ "$off_agent" = "$flip_off_agent" ] || fail "an actor edit moved the agent digest while presence is off"
+[ "$on_agent" != "$flip_on_agent" ] || fail "a changed actor list must move the agent digest: the agent restarts for it"
+[ "$off_agent" != "$on_agent" ] || fail "turning presence on must move the agent digest"
+echo "  ok: only what reaches a workload moves its digest"
+
 echo "PASS"
