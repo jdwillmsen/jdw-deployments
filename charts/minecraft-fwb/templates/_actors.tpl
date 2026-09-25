@@ -82,6 +82,16 @@ on the name.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /* The operator token sits in PRESENCE_TOKENS beside the bots' tokens,
+which are named after their actors, and keys the Secret the same way: a
+shared name would hand one of them the other's token. */ -}}
+{{- $operator := toString .Values.global.presence.operatorToken.name -}}
+{{- if not (regexMatch "^[a-z0-9][a-z0-9-]{0,62}$" $operator) -}}
+{{- fail (printf "global.presence.operatorToken.name %q must match ^[a-z0-9][a-z0-9-]{0,62}$" $operator) -}}
+{{- end -}}
+{{- if hasKey $ids $operator -}}
+{{- fail (printf "global.presence.operatorToken.name %q is also an actor id, so it would collide with that actor's token" $operator) -}}
+{{- end -}}
 {{- if ne $agents 1 -}}
 {{- fail (printf "global.actors must list exactly one actor of kind agent, found %d" $agents) -}}
 {{- end -}}
