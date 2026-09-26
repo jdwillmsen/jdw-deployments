@@ -122,7 +122,15 @@ spec:
               value: {{ .Values.agent.llm.totalTimeoutMs | quote }}
             - name: ANSWER_MAX_PER_MINUTE
               value: {{ .Values.agent.llm.maxPerMinute | quote }}
+            - name: MAX_TOOL_ROUNDS
+              value: {{ .Values.agent.llm.maxToolRounds | int64 | quote }}
             {{- end }}
+            # Set unconditionally, false included, for the same reason as
+            # SESSION_RECYCLE_MS: "off" should not depend on a binary default.
+            # With it on, the agent makes HTTPS calls to minecraft.wiki, which
+            # a namespace with enforced egress would have to allow.
+            - name: WIKI_ENABLED
+              value: {{ .Values.agent.wiki.enabled | quote }}
             {{- with .Values.agent.moderation.terms }}
             - name: MODERATION_TERMS
               value: {{ join "," . | quote }}

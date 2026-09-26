@@ -1262,7 +1262,16 @@ agent:
     # 0.4.0 or later: an older one replays old joins from the server log
     # without marking them backfill, and a parked agent would take one for an
     # arrival and wake.
-    tag: "0.22.0"
+    #
+    # 0.23.0 makes the tool-round budget configurable (llm.maxToolRounds
+    # below) and whispers "Looking that up..." to a player whose tool-using
+    # answer is still running after three seconds. It also carries a
+    # minecraft.wiki lookup tool, switched off here (wiki.enabled): measured
+    # against this model it answered game questions correctly too rarely to
+    # ship, and with it off the model sees exactly the request 0.22.0 sent.
+    # The agent now refuses to start if llm.totalTimeoutMs cannot cover every
+    # round, so the budget and the timeouts below move together.
+    tag: "0.23.0"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -1364,21 +1373,33 @@ agent:
     model: qwen/qwen3-coder-30b-a3b
     # 96 was sized for a single chat line and cannot hold a tool call's
     # arguments plus an answer on top of it.
-    maxTokens: 192
+    # 256 rather than 192: the budget the four-round evaluation was measured
+    # at, leaving room for an answer after a longer tool history.
+    maxTokens: 256
+    # Tool rounds the model may take before it is made to answer. Four lets a
+    # question take a lookup and then a narrower follow-up; measured against
+    # two on this model it changed no answer outside run-to-run noise, and
+    # most answers still finish in one or two.
+    maxToolRounds: 4
     # Per call. Each request the answering loop makes gets its own bound, so
     # one stalled request cannot consume the whole attempt.
     timeoutMs: 8000
-    # The whole attempt, every tool round trip included. This must be at least
-    # (MaxToolRounds + 1) x timeoutMs -- three calls at 8s, so 24s -- with
-    # margin, or a model that uses both of its tool rounds is cancelled before
-    # it ever answers and the player who asked simply gets silence. The agent
-    # defaults to this same value; it is set here so the relationship between
-    # the two is visible in one place rather than inferred from a default.
-    totalTimeoutMs: 30000
+    # The whole attempt, every tool round trip included: at least
+    # (maxToolRounds + 1) x timeoutMs -- five calls at 8s, so 40s -- plus
+    # margin for the tool calls between them. The agent refuses to start
+    # below that bound rather than cancelling a player's answer mid-way.
+    totalTimeoutMs: 45000
 
     # Deliberately below the command limit (10/min). One answer costs an LLM
     # call; one command costs a console round trip.
     maxPerMinute: 4
+
+  # Game-mechanics answers from minecraft.wiki. Off: measured against this
+  # model the wiki cases scored under 60% against an 80% bar, and offering the
+  # tool shifted how it answered unrelated questions. Turning it on needs a new
+  # measurement, not just this flag.
+  wiki:
+    enabled: false
 
   # Words whose use in public chat is recorded in the moderation audit and
   # answered with a whispered warning. Empty keeps that one rule off; the
