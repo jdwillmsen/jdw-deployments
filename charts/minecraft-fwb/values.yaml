@@ -1271,7 +1271,13 @@ agent:
     # ship, and with it off the model sees exactly the request 0.22.0 sent.
     # The agent now refuses to start if llm.totalTimeoutMs cannot cover every
     # round, so the budget and the timeouts below move together.
-    tag: "0.23.0"
+    #
+    # 0.23.1 keeps the presence gauges honest when the leader cannot read its
+    # overrides: observed still refreshes from the actors' status rows, so a
+    # bot that drops during a presence-store outage reads absent instead of
+    # frozen present, and mc_presence_tick_success_timestamp_seconds stops
+    # advancing so the outage itself is visible.
+    tag: "0.23.1"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
