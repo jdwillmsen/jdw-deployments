@@ -318,20 +318,26 @@ actor is gone from `tools/mc players` within about 30 seconds. After an unpark
 or an expiry it is back once its next poll lands and its login completes,
 usually within 30 seconds.
 
-**Alerts do not know about parks yet.** Until they are rewritten, which is a
-separate change, parking the agent for more than 10 minutes fires
-`JdwillmsenMinecraftAgentDisconnected` (critical), because a parked agent
-reports `mc_agent_connected` 0 just as a disconnected one does. Before a
-longer agent park, create an Alertmanager silence with the matchers
-`alertname=JdwillmsenMinecraftAgentDisconnected` and `namespace=jdwillmsen-prd`,
-lasting as long as the park; with `amtool` against the cluster's
-Alertmanager, that is
-`amtool silence add alertname=JdwillmsenMinecraftAgentDisconnected namespace=jdwillmsen-prd --duration=2h --comment="agent parked: <why>"`.
-The bots' only alert, `JdwillmsenMinecraftAfkBotsDegraded`, watches their
-Deployments rather than their connections, and a parked bot's pod keeps
-running, so parking a bot pages nobody. By the same token, a bot that should
-be in the world and is not pages nobody either, as long as its pod runs; only
-the agent's absence pages.
+**Alerts follow presence now, so parking never pages.** Both
+`JdwillmsenMinecraftAgentDisconnected` (critical) and
+`JdwillmsenMinecraftAfkBotsDegraded` (warning, per actor) page only while
+that actor's presence says it should be in the world; a parked actor's own
+override stands down its alert, no silence needed. What still pages: the
+agent when it should be present and its session is down, and a bot when it
+should be present and has been out for most of thirty minutes — including a
+died pod, which a silent bot's status ages out after a minute. A bot's
+Deployment having no available replica also pages, but only while the agent
+exports no presence series for it; `replicas: 0` in git never pages.
+`JdwillmsenMinecraftActorParkedLong` (new, warning) fires when an override
+with no expiry has stood for over 24 hours — set `--for` on longer parks, or
+`tools/mc presence unpark` before then. Changing the chart default does not
+clear an existing override; unpark once the new default has synced.
+**Fallback caveat:** while there are no presence series at all (the agent is
+gone, presence is switched off, or its tables are not migrated yet), the
+agent alert falls back to `mc_agent_connected` alone, which reads 0 for a
+parked agent just as it does for a disconnected one — that fallback cannot
+tell the two apart, so check `tools/mc presence ls` before chasing an
+outage.
 
 **Unpark clears the override unconditionally** — no version check, no
 conflict, straight back to whatever `defaultState` says. There is no group
