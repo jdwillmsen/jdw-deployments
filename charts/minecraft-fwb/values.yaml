@@ -1119,8 +1119,8 @@ agent:
     # was justified in code as Bedrock's own line limit; measured against
     # this server, tellraw carried 2000 characters intact, so the limit was
     # ours and it was cutting real answers mid-word with no ellipsis. 400
-    # stays inside the LLM_MAX_TOKENS=192 this chart already sets, so the cap
-    # that shortens a reply is the one that cuts cleanly. No migration.
+    # stays inside the token budget llm.maxTokens sets, so the cap that
+    # shortens a reply is the one that cuts cleanly. No migration.
     #
     # 0.11.1 makes !wp help and !kb help answer with the command's own syntax.
     # Both fell through to their lookup branch and reported "You have no
