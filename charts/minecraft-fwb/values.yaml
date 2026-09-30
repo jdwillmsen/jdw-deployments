@@ -645,9 +645,10 @@ versionCheck:
     # reachable, and there is nothing here worth retrying inside the same
     # run -- next hour's dispatch carries the same information again.
     enabled: true
-    repository: jdwillmsen/minecraft-afk-bot
+    # The bot's code, and so protocol-check, lives in the gameops monorepo.
+    repository: jdwillmsen/gameops
     workflowFile: protocol-check.yml
-    # A fine-grained PAT scoped to the bot repo with Actions:write, created by
+    # A fine-grained PAT scoped to that repo with Actions:write, created by
     # hand (`kubectl create secret generic mc-bot-dispatch-token
     # --from-literal=token=<PAT> -n <namespace>`) -- not something this chart
     # can generate for you.
