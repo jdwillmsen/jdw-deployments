@@ -350,8 +350,9 @@ minecraft-bedrock:
       # 0.4.0 accepts `kick` for the gamertags in BRIDGE_KICKABLE below and
       # refuses it for everyone else (0.3.0), and marks the joins it replays
       # from the server log as backfill, which the agent needs so an old join
-      # cannot wake it from a park.
-      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.4.0"
+      # cannot wake it from a park. 0.4.1 is the same code, the first build
+      # from the gameops monorepo.
+      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.4.1"
       env:
         # CONSOLE_ADDR, not CONSOLE_ADDRESS: the bridge reads the former, and
         # the misspelling was inert -- it only ever worked because the value
@@ -808,8 +809,9 @@ bot:
     # 1.2.0 is the presence release. It adds the reconciler: with PRESENCE_URL
     # set, the bot asks the agent every 10 seconds whether it should be in the
     # world, and closes its session and stops reconnecting while parked. With
-    # it unset the bot behaves exactly as before.
-    tag: "1.2.0"
+    # it unset the bot behaves exactly as before. 1.2.1 is the same code, the
+    # first build from the gameops monorepo.
+    tag: "1.2.1"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -918,9 +920,9 @@ bot2:
     # Rolling back is this value. The TypeScript image is not going anywhere
     # until the farm says the Go one works.
     #
-    # 1.2.0 is the presence release, the same as bot above and for the same
-    # reason.
-    tag: "1.2.0"
+    # 1.2.1 (the presence release, first built from gameops), the same as bot
+    # above and for the same reason.
+    tag: "1.2.1"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
@@ -1277,7 +1279,9 @@ agent:
     # bot that drops during a presence-store outage reads absent instead of
     # frozen present, and mc_presence_tick_success_timestamp_seconds stops
     # advancing so the outage itself is visible.
-    tag: "0.23.1"
+    # 0.23.2 is the same code as 0.23.1, the first build from the gameops
+    # monorepo.
+    tag: "0.23.2"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
