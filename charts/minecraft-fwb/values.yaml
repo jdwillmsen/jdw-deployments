@@ -352,7 +352,13 @@ minecraft-bedrock:
       # from the server log as backfill, which the agent needs so an old join
       # cannot wake it from a park. 0.4.1 is the same code, the first build
       # from the gameops monorepo.
-      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.4.1"
+      #
+      # 0.5.0 adds POST /snapshot, which the map uses to copy the world out
+      # of the running server: it pauses saving, streams the files that
+      # changed, and resumes. It also raises the console read limit, without
+      # which the bridge could not reconnect once the server's log backfill
+      # held a few save-query file lists.
+      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.5.0"
       env:
         # CONSOLE_ADDR, not CONSOLE_ADDRESS: the bridge reads the former, and
         # the misspelling was inert -- it only ever worked because the value
@@ -1807,3 +1813,75 @@ tickRateAlert:
   # band of staleness that suppresses the first rule without raising the
   # second, which is the failure this alerting exists to avoid.
   freshnessSeconds: 300
+
+# The web map of the world (gameops `minecraft/mcmap`), drawn from the server's
+# own save rather than from the seed, so it shows what players actually built.
+#
+# Every refreshInterval it asks the console bridge for a snapshot, which pauses
+# saving for a moment, copies only the files that changed into its own volume,
+# and re-renders the tiles that changed. Nothing here mounts the world: the
+# world claim is ReadWriteOnce and belongs to the server pod, which is why the
+# copy comes through the bridge sidecar that already sits in that pod.
+#
+# No route publishes it yet. The page shows where every base is, so it stays
+# cluster-internal until it sits behind a login.
+map:
+  enabled: true
+
+  image:
+    repository: ghcr.io/jdwillmsen/minecraft-map
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  port: 8080
+
+  refreshInterval: 15m
+
+  # Daily UTC windows in which the map leaves the save state alone.
+  #
+  # The backup (04:00) and the census (05:40) pause saving themselves, with
+  # `send-command save hold` over kubectl exec, which the bridge cannot see.
+  # The bridge refuses to start a snapshot while saving is already paused, but
+  # nothing stops one of those jobs starting during a snapshot -- and then the
+  # map's resume would unfreeze the world under that job's copy. So the map
+  # stays out of their way by the clock, with margin on both sides: ten
+  # minutes before each start, and past the backup's 3600s deadline and the
+  # census's 900s timeout.
+  #
+  # tools/tests/test-map.sh fails if either schedule moves outside a window.
+  quietUTC: "03:50-05:10,05:30-06:10"
+
+  # Chunks rendered at once. One, because the pod's CPU limit is the binding
+  # constraint, not this; more only adds memory.
+  chunkProcessors: 1
+
+  persistence:
+    # The mirror is a LevelDB the renderer reads at random, the same access
+    # pattern that put the world itself on the block tier.
+    storageClass: truenas-iscsi
+    # 736 MB of world, about 100 MB of tiles and 140 MB of renderer, with room
+    # for the world to grow several times over.
+    size: 5Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      # Sized against the namespace quota, not against the work. limits.cpu is
+      # capped at 8 and 4900m is committed to long-lived pods; the backup,
+      # version-check and volume-recovery jobs can add 2000m at 04:00. 500m
+      # here leaves them room. A first full render at this limit takes
+      # minutes rather than seconds; every later one only redraws what
+      # changed.
+      cpu: 500m
+      # The renderer peaked at 1.39 GB rendering the whole overworld with
+      # eight chunk processors; one processor needs less, and an OOM kill only
+      # costs a restart that resumes where the tiles left off.
+      memory: 2Gi
+
+  alert:
+    # How old the overworld tiles may be before someone is told. Longer than
+    # the longest quiet window (80 minutes) plus a cycle, so a normal night
+    # never fires it.
+    staleAfter: 2h

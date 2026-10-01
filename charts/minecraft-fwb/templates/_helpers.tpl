@@ -70,6 +70,22 @@
 {{ .Release.Name }}-server-agent
 {{- end -}}
 
+{{- define "map.name" -}}
+{{ .Release.Name }}-map
+{{- end -}}
+
+{{/*
+map.alert.staleAfter as seconds. Written as a duration in values because that
+is how the description reads; the expression needs a number.
+*/}}
+{{- define "map.staleSeconds" -}}
+{{- $v := .Values.map.alert.staleAfter | toString -}}
+{{- if hasSuffix "h" $v -}}{{ mul (trimSuffix "h" $v | atoi) 3600 }}
+{{- else if hasSuffix "m" $v -}}{{ mul (trimSuffix "m" $v | atoi) 60 }}
+{{- else -}}{{ fail (printf "map.alert.staleAfter must be whole hours or minutes like 2h or 90m, got %q" $v) }}
+{{- end -}}
+{{- end -}}
+
 {{- define "deployAnnounce.name" -}}
 {{ .Release.Name }}-deploy-announce
 {{- end -}}

@@ -473,6 +473,48 @@ carry the provenance the report prints in words: a run that fell back to an
 archive is reporting numbers up to a day old, and a graph cannot say so on its
 own. The full metric list is in the agent repo's README.
 
+### The world map
+
+`<release>-map` (gameops `minecraft/mcmap`) serves a web map drawn from the
+server's own save, so it shows what players built rather than what the seed
+would generate. Every `map.refreshInterval` it asks the console bridge for a
+snapshot (`POST /snapshot`, bridge 0.5.0 and later), which pauses saving for a
+moment and streams only the files that changed, then re-renders the tiles
+that changed. Its volume holds a mirror of the world, the tiles and the
+renderer; all of it can be rebuilt, so it is not backed up.
+
+No route publishes it yet, because the page shows where every base is. Until
+it sits behind a login, look at it through a port-forward:
+
+```bash
+kubectl port-forward -n <namespace> svc/<release>-map 8080:8080
+# http://localhost:8080
+```
+
+**Quiet windows.** The backup and the census pause saving themselves, over
+`kubectl exec`, where the bridge cannot see it. A map snapshot overlapping
+one of them could resume saving under that job's copy, so `map.quietUTC`
+keeps the map away from those times, and `tools/tests/test-map.sh` fails if
+either job's schedule moves outside a window. Change a schedule and its
+window together.
+
+**The renderer** (uNmINeD) may be used but not redistributed, so it is not in
+the image: the pod downloads it from unmined.net on first start, checks it
+against the digest pinned in that release of the map, and keeps it on the
+volume. A fresh volume after upstream has published a newer build fails that
+check; the log names the digest it was served, and the fix is a map release
+that moves the pin.
+
+**Alerts.** `JdwillmsenMinecraftMapStale` and `...MapNeverRendered` say the
+tiles have stopped updating; the page itself keeps serving what it has.
+`JdwillmsenMinecraftSaveResumeOwed` is the one that matters for the world: it
+means the bridge paused saving for a snapshot and the server has not
+confirmed the resume for ten minutes. Run `save resume` from the console.
+
+To rebuild the map from nothing, scale `<release>-map` to zero, delete its
+claim, and let ArgoCD recreate both. The first render at the pod's CPU limit
+takes several minutes.
+
 ### The nightly restart, and the tick rate alert
 
 `scheduledRestart` stops and restarts the server every day at **16:40 UTC**

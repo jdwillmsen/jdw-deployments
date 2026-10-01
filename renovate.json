@@ -51,6 +51,18 @@
       "automerge": false
     },
     {
+      "description": "The world map. Its Deployment owns its own volume and is not in the game StatefulSet, so a bump recreates the map pod only: the page is away for a restart and nothing players are connected to moves. That is what makes it safe to merge unattended.",
+      "matchPackageNames": [
+        "ghcr.io/jdwillmsen/minecraft-map"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "automerge": true
+    },
+    {
       "description": "AFK bot image bakes in protocol data for exactly one Bedrock version and must move in lockstep with a deliberate, hand-reviewed server bump -- never on its own.",
       "matchPackageNames": [
         "ghcr.io/jdwillmsen/minecraft-afk-bot"

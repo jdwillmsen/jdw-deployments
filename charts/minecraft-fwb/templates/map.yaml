@@ -1,0 +1,207 @@
+{{- if and .Values.map.enabled .Values.global.consoleBridge.enabled }}
+# Both flags: the map's only source of world data is the console bridge's
+# snapshot endpoint, so rendering it against a chart with no bridge would
+# produce a pod that can only fail.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "map.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Everything on it can be rebuilt from the server, so it is not backed up.
+  # It is a volume because the rebuild is a full world copy and a full render,
+  # and without one every pod restart would pay for both.
+  storageClassName: {{ .Values.map.persistence.storageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.map.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "map.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "map.name" . }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0
+  # The claim is ReadWriteOnce, so a replacement cannot start until the old
+  # pod has let go of it. The map being absent for a restart costs nothing.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ include "map.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "map.name" . }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: map
+          image: "{{ .Values.map.image.repository }}:{{ .Values.map.image.tag }}"
+          imagePullPolicy: {{ .Values.map.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: HTTP_ADDR
+              value: ":{{ .Values.map.port }}"
+            - name: BRIDGE_URL
+              value: "http://{{ include "consoleBridge.host" . }}:{{ .Values.consoleBridge.service.port }}"
+            - name: BRIDGE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.consoleBridge.secret.name }}
+                  key: console_bridge_token
+            - name: LEVEL_NAME
+              value: {{ index .Values "minecraft-bedrock" "minecraftServer" "levelName" | quote }}
+            - name: REFRESH_INTERVAL
+              value: {{ .Values.map.refreshInterval | quote }}
+            - name: QUIET_UTC
+              value: {{ .Values.map.quietUTC | quote }}
+            - name: RENDER_CHUNK_PROCESSORS
+              value: {{ .Values.map.chunkProcessors | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.map.port }}
+          # Liveness only. The page is useful while a render is running or the
+          # bridge is away -- it serves the last tiles it has -- so there is no
+          # state in which taking it out of the Service would help.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.map.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            # The renderer unpacks itself here on every start.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "map.name" . }}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "map.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "map.name" . }}
+spec:
+  selector:
+    app: {{ include "map.name" . }}
+  ports:
+    - name: http
+      port: {{ .Values.map.port }}
+      targetPort: http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "map.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "map.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "map.name" . }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 60s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "map.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-map
+      rules:
+        - alert: JdwillmsenMinecraftMapStale
+          # The overworld stands in for all three dimensions: they render in
+          # one cycle from one snapshot, so they go stale together, and one
+          # alert per dimension would be the same page three times.
+          expr: |
+            (time() - mcmap_render_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}", dimension="overworld"})
+              > {{ include "map.staleSeconds" . }}
+          for: 10m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map has stopped refreshing
+            description: >-
+              The map has not finished rendering the overworld for more than
+              {{ .Values.map.alert.staleAfter }}. It still serves the tiles it
+              has, so the page looks fine and only its "updated" time gives it
+              away. mcmap_snapshots_total by result says whether the bridge is
+              refusing (busy), the copy is failing (failed), or the cycle is
+              not running at all.
+        - alert: JdwillmsenMinecraftMapNeverRendered
+          # A gauge that was never set is absent rather than old, so the
+          # staleness expression above has nothing to compare and stays quiet
+          # through exactly the case of a map that never worked.
+          expr: |
+            absent(mcmap_render_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}", dimension="overworld"})
+          for: {{ .Values.map.alert.staleAfter }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map has never rendered
+            description: >-
+              No overworld render has succeeded since the map pod started, or
+              the pod is not being scraped. A first render on a fresh volume
+              takes minutes, not {{ .Values.map.alert.staleAfter }}.
+        - alert: JdwillmsenMinecraftSaveResumeOwed
+          # Critical because of what it leaves behind, not how often it is
+          # expected: a world whose saving stayed paused keeps every change in
+          # memory until the next restart, and loses them if the pod dies
+          # first.
+          #
+          # The gauge is 1 for the length of every snapshot, which is seconds
+          # and at most the bridge's five-minute cap, so it is the minimum
+          # over a window twice that long that has to be 1: owed at every
+          # scrape, not owed at some scrape. No `for`, because the window is
+          # already in the expression.
+          expr: |
+            min_over_time(mc_console_bridge_snapshot_resume_owed{namespace="{{ .Release.Namespace }}"}[10m]) == 1
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB may have world saving paused
+            description: >-
+              The console bridge paused saving for a map snapshot and the
+              server has not confirmed the resume for ten minutes. The bridge
+              keeps retrying and refuses new snapshots meanwhile. Check the
+              server log for "Changes to the world are resumed"; if it is
+              missing, run `save resume` from the console. The nightly backup
+              also resumes saving when it finishes.
+{{- end }}
