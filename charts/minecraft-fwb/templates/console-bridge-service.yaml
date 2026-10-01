@@ -27,4 +27,26 @@ spec:
     - name: bridge-http
       port: {{ .Values.consoleBridge.service.port }}
       targetPort: bridge-http
+---
+# The bridge's own counters, unscraped until it started pausing world saving
+# for the map's snapshots: whether a snapshot's `save resume` was confirmed is
+# only visible here, and the alert on it lives with the map.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "consoleBridge.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "consoleBridge.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "consoleBridge.name" . }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: bridge-http
+      path: /metrics
+      interval: 60s
 {{- end }}
