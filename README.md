@@ -483,13 +483,28 @@ moment and streams only the files that changed, then re-renders the tiles
 that changed. Its volume holds a mirror of the world, the tiles and the
 renderer; all of it can be rebuilt, so it is not backed up.
 
-No route publishes it yet, because the page shows where every base is. Until
-it sits behind a login, look at it through a port-forward:
+It is published at `https://<map.host>` through the platform gateway, behind
+a login, because the page shows where every base is. The page shows a
+six-character code; the player types `!map <code>` in game chat; the agent
+tells the map which XUID typed it, and that browser is logged in for a week.
+Typing in chat is something only a player on the server can do. `!map logout`
+ends every map login in that player's name, which is the way out for someone
+who typed a code off another person's screen.
 
-```bash
-kubectl port-forward -n <namespace> svc/<release>-map 8080:8080
-# http://localhost:8080
-```
+**Two ports.** `map.port` is what the route publishes: the page, the login,
+and the map API and tiles behind a session. `map.internalPort` carries
+metrics and the API the agent reports logins to, and must never be a route's
+backend; `tools/tests/test-map.sh` fails if it becomes one, or if the map is
+published with its login off. The tenant project may not create
+NetworkPolicies, so that port is reachable from inside the cluster and its
+token is what guards it.
+
+**The token** the agent presents there is a login as any player. It is
+generated in the cluster by `<release>-map-internal-token`, once, and read by
+the map and the agent at startup. To rotate it, delete that Secret, wait for
+it to be recreated, and restart both Deployments together. To log every
+player out, delete `auth/session.key` on the map's volume and restart the
+map.
 
 **Quiet windows.** The backup and the census pause saving themselves, over
 `kubectl exec`, where the bridge cannot see it. A map snapshot overlapping

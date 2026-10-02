@@ -58,6 +58,15 @@ spec:
           env:
             - name: HTTP_ADDR
               value: ":{{ .Values.map.port }}"
+            - name: INTERNAL_ADDR
+              value: ":{{ .Values.map.internalPort }}"
+            # What the agent presents when it reports a login; see
+            # map-token-externalsecret.yaml.
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "map.token.name" . }}
+                  key: {{ include "map.token.key" . }}
             - name: BRIDGE_URL
               value: "http://{{ include "consoleBridge.host" . }}:{{ .Values.consoleBridge.service.port }}"
             - name: BRIDGE_TOKEN
@@ -76,6 +85,8 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.map.port }}
+            - name: internal
+              containerPort: {{ .Values.map.internalPort }}
           # Liveness only. The page is useful while a render is running or the
           # bridge is away -- it serves the last tiles it has -- so there is no
           # state in which taking it out of the Service would help.
@@ -114,6 +125,32 @@ spec:
     - name: http
       port: {{ .Values.map.port }}
       targetPort: http
+    - name: internal
+      port: {{ .Values.map.internalPort }}
+      targetPort: internal
+---
+# The only thing in this chart reachable from the internet. It attaches to
+# the platform gateway, which terminates TLS with the wildcard certificate,
+# and sends everything to the map's public port. The internal port is never
+# a backend here: tools/tests/test-map.sh fails if it becomes one.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "map.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "map.name" . }}
+spec:
+  parentRefs:
+    - name: platform-gateway
+      namespace: nginx-gateway
+      sectionName: https
+  hostnames:
+    - {{ .Values.map.host | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ include "map.name" . }}
+          port: {{ .Values.map.port }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -130,7 +167,7 @@ spec:
     matchNames:
       - {{ .Release.Namespace }}
   endpoints:
-    - port: http
+    - port: internal
       path: /metrics
       interval: 60s
 ---
