@@ -75,6 +75,19 @@
 {{- end -}}
 
 {{/*
+The Secret holding the token the agent presents to the map's internal API,
+and the key inside it. Defined once because the generator, the map and the
+agent must all name the same thing.
+*/}}
+{{- define "map.token.name" -}}
+{{ include "map.name" . }}-internal-token
+{{- end -}}
+
+{{- define "map.token.key" -}}
+token
+{{- end -}}
+
+{{/*
 map.alert.staleAfter as seconds. Written as a duration in values because that
 is how the description reads; the expression needs a number.
 */}}

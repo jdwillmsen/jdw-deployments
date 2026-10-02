@@ -71,6 +71,39 @@ for suffix in ("-backup", "-census"):
 sys.exit(1 if bad else 0)
 PY
 
+# The token the agent presents to the map. It is generated once and read by
+# two pods at startup; anything that regenerates it under them -- a periodic
+# refresh is the default -- leaves the two disagreeing, and every login
+# failing, until both happen to restart.
+python3 - "$work/rendered.yaml" <<'PY' || fail "the map's internal token would not stay put"
+import sys, yaml
+
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+named = lambda kind, suffix: [d for d in docs if d["kind"] == kind and d["metadata"]["name"].endswith(suffix)]
+bad = []
+
+secrets = named("ExternalSecret", "-map-internal-token")
+generators = named("Password", "-map-internal-token")
+if len(secrets) != 1 or len(generators) != 1:
+    bad.append(f"expected one ExternalSecret and one Password for the map token, found {len(secrets)} and {len(generators)}")
+else:
+    spec, generator = secrets[0]["spec"], generators[0]
+    if spec.get("refreshPolicy") != "CreatedOnce":
+        bad.append(f"refreshPolicy is {spec.get('refreshPolicy')!r}; anything but CreatedOnce replaces the token under running pods")
+    ref = spec["dataFrom"][0]["sourceRef"]["generatorRef"]
+    if (ref["kind"], ref["name"]) != (generator["kind"], generator["metadata"]["name"]):
+        bad.append("the ExternalSecret does not point at the generator this chart renders")
+    # mcmap refuses to start with a shorter token.
+    if generator["spec"]["length"] < 16:
+        bad.append(f"a {generator['spec']['length']}-character token is shorter than the map accepts")
+    if generator["spec"].get("symbols", 1) != 0:
+        bad.append("the token must have no symbols: it travels in an HTTP header")
+
+for line in bad:
+    print(line)
+sys.exit(1 if bad else 0)
+PY
+
 if ! command -v promtool >/dev/null 2>&1; then
   # Loud rather than silent: a skipped alert test is an untested alert. CI
   # installs promtool, so this branch is never taken there.
@@ -189,4 +222,4 @@ if ! out="$(cd "$work" && promtool test rules tests.yaml 2>&1)"; then
   fail "the map alert rules do not behave as specified"
 fi
 
-echo "PASS: map quiet windows cover the backup and census, and the map alerts fire when they should"
+echo "PASS: map quiet windows cover the backup and census, the internal token is generated once, and the map alerts fire when they should"
