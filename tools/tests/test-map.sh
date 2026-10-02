@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pins the two things about the map that nothing else would notice breaking.
+# Pins the things about the map that nothing else would notice breaking.
 #
 # First, the quiet windows. The backup and the census pause world saving
 # themselves, over kubectl exec, where the console bridge cannot see it. The
@@ -10,7 +10,9 @@
 # places: move the backup to 03:00 and everything still renders, syncs and
 # looks healthy. This fails instead.
 #
-# Second, the staleness alert, which is built on a gauge the map only sets on
+# Second, what is published: see the exposure check below.
+#
+# Third, the staleness alert, which is built on a gauge the map only sets on
 # success -- the same shape that shipped unable to fire in the tick-rate rule.
 #
 # Read from the rendered chart with the value files production applies, so an
@@ -98,6 +100,71 @@ else:
         bad.append(f"a {generator['spec']['length']}-character token is shorter than the map accepts")
     if generator["spec"].get("symbols", 1) != 0:
         bad.append("the token must have no symbols: it travels in an HTTP header")
+
+for line in bad:
+    print(line)
+sys.exit(1 if bad else 0)
+PY
+
+# What the internet can reach. The map has two listeners: the page, login and
+# session-gated tiles on one, and metrics plus the API the agent reports
+# logins to on the other. The route must only ever name the first, and the
+# map must never be published with its login turned off -- it shows where
+# every base is. Each of these is one edit away in values.yaml, and helm and
+# ArgoCD would apply either without comment.
+python3 - "$work/rendered.yaml" <<'PY' || fail "the map's exposure boundary is not what it must be"
+import sys, yaml
+
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+named = lambda kind, suffix: [d for d in docs if d["kind"] == kind and d["metadata"]["name"].endswith(suffix)]
+
+container = named("Deployment", "-map")[0]["spec"]["template"]["spec"]["containers"][0]
+ports = {p["name"]: p["containerPort"] for p in container["ports"]}
+env = {e["name"]: e for e in container["env"]}
+service = {p["name"]: p["port"] for p in named("Service", "-map")[0]["spec"]["ports"]}
+bad = []
+
+routes = named("HTTPRoute", "-map")
+if len(routes) != 1:
+    bad.append(f"expected exactly one HTTPRoute for the map, found {len(routes)}")
+for route in routes:
+    if [r.get("sectionName") for r in route["spec"]["parentRefs"]] != ["https"]:
+        bad.append("the map route must attach to the gateway's https listener only")
+    for rule in route["spec"]["rules"]:
+        for ref in rule["backendRefs"]:
+            if ref["port"] != service["http"] or ref["port"] == service["internal"]:
+                bad.append(f"the map route sends traffic to port {ref['port']}; only the public port {service['http']} may be published")
+    # Published, so the login has to be on and able to work.
+    if (env.get("AUTH_DISABLED") or {}).get("value", "false").lower() == "true":
+        bad.append("the map is published with AUTH_DISABLED=true")
+    # The token is a login as any player, so it must be the one generated
+    # for this and held by nothing else -- not a credential borrowed from
+    # another service that has its own holders.
+    generated = named("ExternalSecret", "-map-internal-token")[0]["spec"]["target"]["name"]
+    source = (env.get("INTERNAL_TOKEN") or {}).get("valueFrom", {}).get("secretKeyRef", {})
+    if source.get("name") != generated:
+        bad.append(f"the map's INTERNAL_TOKEN must come from the generated secret {generated}, not {source.get('name')!r}")
+    key = named("Password", "-map-internal-token")[0]["spec"]["secretKeys"][0]
+    if source.get("key") != key:
+        bad.append(f"the map reads key {source.get('key')!r} from its token secret, which holds {key!r}")
+
+if ports["http"] == ports["internal"]:
+    bad.append("the map's public and internal ports are the same port")
+if env["INTERNAL_ADDR"]["value"] != f":{ports['internal']}":
+    bad.append("INTERNAL_ADDR does not match the container's internal port")
+
+monitor = named("ServiceMonitor", "-map")[0]
+if [e["port"] for e in monitor["spec"]["endpoints"]] != ["internal"]:
+    bad.append("the map's metrics must be scraped from the internal port; the public one does not serve them")
+
+agent = {e["name"]: e for e in named("Deployment", "-server-agent")[0]["spec"]["template"]["spec"]["containers"][0]["env"]}
+if not agent.get("MAP_URL", {}).get("value", "").endswith(f":{service['internal']}"):
+    bad.append("the agent's MAP_URL must be the map's internal port, where the claims API is")
+if routes and agent.get("MAP_PUBLIC_URL", {}).get("value") != "https://" + routes[0]["spec"]["hostnames"][0]:
+    bad.append("the address !map tells players to open is not the address the route publishes")
+# Both ends must present and expect the same credential.
+if agent.get("MAP_TOKEN", {}).get("valueFrom") != env["INTERNAL_TOKEN"].get("valueFrom"):
+    bad.append("the agent's MAP_TOKEN and the map's INTERNAL_TOKEN do not come from the same secret key")
 
 for line in bad:
     print(line)
@@ -222,4 +289,4 @@ if ! out="$(cd "$work" && promtool test rules tests.yaml 2>&1)"; then
   fail "the map alert rules do not behave as specified"
 fi
 
-echo "PASS: map quiet windows cover the backup and census, the internal token is generated once, and the map alerts fire when they should"
+echo "PASS: map quiet windows cover the backup and census, the internal token is generated once, only the public port is published and only behind the login, and the map alerts fire when they should"

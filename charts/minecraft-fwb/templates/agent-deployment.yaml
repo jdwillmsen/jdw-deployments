@@ -62,6 +62,21 @@ spec:
                   key: console_bridge_token
             - name: CONSOLE_BRIDGE_TIMEOUT_MS
               value: {{ .Values.agent.bridge.timeoutMs | quote }}
+            {{- if .Values.map.enabled }}
+            # !map: where to report who typed a login code (the map's
+            # internal port), the credential for it, and the address players
+            # are told to open. Gated on the map so that without one the
+            # command does not exist rather than existing and failing.
+            - name: MAP_URL
+              value: "http://{{ include "map.name" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.map.internalPort }}"
+            - name: MAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "map.token.name" . }}
+                  key: {{ include "map.token.key" . }}
+            - name: MAP_PUBLIC_URL
+              value: "https://{{ .Values.map.host }}"
+            {{- end }}
             - name: HTTP_ADDR
               value: ":{{ .Values.agent.metrics.port }}"
             # Drops and re-establishes the Bedrock session on this interval, so

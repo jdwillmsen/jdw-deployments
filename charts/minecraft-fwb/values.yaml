@@ -1288,7 +1288,10 @@ agent:
     # advancing so the outage itself is visible.
     # 0.23.2 is the same code as 0.23.1, the first build from the gameops
     # monorepo.
-    tag: "0.23.2"
+    #
+    # 0.24.0 adds !map, which logs a player in to the world map by telling
+    # it who typed the code its page showed.
+    tag: "0.24.0"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -1823,17 +1826,31 @@ tickRateAlert:
 # world claim is ReadWriteOnce and belongs to the server pod, which is why the
 # copy comes through the bridge sidecar that already sits in that pod.
 #
-# No route publishes it yet. The page shows where every base is, so it stays
-# cluster-internal until it sits behind a login.
+# The page shows where every base is, so it is behind a login: it shows a
+# code, the player types `!map <code>` in game chat, and the agent tells the
+# map which XUID typed it. Typing in chat is something only a player on the
+# server can do, and a link in Bedrock chat cannot be clicked on a console or
+# a phone, which is why the code travels from the browser to the game.
 map:
   enabled: true
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-map
-    tag: "1.0.0"
+    # 1.1.0 adds the login and moves metrics and the agent-facing claims API
+    # to their own port, so the route below cannot publish them.
+    tag: "1.1.0"
     pullPolicy: IfNotPresent
 
+  # What the route publishes: the page, the login, and the map API and tiles
+  # behind a session.
   port: 8080
+  # Cluster-only: metrics, and where the agent reports who typed a login
+  # code. Nothing may route to this from outside.
+  internalPort: 9090
+
+  # The public address, on the platform gateway's wildcard certificate.
+  # Tenant apps are <app>.<env>.jdwlabs.com.
+  host: fwb.prd.jdwlabs.com
 
   refreshInterval: 15m
 
