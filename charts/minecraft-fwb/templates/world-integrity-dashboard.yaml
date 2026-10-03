@@ -1,0 +1,25 @@
+{{- if and .Values.worldIntegrity.enabled .Values.worldIntegrity.dashboard.enabled }}
+# Grafana's dashboards sidecar watches every namespace for this label, so a
+# ConfigMap here is enough; no platform-side change is needed for it.
+#
+# The JSON lives in the chart's dashboards/ directory rather than inline, so it
+# stays a file an editor can check and a panel can be round-tripped through the
+# Grafana UI. It is rendered through tpl, which is what lets the queries name
+# the release's namespace and reuse the same values the alert rules read -- a
+# panel and the alert it explains drifting apart is the failure this avoids.
+#
+# Platform's dashboards doc now points new dashboards at Grafana Git Sync in the
+# platform repo instead. This one ships with the chart on purpose: the panels
+# are meaningless without the exporters above them, and this way they arrive,
+# move and are removed together.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "worldIntegrity.dashboard.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    grafana_dashboard: "1"
+data:
+  minecraft-fwb-world-integrity.json: |
+{{ tpl (.Files.Get "dashboards/world-integrity.json") . | indent 4 }}
+{{- end }}

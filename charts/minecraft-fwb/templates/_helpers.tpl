@@ -204,3 +204,37 @@ keeps this digest unchanged until then.
 {{- define "tickRateAlert.name" -}}
 {{ .Release.Name }}-tick-rate
 {{- end -}}
+
+{{- define "worldIntegrity.name" -}}
+{{ .Release.Name }}-world-integrity
+{{- end -}}
+
+{{- define "worldIntegrity.lokiRules.name" -}}
+{{ .Release.Name }}-world-integrity-loki-rules
+{{- end -}}
+
+{{- define "worldIntegrity.dashboard.name" -}}
+{{ .Release.Name }}-world-integrity-dashboard
+{{- end -}}
+
+{{/*
+The container the Bedrock server logs under, which is also its Loki `container`
+stream label. The subchart names it after the release, and the cluster's log
+pipeline carries no `pod` label, so this is the only way to select the server's
+own output.
+*/}}
+{{- define "worldIntegrity.serverContainer" -}}
+{{ .Release.Name }}-minecraft-bedrock
+{{- end -}}
+
+{{/*
+worldIntegrity.censusStaleAfter as seconds, for the expression; values carries
+it as a duration because that is how the description reads.
+*/}}
+{{- define "worldIntegrity.censusStaleSeconds" -}}
+{{- $v := .Values.worldIntegrity.censusStaleAfter | toString -}}
+{{- if hasSuffix "h" $v -}}{{ mul (trimSuffix "h" $v | atoi) 3600 }}
+{{- else if hasSuffix "m" $v -}}{{ mul (trimSuffix "m" $v | atoi) 60 }}
+{{- else -}}{{ fail (printf "worldIntegrity.censusStaleAfter must be whole hours or minutes like 2h or 90m, got %q" $v) }}
+{{- end -}}
+{{- end -}}
