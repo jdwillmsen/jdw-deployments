@@ -77,7 +77,7 @@ EOF
 
 # The chunk, corruption and census cases. Evaluated every minute because that
 # is the scrape interval of the map's metrics endpoint, and because the point of
-# the missing-chunk rule is that it fires at the first evaluation after a loss
+# the lost-chunk rule is that it fires at the first evaluation after a loss
 # rather than some number of minutes later.
 #
 # A timestamp series counting 60 per minute reads back the evaluation time in
@@ -96,25 +96,25 @@ tests:
   - interval: 1m
     name: a chunk that disappears pages at the first evaluation after the census
     input_series:
-      - series: 'mcmap_world_chunks_missing{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
+      - series: 'mcmap_world_chunks_lost{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
         values: '0+0x14 4753+0x45'
-      - series: 'mcmap_world_chunks_missing{namespace="jdwillmsen-prd",dimension="nether",instance="10.244.6.148:9090"}'
+      - series: 'mcmap_world_chunks_lost{namespace="jdwillmsen-prd",dimension="nether",instance="10.244.6.148:9090"}'
         values: '0+0x14 1413+0x45'
-      - series: 'mcmap_world_chunks_missing{namespace="jdwillmsen-prd",dimension="end",instance="10.244.6.148:9090"}'
+      - series: 'mcmap_world_chunks_lost{namespace="jdwillmsen-prd",dimension="end",instance="10.244.6.148:9090"}'
         values: '0+0x14 294+0x45'
     alert_rule_test:
       - eval_time: 14m
-        alertname: JdwillmsenMinecraftWorldChunksMissing
+        alertname: JdwillmsenMinecraftWorldChunksLost
         exp_alerts: []
       - eval_time: 15m
-        alertname: JdwillmsenMinecraftWorldChunksMissing
+        alertname: JdwillmsenMinecraftWorldChunksLost
         exp_alerts:
           - exp_labels:
               severity: critical
               namespace: jdwillmsen-prd
             exp_annotations:
-              summary: "Minecraft FWB is missing 6460 world chunks"
-              description: "The map's census found 6460 chunks that this world has held before and does not hold now. A Bedrock world never deletes a chunk in normal play, so treat this as data loss until proven otherwise, and do not let tonight's backup rotate away the last good archive. The dimension split and the block coordinates are on the world integrity dashboard and in the map pod's log. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
+              summary: "Minecraft FWB has lost 6460 world chunks"
+              description: "The map's census found 6460 chunks that this world has held before. A Bedrock world never deletes a chunk in normal play, so treat this as data loss until proven otherwise, and do not let tonight's backup rotate away the last good archive. This does not clear when the server generates the ground again -- it comes back empty -- only when an operator accepts the world as it is. The dimension split and the block coordinates are on the world integrity dashboard and in the map pod's log. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
 
   # THE REGRESSION CASE FOR THE WINDOW.
@@ -127,29 +127,62 @@ tests:
   - interval: 1m
     name: the map pod taking the gauges away does not resolve the page
     input_series:
-      - series: 'mcmap_world_chunks_missing{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
+      - series: 'mcmap_world_chunks_lost{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
         values: '0+0x14 4753+0x5'
-      - series: 'mcmap_world_chunks_missing{namespace="jdwillmsen-prd",dimension="nether",instance="10.244.6.148:9090"}'
+      - series: 'mcmap_world_chunks_lost{namespace="jdwillmsen-prd",dimension="nether",instance="10.244.6.148:9090"}'
         values: '0+0x14 1413+0x5'
-      - series: 'mcmap_world_chunks_missing{namespace="jdwillmsen-prd",dimension="end",instance="10.244.6.148:9090"}'
+      - series: 'mcmap_world_chunks_lost{namespace="jdwillmsen-prd",dimension="end",instance="10.244.6.148:9090"}'
         values: '0+0x14 294+0x5'
     alert_rule_test:
       # Twenty minutes after the last sample the series has been absent four
       # times longer than Prometheus' staleness delta, and the alert is still up.
       - eval_time: 40m
-        alertname: JdwillmsenMinecraftWorldChunksMissing
+        alertname: JdwillmsenMinecraftWorldChunksLost
         exp_alerts:
           - exp_labels:
               severity: critical
               namespace: jdwillmsen-prd
             exp_annotations:
-              summary: "Minecraft FWB is missing 6460 world chunks"
-              description: "The map's census found 6460 chunks that this world has held before and does not hold now. A Bedrock world never deletes a chunk in normal play, so treat this as data loss until proven otherwise, and do not let tonight's backup rotate away the last good archive. The dimension split and the block coordinates are on the world integrity dashboard and in the map pod's log. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
+              summary: "Minecraft FWB has lost 6460 world chunks"
+              description: "The map's census found 6460 chunks that this world has held before. A Bedrock world never deletes a chunk in normal play, so treat this as data loss until proven otherwise, and do not let tonight's backup rotate away the last good archive. This does not clear when the server generates the ground again -- it comes back empty -- only when an operator accepts the world as it is. The dimension split and the block coordinates are on the world integrity dashboard and in the map pod's log. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
       # Past the window. Nothing has measured the world for half an hour, which
       # is JdwillmsenMinecraftWorldNotCensused's to say, not this rule's.
       - eval_time: 47m
-        alertname: JdwillmsenMinecraftWorldChunksMissing
+        alertname: JdwillmsenMinecraftWorldChunksLost
+        exp_alerts: []
+
+  # THE REGRESSION CASE FOR READING THE RIGHT GAUGE.
+  #
+  # The hole is walked through. Bedrock regenerates the chunks from the seed as
+  # empty terrain, so mcmap_world_chunks_missing falls back to zero while
+  # mcmap_world_chunks_lost stays up -- the ground is back and everything built
+  # on it is not. Pointing this rule at `missing` makes the page resolve itself
+  # here, on a world that has permanently lost what was there.
+  - interval: 1m
+    name: the server regenerating the ground does not resolve the page
+    input_series:
+      - series: 'mcmap_world_chunks_lost{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
+        values: '4753+0x60'
+      - series: 'mcmap_world_chunks_missing{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
+        values: '4753+0x29 0+0x30'
+      - series: 'mcmap_world_chunks{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
+        values: '123279+0x29 128032+0x30'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: JdwillmsenMinecraftWorldChunksLost
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: "Minecraft FWB has lost 4753 world chunks"
+              description: "The map's census found 4753 chunks that this world has held before. A Bedrock world never deletes a chunk in normal play, so treat this as data loss until proven otherwise, and do not let tonight's backup rotate away the last good archive. This does not clear when the server generates the ground again -- it comes back empty -- only when an operator accepts the world as it is. The dimension split and the block coordinates are on the world integrity dashboard and in the map pod's log. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
+      # The count is back to where it was, so the count rule is right to let go;
+      # the loss rule is the one that has to hold on.
+      - eval_time: 55m
+        alertname: JdwillmsenMinecraftWorldChunkCountDropped
         exp_alerts: []
 
   # A world being played in. The count rises every census, nothing is missing,
@@ -161,13 +194,13 @@ tests:
     input_series:
       - series: 'mcmap_world_chunks{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
         values: '128032+1x60'
-      - series: 'mcmap_world_chunks_missing{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
+      - series: 'mcmap_world_chunks_lost{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
         values: '0+0x60'
       - series: 'mcmap_world_census_last_success_timestamp_seconds{namespace="jdwillmsen-prd",instance="10.244.6.148:9090"}'
         values: '0+60x60'
     alert_rule_test:
       - eval_time: 55m
-        alertname: JdwillmsenMinecraftWorldChunksMissing
+        alertname: JdwillmsenMinecraftWorldChunksLost
         exp_alerts: []
       - eval_time: 55m
         alertname: JdwillmsenMinecraftWorldChunkCountDropped
@@ -186,7 +219,7 @@ tests:
     input_series:
       - series: 'mcmap_world_chunks{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
         values: '128032+0x59 123279+0x30'
-      - series: 'mcmap_world_chunks_missing{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
+      - series: 'mcmap_world_chunks_lost{namespace="jdwillmsen-prd",dimension="overworld",instance="10.244.6.148:9090"}'
         values: '0+0x90'
     alert_rule_test:
       - eval_time: 59m
@@ -204,12 +237,12 @@ tests:
               namespace: jdwillmsen-prd
             exp_annotations:
               summary: "Minecraft FWB holds fewer world chunks than it recently did"
-              description: "The world's chunk count is 123279, below its own maximum over the last 24h. A played-in Bedrock world only gains chunks. This fires instead of the missing-chunk alert when the map has no ledger to compare against -- a fresh map volume, or one that was restored -- so the count is the only evidence. It also fires after a deliberate restore to an older backup, which is a real statement about the world and clears once the baseline window rolls past it. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
+              description: "The world's chunk count is 123279, below its own maximum over the last 24h. A played-in Bedrock world only gains chunks. This fires instead of the lost-chunk alert when the map has no ledger to compare against -- a fresh map volume, or one that was restored -- so the count is the only evidence. It also fires after a deliberate restore to an older backup, which is a real statement about the world and clears once the baseline window rolls past it. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
       # Nothing is missing against the ledger, so the other rule is right to
       # stay quiet. The two are not redundant; they answer different questions.
       - eval_time: 70m
-        alertname: JdwillmsenMinecraftWorldChunksMissing
+        alertname: JdwillmsenMinecraftWorldChunksLost
         exp_alerts: []
 
   # THE SAME SHAPE AS THE ARCHIVE BUG, ASSERTED NOT TO RECUR.
@@ -240,7 +273,7 @@ tests:
               namespace: jdwillmsen-prd
             exp_annotations:
               summary: "Minecraft FWB holds fewer world chunks than it recently did"
-              description: "The world's chunk count is 123279, below its own maximum over the last 24h. A played-in Bedrock world only gains chunks. This fires instead of the missing-chunk alert when the map has no ledger to compare against -- a fresh map volume, or one that was restored -- so the count is the only evidence. It also fires after a deliberate restore to an older backup, which is a real statement about the world and clears once the baseline window rolls past it. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
+              description: "The world's chunk count is 123279, below its own maximum over the last 24h. A played-in Bedrock world only gains chunks. This fires instead of the lost-chunk alert when the map has no ledger to compare against -- a fresh map volume, or one that was restored -- so the count is the only evidence. It also fires after a deliberate restore to an older backup, which is a real statement about the world and clears once the baseline window rolls past it. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
 
   # The server's own report, and the reason its window is six hours. The
@@ -514,4 +547,4 @@ EOF
 
 ( cd "$work" && promtool test rules tests-archive.yaml ) || fail "world-archive alert tests did not pass"
 
-echo "PASS: chunk loss pages within one census and survives the map pod going away, the server's corruption line outlives the restart it causes, a growing world pages nothing, and the archive baseline no longer resets when the exporter pod moves"
+echo "PASS: chunk loss pages within one census, survives the map pod going away and the server regenerating the ground, the corruption line outlives the restart it causes, a growing world pages nothing, and the archive baseline no longer resets when the exporter pod moves"

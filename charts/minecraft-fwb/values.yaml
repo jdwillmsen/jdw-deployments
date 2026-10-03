@@ -1923,7 +1923,7 @@ map:
 worldIntegrity:
   enabled: true
 
-  # How far back the missing-chunk rule looks.
+  # How far back the lost-chunk rule looks.
   #
   # The window is in the expression and the rule carries no `for:`, which is
   # the whole difference between an alert and a decoration here: a `for:`
@@ -1931,7 +1931,7 @@ worldIntegrity:
   # gauges go absent for the length of a map pod restart. One census interval
   # (15m) plus a scrape (60s) plus margin, so a single census that saw the loss
   # keeps paging across a restart of the thing that measured it.
-  missingWindow: 25m
+  lostWindow: 25m
 
   # How far back the count rule takes its high-water mark.
   #

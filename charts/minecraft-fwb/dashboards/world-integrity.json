@@ -35,13 +35,13 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Chunks missing",
-      "description": "Chunks this world has held before and does not hold now, summed across dimensions. A Bedrock world never deletes a chunk in normal play, so anything above zero is data loss until proven otherwise. Stays above zero until the chunks come back or an operator accepts the world as it is.",
+      "title": "Chunks lost",
+      "description": "Chunks this world has held before, summed across dimensions, and the number the critical alert reads. A Bedrock world never deletes a chunk in normal play, so anything above zero is data loss until proven otherwise. It does not clear when the server generates the ground again -- that comes back empty -- only when an operator accepts the world as it is.",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 5, "w": 5, "x": 0, "y": 1 },
       "targets": [
         {
-          "expr": "sum(max by (dimension) (mcmap_world_chunks_missing{namespace=\"{{ .Release.Namespace }}\"}))",
+          "expr": "sum(max by (dimension) (mcmap_world_chunks_lost{namespace=\"{{ .Release.Namespace }}\"}))",
           "refId": "A"
         }
       ],
@@ -179,15 +179,20 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Chunks missing, by dimension",
-      "description": "Measured against every chunk the map has ever seen, kept on its volume, so a loss stays visible across later censuses and across a map restart rather than being absorbed as the new normal. The 2026-10-02 loss was 4,753 overworld, 1,413 nether and 294 end.",
+      "title": "Chunks lost and chunks absent, by dimension",
+      "description": "Lost is measured against every chunk the map has ever seen, kept on its volume, so it survives a later census and a map restart rather than being absorbed as the new normal. Absent is what the last census could not find at all. Absent falling below lost is ground a player has walked back over: the server regenerated it from the seed, empty. The 2026-10-02 loss was 4,753 overworld, 1,413 nether and 294 end.",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
       "targets": [
         {
-          "expr": "max by (dimension) (mcmap_world_chunks_missing{namespace=\"{{ .Release.Namespace }}\"})",
-          "legendFormat": "{{ "{{" }}dimension{{ "}}" }}",
+          "expr": "max by (dimension) (mcmap_world_chunks_lost{namespace=\"{{ .Release.Namespace }}\"})",
+          "legendFormat": "lost {{ "{{" }}dimension{{ "}}" }}",
           "refId": "A"
+        },
+        {
+          "expr": "max by (dimension) (mcmap_world_chunks_missing{namespace=\"{{ .Release.Namespace }}\"})",
+          "legendFormat": "absent now {{ "{{" }}dimension{{ "}}" }}",
+          "refId": "B"
         }
       ],
       "fieldConfig": {
@@ -214,7 +219,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
       "targets": [
         {
-          "expr": "max by (dimension) (mcmap_world_chunks{namespace=\"{{ .Release.Namespace }}\"}) - max by (dimension) (mcmap_world_chunks{namespace=\"{{ .Release.Namespace }}\"} offset {{ .Values.worldIntegrity.missingWindow }})",
+          "expr": "max by (dimension) (mcmap_world_chunks{namespace=\"{{ .Release.Namespace }}\"}) - max by (dimension) (mcmap_world_chunks{namespace=\"{{ .Release.Namespace }}\"} offset {{ .Values.worldIntegrity.lostWindow }})",
           "legendFormat": "{{ "{{" }}dimension{{ "}}" }}",
           "refId": "A"
         }
@@ -255,12 +260,12 @@
       "id": 13,
       "type": "logs",
       "title": "Missing chunks, with coordinates",
-      "description": "The map logs the first missing chunks it finds as block coordinates, which is what the map page and a player in game both use. The full list is on the map's internal API at GET /internal/v1/world. Selected by container, not pod: this tenant's log pipeline ships no pod stream label.",
+      "description": "The map logs the first lost chunks it finds as block coordinates, which is what the map page and a player in game both use. The full list is on the map's internal API at GET /internal/v1/world. Selected by container, not pod: this tenant's log pipeline ships no pod stream label.",
       "datasource": { "type": "loki", "uid": "${loki_datasource}" },
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 24 },
       "targets": [
         {
-          "expr": "{namespace=\"{{ .Release.Namespace }}\", container=\"map\"} |~ `world is missing chunks|chunk loss acknowledged`",
+          "expr": "{namespace=\"{{ .Release.Namespace }}\", container=\"map\"} |~ `world has lost chunks|chunk loss acknowledged`",
           "refId": "A"
         }
       ],

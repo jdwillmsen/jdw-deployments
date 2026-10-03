@@ -13,7 +13,7 @@ same thing from a different distance:
 | Alert | Reads | Notices a loss within |
 |---|---|---|
 | `JdwillmsenMinecraftWorldCorruptionReported` | the server's own log line, through the console bridge | a minute |
-| `JdwillmsenMinecraftWorldChunksMissing` | the map's census of the world against every chunk it has seen | one map refresh interval (15 minutes) |
+| `JdwillmsenMinecraftWorldChunksLost` | the map's census of the world against every chunk it has seen | one map refresh interval (15 minutes) |
 | `JdwillmsenMinecraftWorldChunkCountDropped` | the same census against its own recent maximum | one refresh interval plus 5 minutes |
 | `JdwillmsenMinecraftWorldArchiveShrank` | the nightly backup archive's size | a day |
 
@@ -23,6 +23,14 @@ fire whatever the world is doing. Treat it as urgent for the same reason.
 
 A world that is played in only gains chunks. Any of these is data loss until
 proven otherwise.
+
+One thing to know before reading the numbers: a lost chunk does not stay
+absent. Bedrock generates it again from the seed as soon as a player walks
+near, as empty terrain with everything built on it gone. So
+`mcmap_world_chunks_missing` falls back towards zero on its own while
+`mcmap_world_chunks_lost` — what the alert reads — does not. The gap between
+the two on the dashboard is ground that has already been walked back over, and
+it is the part a restore cannot be postponed on.
 
 **First, stop the loss getting worse.** The nightly backup rotates archives, so
 the clock on the last good copy is running:
@@ -50,8 +58,10 @@ of the loss are both already known:
   curl -s -H "Authorization: Bearer $INTERNAL_TOKEN" \
     http://127.0.0.1:9090/internal/v1/world | jq
   ```
-  The token is the map's internal-token Secret. Mint nothing and print nothing
-  else from that namespace in a shared terminal.
+  The response carries `chunks`, `missing` and `lost` per dimension, and up to
+  20 lost chunks as block coordinates in `lostSample`. The token is the map's
+  internal-token Secret. Mint nothing and print nothing else from that
+  namespace in a shared terminal.
 - The server's log line names how many table files went:
   `LevelDB worlds/FWB/db status NOT OK(Corruption: N missing files; e.g.: ...)`.
 
@@ -60,7 +70,7 @@ gone but the database's manifest still lists them, the census cannot read the
 world at all: it fails, `mcmap_world_census_failures_total` moves, the gauges
 hold their last values, and `JdwillmsenMinecraftWorldNotCensused` is the alert
 that fires. That state resolves itself the moment the server repairs the
-database, at which point the chunk count is short and the missing-chunk alert
+database, at which point the chunk count is short and the lost-chunk alert
 takes over. Measured in the local test rig: 3 of 5 table files deleted left the
 census failing; after LevelDB's recovery — the server's own "Trying repair" — the
 next census reported 51,357 of 153,058 chunks missing.
@@ -80,11 +90,16 @@ things specific to a chunk loss:
   verified:
   ```bash
   curl -s -X POST -H "Authorization: Bearer $INTERNAL_TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d '{"checkedAt":"<checkedAt from the GET above>"}' \
     http://127.0.0.1:9090/internal/v1/world/acknowledge
   ```
-  Acknowledging is logged with the number of chunks it forgets. It is the only
-  action that clears the alert without the world being repaired, so it is also
-  the wrong move while the loss is unexplained.
+  It names the count it accepts, so a census that landed while you were reading
+  the last one — and may hold losses nobody has looked at — is refused with 409
+  rather than accepted in its place. Acknowledging is logged with the number of
+  chunks it forgets. It is the only action that clears the alert without the
+  world being repaired, so it is also the wrong move while the loss is
+  unexplained.
 
 **Finally, turn the backup back on.**
 
