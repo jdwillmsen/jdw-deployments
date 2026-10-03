@@ -1905,3 +1905,113 @@ map:
     # the longest quiet window (80 minutes) plus a cycle, so a normal night
     # never fires it.
     staleAfter: 2h
+
+# Notices the world losing chunks, and the server saying its database is
+# corrupt, instead of waiting for the nightly backup to come out small.
+#
+# On 2026-10-02 the world lost 6,460 of 153,058 chunks at 01:55 UTC. The only
+# signal was the backup archive's size at 04:03, two hours later and only
+# because the backup happened to run; nobody read it until about 08:00, and the
+# restore landed at 22:22. Every input these rules read was already being
+# produced or is produced now by the same release that carries them -- what was
+# missing was anything asking the question.
+#
+# None of these rules is gated on the time of day or on the server being up. A
+# world that loses chunks at 04:00 has lost them, and the restart that a
+# corruption shutdown causes is exactly when the evidence disappears, so the
+# windows below are what hold the signal across it.
+worldIntegrity:
+  enabled: true
+
+  # How far back the missing-chunk rule looks.
+  #
+  # The window is in the expression and the rule carries no `for:`, which is
+  # the whole difference between an alert and a decoration here: a `for:`
+  # needs the condition true at *every* evaluation in it, and the map's census
+  # gauges go absent for the length of a map pod restart. One census interval
+  # (15m) plus a scrape (60s) plus margin, so a single census that saw the loss
+  # keeps paging across a restart of the thing that measured it.
+  missingWindow: 25m
+
+  # How far back the count rule takes its high-water mark.
+  #
+  # A played-in Bedrock world never deletes a chunk, so its own recent maximum
+  # is a baseline that needs no tuning: any number below it is chunks that were
+  # there and are not. This is the backstop for the one case the map's ledger
+  # cannot see -- a fresh map volume, or a deleted ledger file, leaves it with
+  # no memory of what the world used to hold.
+  #
+  # Also why the baseline is each series' own maximum, taken before the
+  # aggregation rather than after. The world-archive rule below shipped with
+  # that order inverted and silently stopped firing: a new exporter pod is a
+  # new series, and a series whose only history is the small value becomes its
+  # own baseline.
+  #
+  # A day rather than a week, because a deliberate restore to an older backup
+  # legitimately lowers the count and would otherwise page until the week
+  # rolled past it.
+  countBaselineWindow: 24h
+
+  # How old the newest census may be before the rule that says so fires.
+  #
+  # Matches map.alert.staleAfter, and for the same reason: the map leaves the
+  # save state alone through the quiet windows (80 minutes at most), so
+  # anything shorter would page every night for a census that was never due.
+  censusStaleAfter: 2h
+
+  # How long the server's own corruption line keeps paging.
+  #
+  # "Level corruption detected" is followed by the server shutting down, and
+  # the bridge that saw the line goes with the pod, so the gauge is gone within
+  # a minute of the only evidence appearing. Six hours is long enough that a
+  # line printed overnight is still paging in the morning.
+  corruptionWindow: 6h
+
+  # The world backup archive's size against its own weekly median.
+  #
+  # Re-homed here from the jdwillmsen tenant's alert file: this chart ships the
+  # backup CronJob and the exporter that publishes the series, so a rule that
+  # outlives them is a rule that pages about a job nobody runs. Retiring the
+  # tenant-file copy is a follow-up in the platform repo; until it lands both
+  # exist, and the one being replaced is the one that cannot fire.
+  archive:
+    enabled: true
+    # 2% under the median. A played-in world grows; it does not shrink, and it
+    # does not fall below the middle of its own week.
+    tolerance: 0.98
+    # A week of archives. The rule needs the window to hold continuous samples,
+    # so a fixture or a scrape sparser than Prometheus' 5m lookback delta goes
+    # stale between points and the rule evaluates against nothing.
+    baselineWindow: 7d
+    for: 15m
+
+  # A Loki rule on the server's own corruption lines, which is the one signal
+  # that exists before any of the gauges move.
+  #
+  # Inert until two things change in the platform repo, and shipped anyway so
+  # that the query is reviewed next to the rules it backs up rather than
+  # written from memory during an incident:
+  #
+  #  1. Loki's rules sidecar runs with no NAMESPACE set, so it watches only
+  #     `monitoring`. This ConfigMap is in jdwillmsen-prd because the
+  #     tenant-jdwillmsen AppProject permits no other namespace -- targeting
+  #     `monitoring` would fail the whole app's sync, not just this file.
+  #  2. The ruler's rule store is mounted at /rules/platform, so every rule it
+  #     has is evaluated as org `platform`. These streams are org `jdwillmsen`,
+  #     and a query in the wrong org returns empty rather than an error.
+  #
+  # The Prometheus corruption rule above reads the same lines through the
+  # console bridge's gauge and needs neither.
+  loki:
+    enabled: true
+    # Minutes of log the rule looks back over. Longer than its own evaluation
+    # interval so a line cannot fall between two evaluations.
+    window: 5m
+
+  # Grafana picks this up through the dashboards sidecar, which runs with
+  # NAMESPACE=ALL and keys on grafana_dashboard: "1", so a ConfigMap here is
+  # enough. It ships with the chart deliberately: the panels are only
+  # meaningful while the exporters they read exist, and this way they arrive
+  # and leave together.
+  dashboard:
+    enabled: true

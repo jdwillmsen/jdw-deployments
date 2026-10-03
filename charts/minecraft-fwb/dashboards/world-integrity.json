@@ -1,0 +1,323 @@
+{
+  "title": "jdwillmsen / Minecraft FWB World Integrity",
+  "uid": "jdwillmsen-minecraft-fwb-world-integrity",
+  "description": "Whether the FWB world still holds what it held. Top row is the question an operator has at 3am; the rest is the evidence. Chunk counts come from the map's census of a consistent world copy every 15 minutes, the corruption signals from the server's own log through the console bridge, and the archive size from the nightly backup.",
+  "tags": ["jdwillmsen", "minecraft", "world"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "selected": false, "text": "Prometheus", "value": "PBFA97CFB590B2093" }
+      },
+      {
+        "name": "loki_datasource",
+        "type": "datasource",
+        "query": "loki",
+        "current": { "selected": false, "text": "jdwillmsen Loki", "value": "jdwillmsen-loki" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Is the world intact",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Chunks missing",
+      "description": "Chunks this world has held before and does not hold now, summed across dimensions. A Bedrock world never deletes a chunk in normal play, so anything above zero is data loss until proven otherwise. Stays above zero until the chunks come back or an operator accepts the world as it is.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 5, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum(max by (dimension) (mcmap_world_chunks_missing{namespace=\"{{ .Release.Namespace }}\"}))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Chunks held",
+      "description": "Total chunks across the three dimensions at the last census.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 5, "x": 5, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum(max by (dimension) (mcmap_world_chunks{namespace=\"{{ .Release.Namespace }}\"}))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "none", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Server reported corruption",
+      "description": "The server's own report, which arrives before any count moves: \"status NOT OK(Corruption: N missing files)\" at world open, or \"Level corruption detected\" at run time. The window outlives the restart that the run-time form causes, which is otherwise the moment the evidence disappears.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 5, "x": 10, "y": 1 },
+      "targets": [
+        {
+          "expr": "max(max_over_time(mc_console_bridge_world_corruption_detected{namespace=\"{{ .Release.Namespace }}\"}[{{ .Values.worldIntegrity.corruptionWindow }}]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "No", "color": "green", "index": 0 },
+                "1": { "text": "Yes", "color": "red", "index": 1 }
+              }
+            }
+          ],
+          "noValue": "no bridge"
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Last census",
+      "description": "How long ago the map last counted the world. The census runs after each snapshot, so this sits under the refresh interval except through the quiet windows, when the map leaves the save state alone for other jobs.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 4, "x": 15, "y": 1 },
+      "targets": [
+        {
+          "expr": "time() - max(mcmap_world_census_last_success_timestamp_seconds{namespace=\"{{ .Release.Namespace }}\"})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "never",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": {{ include "worldIntegrity.censusStaleSeconds" . }} }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Newest world archive",
+      "description": "Size of the archive a restore would come out of, and the one slow signal that reads the backup rather than the live world.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 5, "x": 19, "y": 1 },
+      "targets": [
+        {
+          "expr": "max(backup_last_artifact_bytes{namespace=\"{{ .Release.Namespace }}\", backup_job=\"{{ include `backup.name` . }}\", artifact=\"world\"})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "colorMode": "none", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "What the census sees",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Chunks held, by dimension",
+      "description": "A step per census. These lines only rise while the world is played in; a step down is the shape this dashboard exists for.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "targets": [
+        {
+          "expr": "max by (dimension) (mcmap_world_chunks{namespace=\"{{ .Release.Namespace }}\"})",
+          "legendFormat": "{{ "{{" }}dimension{{ "}}" }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineInterpolation": "stepAfter", "fillOpacity": 0 } },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Chunks missing, by dimension",
+      "description": "Measured against every chunk the map has ever seen, kept on its volume, so a loss stays visible across later censuses and across a map restart rather than being absorbed as the new normal. The 2026-10-02 loss was 4,753 overworld, 1,413 nether and 294 end.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "targets": [
+        {
+          "expr": "max by (dimension) (mcmap_world_chunks_missing{namespace=\"{{ .Release.Namespace }}\"})",
+          "legendFormat": "{{ "{{" }}dimension{{ "}}" }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineInterpolation": "stepAfter", "fillOpacity": 20 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Chunk change since the previous snapshot",
+      "description": "The per-snapshot delta the counts above hide: positive is exploration, negative is loss. Offset by one refresh interval plus a scrape, so a clean cycle reads zero rather than straddling two censuses.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "targets": [
+        {
+          "expr": "max by (dimension) (mcmap_world_chunks{namespace=\"{{ .Release.Namespace }}\"}) - max by (dimension) (mcmap_world_chunks{namespace=\"{{ .Release.Namespace }}\"} offset {{ .Values.worldIntegrity.missingWindow }})",
+          "legendFormat": "{{ "{{" }}dimension{{ "}}" }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "World archive against its weekly median",
+      "description": "The same comparison JdwillmsenMinecraftWorldArchiveShrank makes. The baseline takes each exporter series' own median and then the largest of them: without that outer max, a new exporter pod is a new series whose only history is the value being tested, which is how the alert silently stopped firing on 2026-10-03 with the archive still 3.8% short.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "targets": [
+        {
+          "expr": "max by (artifact) (backup_last_artifact_bytes{namespace=\"{{ .Release.Namespace }}\", backup_job=\"{{ include `backup.name` . }}\", artifact=\"world\"})",
+          "legendFormat": "archive",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (artifact) (quantile_over_time(0.5, backup_last_artifact_bytes{namespace=\"{{ .Release.Namespace }}\", backup_job=\"{{ include `backup.name` . }}\", artifact=\"world\"}[{{ .Values.worldIntegrity.archive.baselineWindow }}])) * {{ .Values.worldIntegrity.archive.tolerance }}",
+          "legendFormat": "alert threshold",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Where the damage is",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }
+    },
+    {
+      "id": 13,
+      "type": "logs",
+      "title": "Missing chunks, with coordinates",
+      "description": "The map logs the first missing chunks it finds as block coordinates, which is what the map page and a player in game both use. The full list is on the map's internal API at GET /internal/v1/world. Selected by container, not pod: this tenant's log pipeline ships no pod stream label.",
+      "datasource": { "type": "loki", "uid": "${loki_datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "{namespace=\"{{ .Release.Namespace }}\", container=\"map\"} |~ `world is missing chunks|chunk loss acknowledged`",
+          "refId": "A"
+        }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    },
+    {
+      "id": 14,
+      "type": "logs",
+      "title": "Server corruption and repair lines",
+      "description": "The server prints this once at world open and then carries on, having dropped whatever it could not find; the repair that follows is not the world being intact.",
+      "datasource": { "type": "loki", "uid": "${loki_datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "{namespace=\"{{ .Release.Namespace }}\", container=\"{{ include `worldIntegrity.serverContainer` . }}\"} |~ `status NOT OK\\(Corruption:|Level corruption detected|Trying repair`",
+          "refId": "A"
+        }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Is the measurement working",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Census duration",
+      "description": "The census reads the whole world database on the map pod's CPU limit, before the renders. Watch this against the refresh interval: a census that approaches it is a census that will start overlapping the next cycle.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 34 },
+      "targets": [
+        {
+          "expr": "max(mcmap_world_census_duration_seconds{namespace=\"{{ .Release.Namespace }}\"})",
+          "legendFormat": "last census",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Censuses that could not read the world",
+      "description": "A census that fails leaves the gauges holding the last known state, so a failure is not the same as nothing being wrong. Sustained failures are what JdwillmsenMinecraftWorldNotCensused pages on.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 34 },
+      "targets": [
+        {
+          "expr": "sum(increase(mcmap_world_census_failures_total{namespace=\"{{ .Release.Namespace }}\"}[1h]))",
+          "legendFormat": "failures per hour",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    }
+  ]
+}
