@@ -19,13 +19,19 @@ spec:
   groups:
     - name: minecraft-fwb-world-integrity
       rules:
-        - alert: JdwillmsenMinecraftWorldChunksMissing
-          # mcmap_world_chunks_missing is already sticky: the map compares each
-          # census with every chunk it has ever seen, kept on a volume, so a
-          # loss stays reported on every later cycle until the chunks come back
-          # or an operator accepts the world as it is. The window here is not
-          # for that -- it is so a map pod restart, which takes the gauge away
-          # entirely for a minute, cannot resolve the page.
+        - alert: JdwillmsenMinecraftWorldChunksLost
+          # Reads mcmap_world_chunks_lost, not mcmap_world_chunks_missing, and
+          # the difference is the whole alert. A lost chunk does not stay
+          # missing: Bedrock generates it again from the seed the moment a
+          # player walks near, as empty terrain with everything built on it
+          # gone. `missing` goes back to zero when that happens, so an alert on
+          # it would resolve itself as the hole is walked through -- on a world
+          # that has permanently lost whatever was there. `lost` is kept on the
+          # map's volume and only an operator's acknowledgement clears it.
+          #
+          # That makes the gauge sticky across restarts too, so the window here
+          # is not patience: it is so a map pod restart, which takes the gauge
+          # away entirely for a minute, cannot resolve the page.
           #
           # Summed across dimensions rather than alerting per dimension: the
           # 2026-10-02 loss hit all three, and three pages about one event is
@@ -37,22 +43,24 @@ spec:
           expr: |
             sum by (namespace) (
               max by (namespace, dimension) (
-                max_over_time(mcmap_world_chunks_missing{namespace="{{ .Release.Namespace }}"}[{{ .Values.worldIntegrity.missingWindow }}])
+                max_over_time(mcmap_world_chunks_lost{namespace="{{ .Release.Namespace }}"}[{{ .Values.worldIntegrity.lostWindow }}])
               )
             ) > 0
           labels:
             severity: critical
             namespace: {{ .Release.Namespace }}
           annotations:
-            summary: Minecraft FWB is missing {{ "{{ $value }}" }} world chunks
+            summary: Minecraft FWB has lost {{ "{{ $value }}" }} world chunks
             description: >-
               The map's census found {{ "{{ $value }}" }} chunks that this world has held
-              before and does not hold now. A Bedrock world never deletes a chunk in
-              normal play, so treat this as data loss until proven otherwise, and do
-              not let tonight's backup rotate away the last good archive. The
-              dimension split and the block coordinates are on the world integrity
-              dashboard and in the map pod's log. Restore procedure:
-              charts/minecraft-fwb/README.md, "World chunk loss".
+              before. A Bedrock world never deletes a chunk in normal play, so treat
+              this as data loss until proven otherwise, and do not let tonight's
+              backup rotate away the last good archive. This does not clear when the
+              server generates the ground again -- it comes back empty -- only when an
+              operator accepts the world as it is. The dimension split and the block
+              coordinates are on the world integrity dashboard and in the map pod's
+              log. Restore procedure: charts/minecraft-fwb/README.md,
+              "World chunk loss".
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
         - alert: JdwillmsenMinecraftWorldChunkCountDropped
           # The backstop for the one thing the ledger above cannot see. The
@@ -92,7 +100,7 @@ spec:
             description: >-
               The world's chunk count is {{ "{{ $value }}" }}, below its own maximum over
               the last {{ .Values.worldIntegrity.countBaselineWindow }}. A played-in
-              Bedrock world only gains chunks. This fires instead of the missing-chunk
+              Bedrock world only gains chunks. This fires instead of the lost-chunk
               alert when the map has no ledger to compare against -- a fresh map volume,
               or one that was restored -- so the count is the only evidence. It also
               fires after a deliberate restore to an older backup, which is a real
@@ -141,10 +149,16 @@ spec:
           # The staleness bound is the same one the census-stale case uses, so
           # there is no band between them where a census that keeps limping back
           # is covered by neither.
+          #
+          # The newest time over that same window, not the current sample: a
+          # map pod that has just started exports zero until its first count,
+          # and read on its own that zero is decades stale. The pod it
+          # replaced counted recently, and that is the answer to "when was the
+          # world last counted".
           expr: |
             absent(mcmap_world_census_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"})
               or
-            (time() - max by (namespace) (mcmap_world_census_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"}))
+            (time() - max by (namespace) (max_over_time(mcmap_world_census_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"}[{{ .Values.worldIntegrity.censusStaleAfter }}])))
               > {{ include "worldIntegrity.censusStaleSeconds" . }}
           for: 15m
           labels:
