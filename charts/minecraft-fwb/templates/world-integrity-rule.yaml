@@ -1,0 +1,221 @@
+{{- if .Values.worldIntegrity.enabled }}
+# Alerts for the world losing data: chunks that disappear, a chunk count that
+# falls below its own high-water mark, the server reporting its database
+# corrupt, and the nightly archive coming out small.
+#
+# Nothing here is gated on the clock or on the server being up. The window in
+# each expression, rather than a `for:`, is what carries a signal across the
+# restart that the damage itself causes -- see the comments in values.yaml for
+# why that distinction is not stylistic.
+#
+# tools/tests/test-world-integrity-alerts.sh unit-tests these against promtool,
+# including the baseline-reset case the archive rule shipped broken on.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "worldIntegrity.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-world-integrity
+      rules:
+        - alert: JdwillmsenMinecraftWorldChunksMissing
+          # mcmap_world_chunks_missing is already sticky: the map compares each
+          # census with every chunk it has ever seen, kept on a volume, so a
+          # loss stays reported on every later cycle until the chunks come back
+          # or an operator accepts the world as it is. The window here is not
+          # for that -- it is so a map pod restart, which takes the gauge away
+          # entirely for a minute, cannot resolve the page.
+          #
+          # Summed across dimensions rather than alerting per dimension: the
+          # 2026-10-02 loss hit all three, and three pages about one event is
+          # the noise that teaches people to close them. The dimension split is
+          # on the dashboard and in the map's own log line.
+          #
+          # max by (dimension) before the sum is what keeps a rollover from
+          # double-counting while two map pods are briefly both scraped.
+          expr: |
+            sum by (namespace) (
+              max by (namespace, dimension) (
+                max_over_time(mcmap_world_chunks_missing{namespace="{{ .Release.Namespace }}"}[{{ .Values.worldIntegrity.missingWindow }}])
+              )
+            ) > 0
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB is missing {{ "{{ $value }}" }} world chunks
+            description: >-
+              The map's census found {{ "{{ $value }}" }} chunks that this world has held
+              before and does not hold now. A Bedrock world never deletes a chunk in
+              normal play, so treat this as data loss until proven otherwise, and do
+              not let tonight's backup rotate away the last good archive. The
+              dimension split and the block coordinates are on the world integrity
+              dashboard and in the map pod's log. Restore procedure:
+              charts/minecraft-fwb/README.md, "World chunk loss".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
+        - alert: JdwillmsenMinecraftWorldChunkCountDropped
+          # The backstop for the one thing the ledger above cannot see. The
+          # ledger lives on the map's volume: a fresh volume, a restored one, or
+          # a file someone deleted leaves the map with no memory, and the first
+          # census on a damaged world then reports nothing missing because it
+          # has nothing to compare against.
+          #
+          # A chunk count cannot fall, so the series' own recent maximum is a
+          # baseline with nothing to tune. Growth keeps the two sides equal.
+          #
+          # The baseline is each series' own maximum over the window, taken
+          # before the aggregation rather than after. That order is the fix the
+          # archive rule below needed: a map pod replacement is a new series,
+          # and a new series' maximum over any window is whatever it has just
+          # reported, so aggregating first would let a damaged world become its
+          # own baseline.
+          #
+          # Per dimension rather than on the total, so a dimension that lost
+          # chunks cannot be hidden by another that gained them in the same
+          # window.
+          #
+          # This one does carry a `for:`, and the reason it is safe is that the
+          # gauge is a step function -- it changes only when a census lands, 15
+          # minutes apart -- so there is nothing for it to flap between. The
+          # rule above, which has to fire, carries none.
+          expr: |
+            sum by (namespace) (max by (namespace, dimension) (mcmap_world_chunks{namespace="{{ .Release.Namespace }}"}))
+              <
+            sum by (namespace) (max by (namespace, dimension) (max_over_time(mcmap_world_chunks{namespace="{{ .Release.Namespace }}"}[{{ .Values.worldIntegrity.countBaselineWindow }}])))
+          for: 5m
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB holds fewer world chunks than it recently did
+            description: >-
+              The world's chunk count is {{ "{{ $value }}" }}, below its own maximum over
+              the last {{ .Values.worldIntegrity.countBaselineWindow }}. A played-in
+              Bedrock world only gains chunks. This fires instead of the missing-chunk
+              alert when the map has no ledger to compare against -- a fresh map volume,
+              or one that was restored -- so the count is the only evidence. It also
+              fires after a deliberate restore to an older backup, which is a real
+              statement about the world and clears once the baseline window rolls past
+              it. Restore procedure: charts/minecraft-fwb/README.md,
+              "World chunk loss".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
+        - alert: JdwillmsenMinecraftWorldCorruptionReported
+          # The server's own report, which arrives before any count moves: it
+          # prints the LevelDB status at world open and then "repairs" by
+          # dropping whatever it cannot find. The console bridge raises this
+          # gauge on that line, live or replayed from the server's log history,
+          # and never lowers it -- a clean start after a repair is not a healthy
+          # world.
+          #
+          # The window is doing the work, not patience. The run-time form of
+          # this ("Level corruption detected") shuts the server down, and the
+          # bridge is a sidecar in that pod, so the gauge disappears within a
+          # minute of the only evidence of it. max_over_time keeps the page up
+          # across the restart; the aggregation keeps the alert's labels off the
+          # dead pod.
+          expr: |
+            max by (namespace) (
+              max_over_time(mc_console_bridge_world_corruption_detected{namespace="{{ .Release.Namespace }}"}[{{ .Values.worldIntegrity.corruptionWindow }}])
+            ) == 1
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB reported its world database corrupt
+            description: >-
+              The server logged either "status NOT OK(Corruption: N missing files)" at
+              world open or "Level corruption detected" at run time within the last
+              {{ .Values.worldIntegrity.corruptionWindow }}. The repair it runs
+              afterwards drops the records it cannot find, so the server coming back up
+              is not the world being intact. Check the map's chunk count for how much
+              went, and stop the backup before it rotates the last good archive away.
+              Restore procedure: charts/minecraft-fwb/README.md, "World chunk loss".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
+        - alert: JdwillmsenMinecraftWorldNotCensused
+          # The measurement stopping is its own failure and a silent one: the
+          # three rules above are all comparisons, and a comparison never
+          # matches a series nobody is producing. Without this, a map that
+          # cannot read the world reads exactly like a world with nothing wrong.
+          #
+          # The staleness bound is the same one the census-stale case uses, so
+          # there is no band between them where a census that keeps limping back
+          # is covered by neither.
+          expr: |
+            absent(mcmap_world_census_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"})
+              or
+            (time() - max by (namespace) (mcmap_world_census_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"}))
+              > {{ include "worldIntegrity.censusStaleSeconds" . }}
+          for: 15m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft FWB world chunks are not being counted
+            description: >-
+              No chunk census has succeeded for more than
+              {{ .Values.worldIntegrity.censusStaleAfter }}, or the metric is gone
+              entirely, so the chunk-loss alerts cannot fire whatever the world is
+              doing. The census runs inside the map pod after each snapshot, so this
+              usually means the map or the console bridge is down rather than the
+              world. mcmap_world_census_failures_total and the map pod's log say which.
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
+{{- if .Values.worldIntegrity.archive.enabled }}
+        - alert: JdwillmsenMinecraftWorldArchiveShrank
+          # The slow signal, kept because it is the only one that reads the
+          # thing a restore actually comes out of.
+          #
+          # What it got wrong, and what this expression fixes: the baseline was
+          # quantile_over_time over the raw series, which carries `instance`.
+          # When the exporter pod moved, the median was computed per instance,
+          # and the new instance's only history was the value being tested --
+          # so it was its own baseline and the comparison could not be true.
+          # Observed 2026-10-03: the alert went quiet with the archive still
+          # 730,898,848 bytes against a 759,548,865 median. A change in series
+          # identity silently reset it, which is the failure mode to look for in
+          # every rule of this shape.
+          #
+          # The fix is one `max by` around the quantile: take each series' own
+          # median and then the largest of them, rather than comparing every
+          # series against only itself. Whichever exporter reported the week is
+          # the one that supplies the baseline, and a pod that arrived an hour
+          # ago cannot vouch for a week it was not there for.
+          #
+          # max rather than min or avg: a played-in world grows, so of two
+          # overlapping reports the larger is the honest one, and a baseline
+          # that errs upward tightens the threshold instead of loosening it.
+          expr: |
+            (
+              max by (namespace, backup_job, artifact) (backup_last_artifact_bytes{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"})
+                <
+              max by (namespace, backup_job, artifact) (
+                quantile_over_time(0.5, backup_last_artifact_bytes{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"}[{{ .Values.worldIntegrity.archive.baselineWindow }}])
+              ) * {{ .Values.worldIntegrity.archive.tolerance }}
+            )
+            and
+              max by (namespace, backup_job, artifact) (backup_last_artifact_bytes{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"}) > 0
+            and
+              max by (namespace, backup_job, artifact) (backup_state_reported{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"}) == 1
+          for: {{ .Values.worldIntegrity.archive.for }}
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft world backup is smaller than its recent typical size
+            description: >-
+              The newest world archive is more than
+              {{ subf 1.0 .Values.worldIntegrity.archive.tolerance | mulf 100 | printf "%.0f" }}% smaller
+              than the median of those taken in the past
+              {{ .Values.worldIntegrity.archive.baselineWindow }}. A world that is
+              played in grows; it does not shrink, and it does not fall below its own
+              recent middle. Treat this as data loss until proven otherwise and do not
+              let the next backup rotate the good one away. A LevelDB compaction does
+              not produce this: it inflates one archive rather than shrinking the next,
+              and the median baseline already absorbs that. The chunk-loss alerts above
+              answer the same question within 15 minutes instead of a day; this one
+              still earns its place because it reads the archive rather than the live
+              world. Restore procedure: charts/minecraft-fwb/README.md,
+              "World chunk loss".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
+{{- end }}
+{{- end }}
