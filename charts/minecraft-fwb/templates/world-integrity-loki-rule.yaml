@@ -1,0 +1,48 @@
+{{- if and .Values.worldIntegrity.enabled .Values.worldIntegrity.loki.enabled }}
+# A log-derived alert on the server's own corruption lines, which appear before
+# any gauge moves.
+#
+# This does not evaluate yet, and that is stated here rather than discovered
+# during the next incident. Two things in the platform repo have to change
+# first, both described in values.yaml under worldIntegrity.loki: Loki's rules
+# sidecar watches only its own namespace, and its rule store is mounted so that
+# every rule it holds is evaluated as org `platform` while these streams are org
+# `jdwillmsen`. The ConfigMap is in this namespace because the
+# tenant-jdwillmsen AppProject permits no other, so targeting `monitoring` would
+# fail the whole application's sync rather than just this file.
+#
+# It ships anyway because the query is the part worth reviewing in daylight, and
+# because JdwillmsenMinecraftWorldCorruptionReported reads the same two lines
+# through the console bridge's gauge and needs none of the above.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "worldIntegrity.lokiRules.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    loki_rule: "true"
+data:
+  minecraft-fwb-world-integrity.yaml: |
+    groups:
+      - name: minecraft-fwb-world-integrity
+        interval: 1m
+        rules:
+          - alert: JdwillmsenMinecraftWorldCorruptionLogged
+            # Selected by container, not pod: this cluster's log pipeline ships
+            # no `pod` stream label, so a `pod=~` selector silently matches
+            # nothing.
+            #
+            # Anchored on the server's own log-level tag so that a player typing
+            # the words cannot raise a critical alert. The server does not write
+            # chat to stdout today, which is exactly the kind of fact that stops
+            # being true without anyone editing this file.
+            expr: |
+              sum(count_over_time({namespace="{{ .Release.Namespace }}", container="{{ include "worldIntegrity.serverContainer" . }}"} |~ `\] (LevelDB .* status NOT OK\(Corruption:|Level corruption detected)` [{{ .Values.worldIntegrity.loki.window }}])) > 0
+            labels:
+              severity: critical
+              namespace: {{ .Release.Namespace }}
+            annotations:
+              summary: "Minecraft FWB logged world database corruption"
+              description: "{{ "{{ $value }}" }} corruption line(s) from the server in the last {{ .Values.worldIntegrity.loki.window }}. The repair the server runs next drops whatever it cannot find, so a clean start afterwards is not a healthy world. Stop the backup before it rotates the last good archive away, then measure the loss with the map's chunk count. Restore procedure: charts/minecraft-fwb/README.md, \"World chunk loss\"."
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
+{{- end }}
