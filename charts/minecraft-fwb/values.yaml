@@ -1864,7 +1864,12 @@ map:
     #
     # 1.2.0 counts the world's chunks after every snapshot and reports any
     # that were lost, on its metrics port and to the agent.
-    tag: "1.2.0"
+    #
+    # 1.3.0 keeps the previous complete snapshot beside the current one, and
+    # sets a snapshot that lost chunks aside instead of letting it replace
+    # either. Both are hard links into the mirror, so they cost the churn
+    # between snapshots rather than a second world.
+    tag: "1.3.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
