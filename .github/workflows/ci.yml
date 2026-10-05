@@ -4,9 +4,10 @@ on:
   push:
     branches:
       - main
+  # No base-branch filter: a branches filter on pull_request matches the PR's
+  # base, so a PR stacked on a feature branch would run none of this and still
+  # show green scan checks.
   pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 # Every job here only reads the tree; nothing writes back to the repo.
