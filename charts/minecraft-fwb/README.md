@@ -375,11 +375,180 @@ to `2` one cycle later.
   at 80% of any claim in the namespace, which is the signal to expand the map
   PVC; TrueNAS iSCSI expands online.
 
+## Live layer
+
+The map draws players and mobs where they are now, a second or two behind
+the game.
+
+```
+script pack in the world   prints one line per list, once a second, to the server console
+console bridge (sidecar)   keeps the newest 256 of those lines      GET /script, long poll
+map                        newest whole list per dimension, in memory
+browser                    GET /api/live, server-sent events, behind the map's login
+```
+
+- **The pack** is a behaviour pack on the stable script API. It reads
+  positions and prints them, and does nothing else: no commands, no
+  experiments, no resource pack, so the world stays a no-cheats world with
+  its achievements. It ships inside the map image and is put into the world
+  by the `install-map-pack` init container on the game server pod
+  (`minecraft-bedrock.initContainers` in `values.yaml`), which runs
+  `install-pack` before the server opens the world.
+- **The bridge** (0.7.0 and later) recognises the pack's lines by their
+  `[Scripting] MCMAP1` prefix and holds them apart from the join and leave
+  events the agent reads.
+- **The map** (1.4.0 and later; the pack itself needs 1.5.0) asks the bridge
+  for them, drops positions older than `map.live.ttl`, and streams the rest.
+  Its settings are `map.live` in `values.yaml`.
+
+The pack prints a heartbeat with every sample even when nobody is online, so
+a layer that has gone quiet is broken, never merely empty.
+
+### The init step cannot hold the server, and must stay that way
+
+An init container that fails keeps the game server from starting. This one
+is built not to: a missing world, an unwritable volume, a pack list it cannot
+parse — the installer logs it and exits 0, and the server starts without the
+pack. `tools/tests/test-map.sh` pins the pod spec around it so that stays
+true — no Secret, one mount, the map's own image tag, the server's own user,
+no wrapper and no probe. The comment on `minecraft-bedrock.initContainers`
+has the reasons.
+
+Two things can still hold the server in `Init`:
+
+- **A replacement the installer could neither finish nor undo.** Updating an
+  installed pack moves the old one aside first; if the new one cannot be put
+  in place and the old one cannot be put back, the installer exits non-zero
+  on purpose and the kubelet runs it again. The second run finds nothing to
+  move aside, so it installs or skips like any other and the server starts.
+  It is one retry, not a loop, and the container's log says `holding the
+  server` when it happens.
+- **The image pull.** The node keeps the image once it has it, but a server
+  restart that has to fetch a new tag while ghcr.io is unreachable waits in
+  `Init:ImagePullBackOff` until it can. That is true of every image in the
+  pod, and this adds one.
+
+### Turning it off
+
+**Removing the init container does not remove the pack.** The pack's files
+and the world's registration of them are on the server's volume
+(`behavior_packs/mcmap-live/` and `worlds/FWB/world_behavior_packs.json`).
+Delete the block and the server restarts with the pack still loaded.
+
+To take the pack out of the world:
+
+1. In `values.yaml`, change the init container's argument from `install-pack`
+   to `uninstall-pack`. Leave the rest of the block exactly as it is.
+2. In the same change set `map.live.enabled: false`, so the map stops asking
+   for records and the two live alerts are not rendered. Without this
+   `JdwillmsenMinecraftMapLiveStale` fires fifteen minutes later, correctly.
+3. Merge. The sync announces the restart to connected players and restarts
+   the server; the init container unregisters the pack and deletes its files
+   before the server starts.
+4. Confirm it, because the uninstaller fails open exactly as the installer
+   does and a step that could not run leaves the pack in place:
+
+   ```bash
+   kubectl -n jdwillmsen-prd logs jdwillmsen-minecraft-fwb-prd-minecraft-bedrock-0 -c install-map-pack
+   # expect: "pack uninstalled"
+   kubectl -n jdwillmsen-prd logs jdwillmsen-minecraft-fwb-prd-minecraft-bedrock-0 -c jdwillmsen-minecraft-fwb-prd-minecraft-bedrock | grep -E 'Pack Stack|MCMAP1' | head
+   # expect: "Pack Stack - None" and no MCMAP1 lines
+   ```
+
+Leave `uninstall-pack` in place afterwards. It does nothing on a world with
+no pack, and removing the block is another server restart that buys nothing;
+fold it into the next change that restarts the server anyway.
+
+`map.live.enabled: false` on its own is the smaller switch. It restarts only
+the map and takes the markers off the page, and it does **not** unload the
+pack: the server goes on sampling and printing. Use it for a problem in the
+map or the browser, never for one in the server.
+
+**When to roll back.** When the 30-minute average of `mc_agent_server_tps`
+sits more than 2.0 below the average for the same half hour of the day over
+the previous seven days:
+
+```promql
+max(avg_over_time(mc_agent_server_tps{namespace="jdwillmsen-prd"}[30m]))
+  -
+(
+    max(avg_over_time(mc_agent_server_tps{namespace="jdwillmsen-prd"}[30m] offset 1d))
+  + max(avg_over_time(mc_agent_server_tps{namespace="jdwillmsen-prd"}[30m] offset 2d))
+  + max(avg_over_time(mc_agent_server_tps{namespace="jdwillmsen-prd"}[30m] offset 3d))
+  + max(avg_over_time(mc_agent_server_tps{namespace="jdwillmsen-prd"}[30m] offset 4d))
+  + max(avg_over_time(mc_agent_server_tps{namespace="jdwillmsen-prd"}[30m] offset 5d))
+  + max(avg_over_time(mc_agent_server_tps{namespace="jdwillmsen-prd"}[30m] offset 6d))
+  + max(avg_over_time(mc_agent_server_tps{namespace="jdwillmsen-prd"}[30m] offset 7d))
+) / 7
+```
+
+Below `-2` is a rollback, by the procedure above, not something to tune in
+place. Lowering `PACK_MOB_CAP` is not a substitute: the cap bounds what the
+pack reads and prints, but the server still walks every entity to find the
+nearest thousand. Read `mcmap_live_pack_scan_seconds` and
+`mcmap_live_pack_interval_seconds` beside it; an interval above one second is
+the pack slowing itself down because its samples were taking too long. The
+same hours are compared because TPS follows who is online, and because a
+restart lifts it by itself (see `scheduledRestart`), which the rollout's own
+restart will do on its first day.
+
+### When the layer is stale
+
+`JdwillmsenMinecraftMapLiveStale` (no record for `map.live.alert.staleAfter`)
+or `JdwillmsenMinecraftMapLiveNeverStarted` (no record at all in
+`map.live.alert.lookback`), both warnings. Nothing but the markers is
+affected. Work down the path, and stop at the first hop that has nothing:
+
+1. `mcmap_live_frames_total` by `result`, and `mcmap_live_polls_total` by
+   `result`, on the map. Polls `failed` or `busy` with no frames: the map
+   cannot reach the bridge. Polls `empty` only: the bridge has nothing to
+   give. Frames `unparseable`: the pack and the map disagree about the
+   format, which the shared image tag exists to prevent.
+2. `mc_console_bridge_script_records_total` by `result` on the bridge, with
+   `mc_console_bridge_console_connected`. Not counting while connected: the
+   server is not printing records.
+3. The server log for `[Scripting]`. `Pack Stack - None` at start means the
+   pack is not installed, and the `install-map-pack` container's log says why
+   it skipped. A pack stack line naming `mcmap live positions` with no
+   `MCMAP1` lines after it means the script failed to load, and the
+   `[Scripting]` error beside it says how.
+
+A server restart is not an outage of this layer and does not alert: the pack
+stops with the server and resumes when the world has loaded, minutes later.
+
+### Known limits
+
+- **Log volume.** The pack writes about 11 to 14 KB/s of records to the
+  server's stdout, roughly 1 GB a day, at the load measured on a copy of this
+  world. Every byte is a container log line, and the whole cluster was
+  sending Loki about 16 KB/s before it, so this about doubles the cluster's
+  log ingest. Nothing in the collector drops these lines. A drop rule for
+  `[Scripting] MCMAP1` belongs in the platform repo and is not part of this
+  chart.
+- **Console history.** The server keeps the last 50 console lines and
+  replays them to the bridge whenever it reconnects. The pack fills those 50
+  lines in a few seconds, so what a reconnect replays is now almost all
+  records. Anything the bridge used to recover from that history has to have
+  been printed in the last few seconds: joins and leaves, and the
+  world-open corruption line `JdwillmsenMinecraftWorldCorruptionReported`
+  reads. A bridge that is connected when a line is printed still sees it.
+- **Restarts.** The pack is loaded when the server starts and at no other
+  time. Installing it, removing it, a new map image tag in the init
+  container and a changed `PACK_MOB_CAP` all take effect on the next server
+  restart, which changing that block causes.
+- **A brand-new volume.** The installer skips a world that does not exist
+  yet, and the server only creates it on its first start. So a server
+  started on an empty volume runs without the pack until it is restarted
+  once, and `JdwillmsenMinecraftMapLiveNeverStarted` fires meanwhile. A world
+  restored onto the volume is there before the pod starts and is not
+  affected.
+
 ## Tests
 
 ```bash
 tools/tests/test-world-integrity-alerts.sh   # promtool unit tests for the rules above
 tools/tests/test-tick-rate-alerts.sh
+tools/tests/test-map.sh                      # the map's exposure, the pack's init step, the map and live alerts
 ```
 
 Every `tools/tests/test-*.sh` is discovered and run by CI. The alert suites skip

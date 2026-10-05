@@ -296,6 +296,132 @@ minecraft-bedrock:
     failureThreshold: 60
 
 
+  # Puts the map's script pack into the world before the server opens it.
+  #
+  # The pack is what the map's live layer draws from: once a second it prints
+  # where every player and mob is to the server's console, the console bridge
+  # keeps those lines, and the map streams them to browsers. It has to be an
+  # init step in this pod because nothing else can write to the world's
+  # volume before the server has it open: the claim is ReadWriteOnce and
+  # mounted here.
+  #
+  # This is a container that runs ahead of the game server, so anything it
+  # waits on, the server waits on. Three rules follow, and tools/tests/
+  # test-map.sh fails the build on each:
+  #
+  #  1. Nothing from a Secret. No secretKeyRef, no envFrom, no secret volume.
+  #     A reference that cannot resolve leaves the pod in
+  #     CreateContainerConfigError with the server never started, which is
+  #     exactly how a sidecar's secret took this world offline for 40 hours
+  #     (docs/incidents/2026-09-06-fwb-console-bridge-secret.md). The
+  #     installer needs no credential and must never be given one.
+  #  2. One mount, the world's volume. A second volume is a second thing that
+  #     has to attach before the server may start.
+  #  3. The same image tag as map.image.tag. The pack and the service that
+  #     parses its records ship in one image so they cannot disagree about
+  #     the record format; two tags would let them.
+  #
+  # initContainers is rendered by plain toYaml in the vendored subchart's
+  # deployment.yaml (confirmed by reading it), never passed through tpl. So,
+  # unlike sidecarContainers below, nothing in it can be conditional and
+  # nothing can be read from another value: the image is a literal string
+  # for the same reason the console-bridge sidecar's is, and the level name
+  # and mob cap are literals too. It also means this step is in every render,
+  # with or without values-console-bridge.yaml. Without the bridge the pack
+  # still prints its records and nothing reads them, which is waste, not
+  # harm.
+  #
+  # The installer fails open: a missing world, an unwritable volume, a pack
+  # list it cannot parse, a missing variable or a panic is logged and exits
+  # 0, and the server starts without the pack. Its one non-zero exit is a
+  # replacement it could neither finish nor undo, which the kubelet's retry
+  # repairs on the next attempt. That property is the only reason this step
+  # is allowed here, so do not wrap it: no `command` (a shell that is not in
+  # this distroless image would fail where the installer would not), no
+  # probes, and nothing that waits for the map or the bridge to be up. A
+  # pack that did not install shows up as JdwillmsenMinecraftMapLiveNeverStarted,
+  # not as a server that did not start.
+  #
+  # What this step cannot fail open on is its own image pull. The tag is
+  # pulled once per node and kept (IfNotPresent), and the map pod runs the
+  # same image, but a node that has to fetch it while the registry is down
+  # holds the server in Init until it can.
+  #
+  # Removing this block does NOT remove the pack. The files and the world's
+  # registration of them are on the volume and stay there. To turn the pack
+  # off, change `install-pack` below to `uninstall-pack` and let the server
+  # restart; README, "Live layer", has the procedure and when to use it.
+  #
+  # The pack only loads when the server starts, so everything here -- the
+  # step itself, a new image tag, a changed PACK_MOB_CAP -- takes effect on
+  # the restart that applying it causes, and that restart is announced by the
+  # deploy-announce hook like any other change to this pod.
+  #
+  # A volume with no world on it yet is the one start this step sits out on
+  # purpose: the server creates worlds/FWB on its first run, and the
+  # installer will not write a registration into a world directory the server
+  # did not make. The pack goes in on the second start. A world restored onto
+  # the volume is already there when the pod comes back, so a restore does
+  # not have this gap.
+  initContainers:
+    - name: install-map-pack
+      # Must equal map.image.repository:map.image.tag; see rule 3 above.
+      image: "ghcr.io/jdwillmsen/minecraft-map:1.5.0"
+      imagePullPolicy: IfNotPresent
+      # The image's entrypoint is the mcmap binary, so this is the whole
+      # command line. `uninstall-pack` is the only other value it may take.
+      args:
+        - install-pack
+      env:
+        - name: DATA_DIR
+          value: /data
+        # Must equal minecraftServer.levelName below. A name that matches no
+        # world is one more thing the installer logs and skips.
+        - name: LEVEL_NAME
+          value: FWB
+        # Most mobs the pack reports per dimension in one sample. This is the
+        # server-side cap: lowering it shrinks what is read, printed and
+        # logged, with no image release, on the next server restart.
+        # map.live.maxEntities is the browser-side counterpart and takes only
+        # a map restart. Neither is a way out of a tick-rate drop: the server
+        # still walks every entity to find the nearest thousand, so the
+        # answer to that is uninstall-pack.
+        - name: PACK_MOB_CAP
+          value: "1000"
+      volumeMounts:
+        # Read-write, the only writable mount in this pod besides the
+        # server's own: the installer writes behavior_packs/mcmap-live/ and
+        # worlds/FWB/world_behavior_packs.json, each staged beside its
+        # destination and renamed into place.
+        - name: datadir
+          mountPath: /data
+      # A static binary that copies three small files and exits.
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      securityContext:
+        # The server's own identity, spelled out rather than inherited. The
+        # server writes its files as uid 1000 and its directories are not
+        # group-writable, so only uid 1000 can add a pack: the image's
+        # default user, 65532, was tried and refused with `permission
+        # denied`. The pod security context already says 1000:3000 today
+        # (the subchart's default, with fsGroup 2000 giving new files the
+        # volume's group), but that default belongs to a chart this repo
+        # does not own, and inheriting it would let a subchart bump quietly
+        # turn the installer into a user the volume refuses. The test fails
+        # if these stop matching what the server container runs as.
+        runAsUser: 1000
+        runAsGroup: 3000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+
   # mc-monitor already ships in this image and already runs the probes above
   # in its one-shot `status-bedrock` mode. `export-for-prometheus` is the same
   # binary in long-running Prometheus-exporter mode — reusing the image means
@@ -362,7 +488,14 @@ minecraft-bedrock:
       # 0.6.0 exports the server's own "world is corrupt" log lines as a
       # metric, so a LevelDB repair is visible when it is logged rather than
       # when the next backup comes out small.
-      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.6.0"
+      #
+      # 0.7.0 keeps the map pack's position records in a short ring of their
+      # own and serves them from GET /script, a long poll. Until now those
+      # lines reached the bridge and were dropped, so this is the release the
+      # map's live layer cannot work without. They stay out of the /events
+      # ring on purpose: at one sample a second they would push every join
+      # out of it within the hour, and the agent's roster is built from it.
+      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.7.0"
       env:
         # CONSOLE_ADDR, not CONSOLE_ADDRESS: the bridge reads the former, and
         # the misspelling was inert -- it only ever worked because the value
@@ -1869,7 +2002,14 @@ map:
     # sets a snapshot that lost chunks aside instead of letting it replace
     # either. Both are hard links into the mirror, so they cost the churn
     # between snapshots rather than a second world.
-    tag: "1.3.0"
+    #
+    # 1.4.0 adds the live layer: it reads the pack's records from the bridge
+    # and streams players and mobs to logged-in browsers. 1.5.0 carries the
+    # pack itself and the `install-pack` step that puts it into the world,
+    # which is why the game server pod now runs this image too -- see
+    # minecraft-bedrock.initContainers, whose tag is a literal that has to
+    # be moved with this one.
+    tag: "1.5.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -1942,6 +2082,74 @@ map:
     # the longest quiet window (80 minutes) plus a cycle, so a normal night
     # never fires it.
     staleAfter: 2h
+
+  # Players and mobs drawn where they are now. The positions come from the
+  # script pack that minecraft-bedrock.initContainers installs, by way of the
+  # console bridge's GET /script; the map keeps the newest whole list per
+  # dimension in memory and streams it to logged-in browsers. README,
+  # "Live layer", has the whole path and what to check when it goes quiet.
+  #
+  # Every value here is the map's own default, written out so that what
+  # production runs is readable in one place. The map refuses to start on a
+  # value outside the range noted, so a typo is a crash-looping map pod, not
+  # a quietly wrong one.
+  live:
+    # false starts nothing: no request to the bridge, no /api/live, and the
+    # page hides the filters. It restarts the map only. It is NOT how to
+    # take load off the game server -- the pack keeps sampling and printing
+    # whether or not anyone reads it. That is uninstall-pack, in the init
+    # step.
+    enabled: true
+    # How long the bridge may hold one request for records open before
+    # answering empty. 100ms to 25s. The bridge answers the moment a record
+    # arrives, so this sets how often an idle poll turns over, not latency.
+    pollWait: 2s
+    # How old a position may be and still be drawn. 2s to 10m. Past this the
+    # markers disappear, so a pack that has stopped does not leave players
+    # standing where they were.
+    ttl: 10s
+    # Most players, and most mobs, sent to a browser per dimension. 1 to
+    # 10000. This eases the browser, not the server: the pack's own cap is
+    # PACK_MOB_CAP in the init step, and the two are equal on purpose so the
+    # map draws everything the pack reports.
+    maxEntities: 1000
+    # Longest a stream to a browser stays silent before the map writes a
+    # comment line into it. 1s to 20s, and it must stay under 30s whatever
+    # the map would accept: the load balancer in front of the gateway is
+    # HAProxy in TCP mode and cuts a connection that has been idle for 30
+    # seconds, measured. 15s is half that. tools/tests/test-map.sh fails on
+    # 30s or more.
+    keepalive: 15s
+
+    alert:
+      # How old the newest record may be before someone is told.
+      #
+      # The pack prints a heartbeat every second even with nobody online, so
+      # silence always means something broke. The question is only how much
+      # silence is ordinary, and a server restart is: the pack stops with
+      # the server and starts again when the world has loaded. In the six
+      # days before this was written the server answered pings again two
+      # minutes after each ordinary restart and five after the slowest, and
+      # the agent has been seen to need nine to get back into the world.
+      # scheduledRestart can do this every day, and a server that stays
+      # down has louder alerts of its own. So this sits above all of those:
+      # a restart is quiet, and a layer that is still dark a quarter of an
+      # hour later is not a restart.
+      #
+      # The same figure is how long the layer may go without ever producing
+      # a record before the never-started alert fires, which is what bounds
+      # how long a rollout may take to show its first record.
+      staleAfter: 15m
+      # How far back the rules look for the newest record.
+      #
+      # A map pod that has just started exports a timestamp of zero until
+      # its first record, and read on its own that zero is decades stale.
+      # The pod it replaced saw a record seconds before it went, and that is
+      # the honest answer to "when did the layer last work", so the rules
+      # take the newest time over this window instead of the current sample.
+      # Must be longer than staleAfter, or a map restart during an outage
+      # would forget the outage before it was reported.
+      lookback: 1h
 
 # Notices the world losing chunks, and the server saying its database is
 # corrupt, instead of waiting for the nightly backup to come out small.

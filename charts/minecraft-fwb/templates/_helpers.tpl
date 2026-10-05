@@ -99,6 +99,21 @@ is how the description reads; the expression needs a number.
 {{- end -}}
 {{- end -}}
 
+{{/*
+map.live.alert.staleAfter as seconds, for the same reason as above.
+
+The whole value is matched, not only its suffix. atoi answers 0 for anything
+it cannot read, so 1.5h would render a limit of zero seconds, and the
+staleness rule has no `for` behind it: it would fire on every evaluation.
+*/}}
+{{- define "map.liveStaleSeconds" -}}
+{{- $v := .Values.map.live.alert.staleAfter | toString -}}
+{{- if not (regexMatch "^[1-9][0-9]*[hm]$" $v) -}}{{ fail (printf "map.live.alert.staleAfter must be whole hours or minutes like 15m or 1h, got %q" $v) }}
+{{- else if hasSuffix "h" $v -}}{{ mul (trimSuffix "h" $v | atoi) 3600 }}
+{{- else -}}{{ mul (trimSuffix "m" $v | atoi) 60 }}
+{{- end -}}
+{{- end -}}
+
 {{- define "deployAnnounce.name" -}}
 {{ .Release.Name }}-deploy-announce
 {{- end -}}
