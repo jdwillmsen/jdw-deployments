@@ -358,7 +358,11 @@ minecraft-bedrock:
       # changed, and resumes. It also raises the console read limit, without
       # which the bridge could not reconnect once the server's log backfill
       # held a few save-query file lists.
-      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.5.0"
+      #
+      # 0.6.0 exports the server's own "world is corrupt" log lines as a
+      # metric, so a LevelDB repair is visible when it is logged rather than
+      # when the next backup comes out small.
+      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.6.0"
       env:
         # CONSOLE_ADDR, not CONSOLE_ADDRESS: the bridge reads the former, and
         # the misspelling was inert -- it only ever worked because the value
@@ -1291,7 +1295,12 @@ agent:
     #
     # 0.24.0 adds !map, which logs a player in to the world map by telling
     # it who typed the code its page showed.
-    tag: "0.24.0"
+    #
+    # 0.24.1 makes a console `say !command` reach the agent. The server
+    # names the console "Server" and repeats that as a prefix, which the
+    # agent rejected as impersonation, so the console origin never worked.
+    # The agent's own broadcasts are sent so they cannot come back as one.
+    tag: "0.24.1"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -1841,7 +1850,10 @@ map:
     repository: ghcr.io/jdwillmsen/minecraft-map
     # 1.1.0 adds the login and moves metrics and the agent-facing claims API
     # to their own port, so the route below cannot publish them.
-    tag: "1.1.0"
+    #
+    # 1.2.0 counts the world's chunks after every snapshot and reports any
+    # that were lost, on its metrics port and to the agent.
+    tag: "1.2.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
