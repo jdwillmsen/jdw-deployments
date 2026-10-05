@@ -441,6 +441,58 @@ agent image and a release carrying it had to be published first; it has been on
 since agent 0.16.0, which is that release. `census.metrics.enabled` below
 follows the same two-step and is on as of 0.17.0.
 
+#### Removing mobs world-wide
+
+`tools/mc cull` removes chosen mob types from the whole world, loaded chunks or
+not. Nearly all of a long-lived world's mobs sit in chunks nobody has loaded,
+where no console command reaches them.
+
+```bash
+tools/mc cull --types zombie,pillager --dry-run   # the plan: regions and counts
+tools/mc cull --types zombie,pillager --confirm   # announce, kill, verify
+```
+
+Both take a fresh world snapshot through the census job in its listing mode
+(`census -list`, agent 0.26.0 and later), which holds the server's save for a
+few seconds exactly as the nightly census does. The dry run stops there: it
+sends no kill, no ticking-area command and no chat. A real run announces in
+chat, then for each group of targets force-loads its chunks with a ticking
+area, kills by type inside that box, and unloads it again. It ends by taking a
+second listing and exits non-zero if any target it planned to kill is still in
+the save.
+
+What it will not do:
+
+- **Kill a name-tagged mob.** The kill is by type inside a box, so a group of
+  targets with a name-tagged mob of a targeted type inside its box is skipped
+  whole and reported under `skipped_targets`.
+- **Act on a stale listing.** If the snapshot could not be taken and the census
+  fell back to last night's archive, the run is refused.
+- **Leave chunks force-loaded.** Every exit path removes its ticking areas and
+  then asks the server which remain; one that will not unload fails the run
+  and is named.
+
+Things the console does not tell you, each learned on the live server:
+
+- `kill` reaches only ticking chunks, and a ticking area covering only the
+  mob's own chunk is not enough: the box is padded by two chunks and given 20
+  seconds to load (`MC_CULL_LOAD_WAIT`).
+- A bare `@e[type=...]` ignores `execute in <dimension>` and matches every
+  loaded dimension. Only volume arguments scope it.
+- `tickingarea remove` is dimension-scoped and silent when the name is not
+  there, so a remove sent from the console's own dimension does nothing to a
+  nether area.
+- A mob that is not persistent despawns as its chunk loads with no player
+  near, and prints no `Killed` line. `killed_lines` is therefore a floor; the
+  second listing is the result.
+- Drops land in chunks that unload seconds later. They stay until someone
+  visits, which is why the announcement promises a five-minute despawn only
+  near players.
+
+Up to four ticking areas are held at once (`MC_CULL_BATCH`); the server allows
+ten in total, and a run is refused if too few are free. Around 280 regions take
+about three quarters of an hour.
+
 #### The counts as metrics
 
 The report is the better artefact for the spawn-cap and concentration tables,
