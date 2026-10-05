@@ -1902,8 +1902,17 @@ map:
     # The mirror is a LevelDB the renderer reads at random, the same access
     # pattern that put the world itself on the block tier.
     storageClass: truenas-iscsi
-    # 736 MB of world, about 100 MB of tiles and 140 MB of renderer, with room
-    # for the world to grow several times over.
+    # Measured on prd 2026-10-05: 909 MiB of 4.84 GiB usable, 18%. 745 MiB of
+    # world mirror, 80 MiB of tiles, 84 MiB of renderer.
+    #
+    # The map also keeps the last two snapshots it proved whole, as the
+    # near-current restore point for the world. They are hard links to the
+    # mirror's files, so two of them cost one world plus whatever changed
+    # between them, not two more worlds. The ceiling is a quarantined damaged
+    # snapshot plus two generations frozen by an unacknowledged loss, each
+    # pinning tables the mirror has since compacted away: about three worlds
+    # plus the tiles and the renderer, around 2.4 GiB, half of this claim.
+    # JdwillmsenMinecraftVolumeNearFull is the signal to expand it.
     size: 5Gi
 
   resources:
