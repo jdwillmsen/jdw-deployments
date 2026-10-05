@@ -1300,7 +1300,18 @@ agent:
     # names the console "Server" and repeats that as a prefix, which the
     # agent rejected as impersonation, so the console origin never worked.
     # The agent's own broadcasts are sent so they cannot come back as one.
-    tag: "0.24.1"
+    #
+    # 0.25.0 warns players who join while the world has lost chunks, and adds
+    # !worlddamage for an operator to read or clear what is recorded. It
+    # polls the map through the MAP_URL the agent already has.
+    #
+    # 0.25.1 and 0.26.0 change only /census, which the census job runs from
+    # this image. 0.25.1 stops counting orphaned actor records -- about 1,900
+    # saved actors no chunk lists, which the game never loads -- and exports
+    # them as mc_census_orphaned_records instead of under an `unknown`
+    # dimension. 0.26.0 adds `census -list`, one JSON line per entity with
+    # its position, which `tools/mc cull` reads.
+    tag: "0.26.0"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
