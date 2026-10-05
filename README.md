@@ -432,6 +432,10 @@ report reading `via archive` means the fresh snapshot could not be taken that
 run — the server was down, or refused the save hold — and the numbers are up
 to a day old. `via snapshot` means they are minutes old.
 
+A line near the top reading `orphaned records N` counts saved actors that no
+chunk lists. The game never loads them, so they are in none of the counts
+below it; `mc_census_orphaned_records` carries the same number.
+
 `census.enabled` is the switch. It shipped off, because the binary rides in the
 agent image and a release carrying it had to be published first; it has been on
 since agent 0.16.0, which is that release. `census.metrics.enabled` below
