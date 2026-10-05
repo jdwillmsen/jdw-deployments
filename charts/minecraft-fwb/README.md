@@ -410,8 +410,8 @@ An init container that fails keeps the game server from starting. This one
 is built not to: a missing world, an unwritable volume, a pack list it cannot
 parse — the installer logs it and exits 0, and the server starts without the
 pack. `tools/tests/test-map.sh` pins the pod spec around it so that stays
-true — no Secret, one mount, the map's own image tag, the server's own user,
-no wrapper and no probe. The comment on `minecraft-bedrock.initContainers`
+true — no Secret, one mount, the map's own image at a tag no newer than the
+map's, the server's own user, no wrapper and no probe. The comment on `minecraft-bedrock.initContainers`
 has the reasons.
 
 Two things can still hold the server in `Init`:
@@ -535,7 +535,11 @@ stops with the server and resumes when the world has loaded, minutes later.
 - **Restarts.** The pack is loaded when the server starts and at no other
   time. Installing it, removing it, a new map image tag in the init
   container and a changed `PACK_MOB_CAP` all take effect on the next server
-  restart, which changing that block causes.
+  restart, which changing that block causes. For that reason the init
+  container's tag does not follow `map.image.tag`: a map release that leaves
+  the pack alone moves only the map's tag and restarts only the map. Move
+  the init container's tag when the pack or its installer changed, and never
+  past the map's.
 - **A brand-new volume.** The installer skips a world that does not exist
   yet, and the server only creates it on its first start. So a server
   started on an empty volume runs without the pack until it is restarted

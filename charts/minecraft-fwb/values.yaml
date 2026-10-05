@@ -317,9 +317,16 @@ minecraft-bedrock:
   #     installer needs no credential and must never be given one.
   #  2. One mount, the world's volume. A second volume is a second thing that
   #     has to attach before the server may start.
-  #  3. The same image tag as map.image.tag. The pack and the service that
-  #     parses its records ship in one image so they cannot disagree about
-  #     the record format; two tags would let them.
+  #  3. The map's image, at a tag no newer than map.image.tag. The pack and
+  #     the service that parses its records ship in one image, and the hazard
+  #     is a pack newer than its parser: records the map does not understand
+  #     are dropped. An older pack is safe -- the map ignores fields it does
+  #     not know, and the record sentinel carries the format's own version --
+  #     so this tag stays where it is across map releases that do not change
+  #     the pack. That matters because moving it restarts the game server,
+  #     and with it every client: the agent has taken nine minutes to rejoin.
+  #     Move it when minecraft/mcmap/pack or the installer changed, which the
+  #     map's release notes say.
   #
   # initContainers is rendered by plain toYaml in the vendored subchart's
   # deployment.yaml (confirmed by reading it), never passed through tpl. So,
@@ -365,7 +372,8 @@ minecraft-bedrock:
   # not have this gap.
   initContainers:
     - name: install-map-pack
-      # Must equal map.image.repository:map.image.tag; see rule 3 above.
+      # map.image.repository at a tag no newer than map.image.tag; see rule 3
+      # above for when to move it.
       image: "ghcr.io/jdwillmsen/minecraft-map:1.5.0"
       imagePullPolicy: IfNotPresent
       # The image's entrypoint is the mcmap binary, so this is the whole
@@ -1444,7 +1452,10 @@ agent:
     # them as mc_census_orphaned_records instead of under an `unknown`
     # dimension. 0.26.0 adds `census -list`, one JSON line per entity with
     # its position, which `tools/mc cull` reads.
-    tag: "0.26.0"
+    #
+    # 0.27.0 serves a player's waypoints to the map and reports each online
+    # player's head to it, both over the token the two already share.
+    tag: "0.27.0"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -2007,9 +2018,14 @@ map:
     # and streams players and mobs to logged-in browsers. 1.5.0 carries the
     # pack itself and the `install-pack` step that puts it into the world,
     # which is why the game server pod now runs this image too -- see
-    # minecraft-bedrock.initContainers, whose tag is a literal that has to
-    # be moved with this one.
-    tag: "1.5.0"
+    # minecraft-bedrock.initContainers, whose tag is a literal that is moved
+    # only when the pack changes.
+    #
+    # 1.6.0 draws beds, containers, named mobs and a player's own waypoints,
+    # and shows live markers as mob icons and player heads. It leaves the
+    # pack alone, so the init step stays on 1.5.0 and the game server is not
+    # restarted.
+    tag: "1.6.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2150,6 +2166,49 @@ map:
       # Must be longer than staleAfter, or a map restart during an outage
       # would forget the outage before it was reported.
       lookback: 1h
+
+  # What the map draws from the world's own data: beds, containers and named
+  # mobs, read from each snapshot after the chunk count and the retained
+  # copy, so neither waits on it. Every logged-in player sees them, the same
+  # access as live positions.
+  #
+  # "Containers" are the storage a player has used: chests, barrels and
+  # shulker boxes holding at least one item and not an unopened loot chest,
+  # with a double chest drawn once. Hoppers, dispensers and ender chests are
+  # left out. On the day this was written that was 575 of the world's 16,330
+  # storage blocks, beside 1,493 beds and 5 named mobs.
+  markers:
+    # false stops the read and the route. Restarts the map only.
+    enabled: true
+    # A player's own waypoints, which only that player sees. The map asks
+    # the agent for them, for the logged-in player and no one else, with the
+    # token the two already share. false, or an agent that is not deployed,
+    # leaves waypoints off the map and changes nothing else.
+    waypoints: true
+
+  # Pictures for the live markers: each mob's spawn-egg icon and each
+  # player's own head.
+  #
+  # The mob icons are Mojang's, and the game server ships no textures of its
+  # own, so the map fetches them from Mojang's public bedrock-samples
+  # repository when it starts and keeps them on its volume. Nothing of
+  # Mojang's is in this repository or in the map's image. They are served
+  # only to logged-in players. The fetch needs the map pod to reach
+  # api.github.com and raw.githubusercontent.com on 443; if it cannot, or
+  # the answer is wrong, the map starts all the same and the page draws the
+  # coloured dots it drew before.
+  #
+  # Heads come from the agent, which sees every player's skin as a connected
+  # client. Skins made in the character creator are skipped for now and
+  # those players keep the arrow marker.
+  icons:
+    enabled: true
+    # The bedrock-samples commit to fetch from. Empty takes the map's own
+    # default, which is pinned to a commit so it cannot move underneath a
+    # running map; set this to follow a newer game version than the map
+    # image knows about.
+    ref: ""
+
 
 # Notices the world losing chunks, and the server saying its database is
 # corrupt, instead of waiting for the nightly backup to come out small.
