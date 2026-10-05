@@ -93,6 +93,22 @@ committing, measure what is actually broken and what a rollback would cost:
   The agent and the two AFK bots count as three of those, so a steady `3`
   means no human was on.
 
+### Check for a nearer copy than an archive
+
+The world map keeps the last two snapshots of the world that it counted whole,
+taken every 15 minutes, and stops replacing them the moment it counts a loss.
+After a loss its newest copy is therefore from minutes before the damage, where
+the newest good archive can be a day old. On 2026-10-02 that was the difference
+between two minutes and 42 hours, and the copy did not exist yet.
+
+`mcmap_generations` on the map's metrics port, or the World Integrity
+dashboard, says whether it holds one. If it does, follow [Restoring from a
+retained generation](../charts/minecraft-fwb/README.md#restoring-from-a-retained-generation)
+in the chart README: it replaces Step 1 below with a copy from the map's
+volume and then returns here for Steps 2 to 4. It holds two copies, and that
+section says when to take the older one. Pick an archive only if the map holds
+none, or neither copy it holds is from before the damage.
+
 ### Pick the archive
 
 List what the backup CronJob has produced, with a read-only pod on the backup
