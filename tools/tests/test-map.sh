@@ -262,8 +262,22 @@ for init in inits:
     if not any((m["name"], m["mountPath"]) == ("datadir", "/data") and not m.get("readOnly") for m in game["volumeMounts"]):
         bad.append("the game server no longer mounts datadir at /data, which is where the init step installs the pack")
 
-    if init["image"] != map_container["image"]:
-        bad.append(f"the init step runs {init['image']}, the map runs {map_container['image']}; the pack and its parser must come from one release")
+    # Same repository, and a tag no newer than the map's: an older pack is
+    # read by a newer parser, a newer pack is not. Equal tags are not
+    # required, because moving this one restarts the game server.
+    def release(image):
+        repo, _, tag = image.rpartition(":")
+        try:
+            return repo, tuple(int(part) for part in tag.split("."))
+        except ValueError:
+            return repo, None
+    (init_repo, init_tag), (map_repo, map_tag) = release(init["image"]), release(map_container["image"])
+    if init_repo != map_repo:
+        bad.append(f"the init step runs {init['image']}, the map runs {map_container['image']}; the pack must come from the map's own image")
+    elif init_tag is None or map_tag is None or len(init_tag) != 3 or len(map_tag) != 3:
+        bad.append(f"the init step runs {init['image']} and the map {map_container['image']}; both need a plain x.y.z tag to be compared")
+    elif init_tag > map_tag:
+        bad.append(f"the init step runs {init['image']}, newer than the map's {map_container['image']}; a pack newer than its parser has its records dropped")
 
     # The image's entrypoint is the installer's binary. A command replaces
     # it, and a shell wrapper in a distroless image fails before the

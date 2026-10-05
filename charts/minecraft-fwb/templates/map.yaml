@@ -97,6 +97,20 @@ spec:
               value: {{ .Values.map.live.maxEntities | quote }}
             - name: LIVE_KEEPALIVE
               value: {{ .Values.map.live.keepalive | quote }}
+            - name: MARKERS_ENABLED
+              value: {{ .Values.map.markers.enabled | quote }}
+            {{- if and .Values.map.markers.waypoints .Values.agent.enabled .Values.global.consoleBridge.enabled }}
+            # The agent serves its HTTP API on its metrics port, which is the
+            # address the bots already reach it at for presence.
+            - name: AGENT_URL
+              value: "http://{{ include "agent.name" . }}-metrics.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.agent.metrics.port }}"
+            {{- end }}
+            - name: ICONS_ENABLED
+              value: {{ .Values.map.icons.enabled | quote }}
+            {{- with .Values.map.icons.ref }}
+            - name: ICONS_REF
+              value: {{ . | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.map.port }}
