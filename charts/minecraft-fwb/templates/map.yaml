@@ -82,6 +82,21 @@ spec:
               value: {{ .Values.map.quietUTC | quote }}
             - name: RENDER_CHUNK_PROCESSORS
               value: {{ .Values.map.chunkProcessors | quote }}
+            # The live layer. All five are always set, so that turning it off
+            # is one value and what the pod runs with is never a default
+            # nobody wrote down. None of them is an address: the stream is
+            # served on the public listener behind the session, and its
+            # metrics on the internal one.
+            - name: LIVE_ENABLED
+              value: {{ .Values.map.live.enabled | quote }}
+            - name: LIVE_POLL_WAIT
+              value: {{ .Values.map.live.pollWait | quote }}
+            - name: LIVE_TTL
+              value: {{ .Values.map.live.ttl | quote }}
+            - name: LIVE_MAX_ENTITIES
+              value: {{ .Values.map.live.maxEntities | quote }}
+            - name: LIVE_KEEPALIVE
+              value: {{ .Values.map.live.keepalive | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.map.port }}
@@ -241,4 +256,86 @@ spec:
               server log for "Changes to the world are resumed"; if it is
               missing, run `save resume` from the console. The nightly backup
               also resumes saving when it finishes.
+{{- if .Values.map.live.enabled }}
+        - alert: JdwillmsenMinecraftMapLiveStale
+          # No gate on players being online: the pack prints a heartbeat with
+          # every sample, so the newest record is seconds old on an empty
+          # server and silence only ever means the path broke.
+          #
+          # No `for`, because the age of the newest record already is a
+          # duration. "Older than two minutes, for thirteen" and "older than
+          # fifteen" are the same statement, and the second cannot be reset
+          # by a single evaluation that found nothing to read.
+          #
+          # The newest time over a window, not the current sample. A map pod
+          # that has just started exports zero until its first record, and
+          # `time() - 0` is decades. The pod it replaced saw a record seconds
+          # before it went, and max_over_time carries that across the
+          # restart. `> 0` drops a series that has only ever said zero: that
+          # is a layer with no record at all, which is the next rule's to
+          # report, in words that fit it.
+          #
+          # max by (namespace) is what keeps the alert's labels off whichever
+          # pod happened to report, so one outage is one alert across a map
+          # restart rather than a resolve and a new page.
+          expr: |
+            (
+              time() - max by (namespace) (
+                max_over_time(mcmap_live_last_frame_timestamp_seconds{namespace="{{ .Release.Namespace }}"}[{{ .Values.map.live.alert.lookback }}]) > 0
+              )
+            ) > {{ include "map.liveStaleSeconds" . }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map's live players and mobs have stopped updating
+            description: >-
+              The map last accepted a position record from the game server
+              {{ "{{ $value | humanizeDuration }}" }} ago; the pack sends one every second
+              even with nobody online, and a server restart is over well inside
+              {{ .Values.map.live.alert.staleAfter }}. The page shows no markers
+              meanwhile and nothing else is affected. Work down the path:
+              mcmap_live_frames_total and mcmap_live_polls_total by result on the map,
+              mc_console_bridge_script_records_total on the bridge, then the server
+              log for [Scripting] lines. charts/minecraft-fwb/README.md, "Live layer".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#live-layer"
+        - alert: JdwillmsenMinecraftMapLiveNeverStarted
+          # The other half, as JdwillmsenMinecraftMapNeverRendered is to the
+          # tile alert, with one difference that matters: this gauge is never
+          # absent while the map is up. It is registered at start and reads
+          # zero until the first record, so a bare absent() would stay quiet
+          # through exactly the case of a pack that never installed. What is
+          # absent is a timestamp above zero.
+          #
+          # This is the alert the installer's fail-open design leans on: an
+          # init step that could not write the pack lets the server start and
+          # says so only in its own log, and this is where that surfaces.
+          #
+          # The `for` is safe here in a way it is not on a flapping gauge:
+          # the condition is "no record in the lookback window", which one
+          # record makes false for the whole window, so it cannot oscillate.
+          # It is also what keeps a rollout quiet. The rule is applied in the
+          # same sync that restarts the server with the pack, when no record
+          # exists yet, and the first one is minutes away.
+          expr: |
+            absent(
+              max_over_time(mcmap_live_last_frame_timestamp_seconds{namespace="{{ .Release.Namespace }}"}[{{ .Values.map.live.alert.lookback }}]) > 0
+            )
+          for: {{ .Values.map.live.alert.staleAfter }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map's live layer has no data
+            description: >-
+              The map has not accepted a single position record from the game server
+              in the last {{ .Values.map.live.alert.lookback }}, or is not being
+              scraped. Either the script pack is not running in the world or its
+              records are not reaching the map. The server pod's logs say which: the
+              init container install-map-pack logs why it skipped, the server's pack
+              stack line names "mcmap live positions" when the pack loaded, and
+              [Scripting] MCMAP1 lines are the records themselves. The pack only loads
+              when the server starts. charts/minecraft-fwb/README.md, "Live layer".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#live-layer"
+{{- end }}
 {{- end }}
