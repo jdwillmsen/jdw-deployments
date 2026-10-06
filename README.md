@@ -484,6 +484,10 @@ What it will not do:
   fell back to last night's archive, the run is refused. The second listing is
   held to the same checks: one that is cut short or came from an archive fails
   the run, saying the kills were done but could not be verified.
+- **Stop its own snapshot half way.** A run that is interrupted while its
+  listing job is copying the world waits for that copy to finish before it
+  removes the job, and leaves the job alone if it does not: the copy holds the
+  server's save and resumes it on the way out.
 - **Leave chunks force-loaded.** Every exit path removes its ticking areas and
   then asks the server which remain; one that will not unload fails the run
   and is named. Ctrl-C is one of those paths, and a second Ctrl-C is ignored

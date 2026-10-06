@@ -50,8 +50,10 @@ case "$1" in
         if [ -n "${FAKE_HOLDER:-}" ] && [ "$n" -ge "${FAKE_HOLDER_FROM:-1}" ] && [ "$n" -le "${FAKE_HOLDER_UNTIL:-999999}" ]; then
           printf '%s-%s\t1\n' "$RELEASE_NAME" "$FAKE_HOLDER"
         fi ;;
-      *"get job"*succeeded*) [ -n "${FAKE_JOB_FAILS:-}" ] || printf 1 ;;
+      *"get job"*succeeded*) [ -n "${FAKE_JOB_FAILS:-}${FAKE_JOB_PENDING:-}" ] || printf 1 ;;
       *"get job"*failed*)    [ -n "${FAKE_JOB_FAILS:-}" ] && printf 1 ;;
+      # The snapshot step's exit code, once it has one.
+      *"get pods"*initContainerStatuses*) [ -n "${FAKE_SNAPSHOT_RUNNING:-}" ] || printf 0 ;;
       *) printf 'server-0' ;;
     esac ;;
   create)
@@ -603,5 +605,24 @@ grep -q 'flag provided but not defined' <<<"$out" || fail "the job's own error m
 grep -q '^hint:' <<<"$out" || fail "a failed listing job must come with a next step: $out"
 [ "$(sent 'delete job')" -ge 1 ] || fail "the failed listing job was not cleaned up"
 echo "  ok: a failed listing job is reported with its error and removed"
+
+# --- a listing job stopped under ------------------------------------------
+# A run that gives up on its listing job while the job's snapshot step still
+# holds the server's save. Deleting the job would stop that step mid-copy,
+# and a server left held persists nothing.
+FAKE_JOB_PENDING=1 FAKE_SNAPSHOT_RUNNING=1 MC_CULL_JOB_TIMEOUT=3 MC_CULL_SNAPSHOT_TRIES=2 \
+  run bash "$mc" cull --types enderman,zombie --dry-run
+[ "$rc" -eq 1 ] || fail "a listing job that never finishes must fail the run, got $rc: $out"
+[ "$(sent 'delete job')" -eq 0 ] || fail "a listing job still taking its snapshot was deleted: $(grep 'delete job' "$work/sent")"
+grep -q 'was left to finish' <<<"$out" || fail "a job left running must be named as left: $out"
+grep -q 'kubectl delete job' <<<"$out" || fail "a job left running must come with how to remove it later: $out"
+echo "  ok: a listing job still holding the save is left to finish, not deleted"
+
+# The same give-up once the snapshot step has ended: nothing holds the save,
+# and the job is removed as usual.
+FAKE_JOB_PENDING=1 MC_CULL_JOB_TIMEOUT=3 run bash "$mc" cull --types enderman,zombie --dry-run
+[ "$rc" -eq 1 ] || fail "a listing job that never finishes must fail the run, got $rc: $out"
+[ "$(sent 'delete job')" -ge 1 ] || fail "a stuck listing job whose snapshot had ended was not removed"
+echo "  ok: a stuck listing job past its snapshot is removed"
 
 echo "PASS"

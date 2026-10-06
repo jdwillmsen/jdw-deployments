@@ -528,6 +528,9 @@ CULL_VERIFY_TRIES="${MC_CULL_VERIFY_TRIES:-3}"
 CULL_POLL="${MC_CULL_POLL:-5}"
 CULL_REPLY_POLL="${MC_CULL_REPLY_POLL:-1}"
 CULL_JOB_TIMEOUT="${MC_CULL_JOB_TIMEOUT:-900}"
+# Polls a stopping run gives its listing job's snapshot step to finish. The
+# step is bounded at about three minutes by its own hold loop.
+CULL_SNAPSHOT_TRIES="${MC_CULL_SNAPSHOT_TRIES:-40}"
 # Seconds one console command or one read of the console log may take.
 CULL_CALL_TIMEOUT="${MC_CULL_CALL_TIMEOUT:-15}"
 # Ticking areas held at once. The server allows ten in total.
@@ -667,9 +670,34 @@ cull_cleanup() {
       rc=1
     fi
   fi
-  [ -n "${CULL_JOB:-}" ] && timeout -s KILL "$CULL_CALL_TIMEOUT" kubectl delete job -n "$NAMESPACE" "$CULL_JOB" --wait=false >/dev/null 2>&1
+  if [ -n "${CULL_JOB:-}" ]; then
+    if cull_snapshot_finished; then
+      timeout -s KILL "$CULL_CALL_TIMEOUT" kubectl delete job -n "$NAMESPACE" "$CULL_JOB" --wait=false >/dev/null 2>&1
+    else
+      echo "error: listing job $CULL_JOB is still taking its snapshot and was left to finish"
+      echo "hint: it resumes the server's saving itself; once it is done: kubectl delete job -n $NAMESPACE $CULL_JOB"
+      rc=1
+    fi
+  fi
   [ -n "${CULL_WORK:-}" ] && rm -rf "$CULL_WORK"
   exit "$rc"
+}
+
+# Whether the listing job's snapshot step has ended, waiting a while for it.
+#
+# That step holds the server's save and resumes it on its way out. Deleting
+# the Job under it sends the step a SIGTERM mid-copy, and a server left held
+# persists nothing until the next backup resumes it. So a job caught there is
+# given time to finish, and is otherwise left alone rather than deleted.
+cull_snapshot_finished() {
+  local _ code
+  for _ in $(seq 1 "$CULL_SNAPSHOT_TRIES"); do
+    code="$(timeout -s KILL "$CULL_CALL_TIMEOUT" kubectl get pods -n "$NAMESPACE" -l "job-name=$CULL_JOB" \
+      -o jsonpath='{.items[*].status.initContainerStatuses[?(@.name=="snapshot")].state.terminated.exitCode}' 2>/dev/null)" || return 1
+    [ -n "$code" ] && return 0
+    sleep "$CULL_POLL"
+  done
+  return 1
 }
 
 # Names of the active Jobs that drive this server's save protocol, one per
@@ -891,7 +919,7 @@ cmd_cull() {
   # loop without its end or the wait skipped. The poll is added up in shell
   # arithmetic, so it is whole; the waits only go to sleep.
   local setting value
-  for setting in VERIFY_TRIES CALL_TIMEOUT JOB_TIMEOUT; do
+  for setting in VERIFY_TRIES CALL_TIMEOUT JOB_TIMEOUT SNAPSHOT_TRIES; do
     value="CULL_$setting"
     [[ "${!value}" =~ ^[1-9][0-9]*$ ]] \
       || usage_err "MC_CULL_$setting must be a whole number of 1 or more, not '${!value}'" "unset it for the default"
