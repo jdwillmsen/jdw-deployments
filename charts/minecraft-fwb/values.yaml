@@ -102,7 +102,7 @@ minecraft-bedrock:
     # default rolling tag, which upgrades the server binary underneath a live
     # world; for a GitOps workload whose state is the whole point, that is a
     # silent-change hazard rather than a convenience.
-    tag: "2026.9.0"
+    tag: "2026.9.2"
     pullPolicy: IfNotPresent
 
   # RollingUpdate never runs two writers: a StatefulSet terminates its pod and
@@ -374,7 +374,7 @@ minecraft-bedrock:
     - name: install-map-pack
       # map.image.repository at a tag no newer than map.image.tag; see rule 3
       # above for when to move it.
-      image: "ghcr.io/jdwillmsen/minecraft-map:1.5.0"
+      image: "ghcr.io/jdwillmsen/minecraft-map:1.7.0"
       imagePullPolicy: IfNotPresent
       # The image's entrypoint is the mcmap binary, so this is the whole
       # command line. `uninstall-pack` is the only other value it may take.
