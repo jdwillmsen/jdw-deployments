@@ -1338,7 +1338,12 @@ agent:
     # gamertag for minutes, and every retry was refused: nine minutes out of
     # the world after a server restart. A login the server has accepted now
     # also gets 90 seconds for the world to spawn it, not what is left of 30.
-    tag: "0.27.1"
+    #
+    # 0.28.0 gives every player a head on the map. A skin that is not the
+    # classic layout was reported with no head at all; the head is now found
+    # from the skin's own model, and a player whose skin has none there gets
+    # a badge drawn from their gamertag.
+    tag: "0.28.0"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -1917,7 +1922,11 @@ map:
     # a row of chips per feature, a countdown to the next refresh, and a
     # pause and interval control for the live positions. Pausing closes the
     # stream, so a paused tab costs the map nothing.
-    tag: "1.8.0"
+    #
+    # 1.9.0 adds villages to the structures it draws, read from the game's
+    # own village records: where each one is, and how many villagers, golems,
+    # cats, beds, bells and job sites the game last counted in it.
+    tag: "1.9.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
