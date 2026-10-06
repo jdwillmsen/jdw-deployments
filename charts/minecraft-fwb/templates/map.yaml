@@ -107,6 +107,10 @@ spec:
             {{- end }}
             - name: STRUCTURES_ENABLED
               value: {{ .Values.map.structures.enabled | quote }}
+            - name: BIOMES_ENABLED
+              value: {{ .Values.map.biomes.enabled | quote }}
+            - name: TRAILS_ENABLED
+              value: {{ and .Values.map.live.enabled .Values.map.trails.enabled | quote }}
             {{- with .Values.map.structures.seedSecret }}
             {{- if .name }}
             # optional: a Secret that is not there leaves the variable unset
