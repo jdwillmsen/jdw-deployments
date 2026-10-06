@@ -32,6 +32,7 @@ remove() {
   if [ "$name" != "${FAKE_STUCK:-}" ] && grep -q -x "$dim $name" "$state"; then
     grep -v -x "$dim $name" "$state" > "$state.new" || true
     mv "$state.new" "$state"
+    date +%s > "$STATE/unloaded-at"
     printf '%s INFO] Removed ticking area(s)\n- %s: 0 0 0 to 15 0 15\n%s/10 ticking areas in use.\n' "$stamp" "$name" "$(in_use)" >> "$console"
   else
     printf "%s ERROR] No ticking areas named %s exist in the current dimension.\nFailed to execute 'tickingarea' as [Null]\n" "$stamp" "$name" >> "$console"
@@ -57,13 +58,24 @@ case "$1" in
     printf '%s' '{"metadata":{"name":"listing"},"spec":{"template":{"spec":{"containers":[{"name":"metrics-publish","args":["keep"]},{"name":"census","args":["-world-dir","/snapshot","-metrics-file","/tmp/metrics.txt"]}]}}}}' ;;
   apply)
     n="$(cat "$STATE/listings" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" > "$STATE/listings"
+    # The real server writes an unloaded chunk out over the next few seconds:
+    # a snapshot taken sooner than that after an unload is the save as it was
+    # before the kills.
+    if [ -n "${FAKE_SAVE_LAG:-}" ] && [ -e "$STATE/unloaded-at" ] \
+      && [ $(( $(date +%s) - $(cat "$STATE/unloaded-at") )) -lt "$FAKE_SAVE_LAG" ]; then
+      touch "$STATE/stale-$n"
+    fi
     while [ $# -gt 0 ]; do [ "$1" = "-f" ] && cp "$2" "$STATE/job-$n.json"; shift; done ;;
   delete) printf 'delete %s\n' "$*" >> "$CAPTURE" ;;
   logs)
     case "$*" in
       *job/*)
         [ -n "${FAKE_JOB_FAILS:-}" ] && { echo "census: parse flags: flag provided but not defined: -list"; exit 0; }
-        cat "$FIXTURES/listing-$(cat "$STATE/listings").ndjson"
+        if [ -e "$STATE/stale-$(cat "$STATE/listings")" ]; then
+          cat "$FIXTURES/listing-1.ndjson"
+        else
+          cat "$FIXTURES/listing-$(cat "$STATE/listings").ndjson"
+        fi
         [ "${FAKE_LOGS_FAIL_ON:-}" = "$(cat "$STATE/listings")" ] && exit 1 ;;
       *)
         printf 'noise \x00 binary\n'
@@ -131,7 +143,7 @@ run() {
   rm -rf "$work/state"; mkdir -p "$work/state"; : > "$work/sent"
   rc=0
   out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" STATE="$work/state" FIXTURES="$work/fx" \
-    RELEASE_NAME=fwb MC_RELEASE=fwb MC_NAMESPACE=test-ns MC_CULL_LOAD_WAIT=0 MC_CULL_KILL_GAP=0 MC_CULL_POLL=0 MC_CULL_REPLY_POLL=0 "$@" 2>&1)" || rc=$?
+    RELEASE_NAME=fwb MC_RELEASE=fwb MC_NAMESPACE=test-ns MC_CULL_LOAD_WAIT=0 MC_CULL_KILL_GAP=0 MC_CULL_SETTLE_WAIT="${MC_CULL_SETTLE_WAIT:-0}" MC_CULL_POLL=0 MC_CULL_REPLY_POLL=0 "$@" 2>&1)" || rc=$?
 }
 sent() { grep -c -- "$1" "$work/sent" || true; }
 areas_left() { wc -l < "$work/state/areas" | tr -d ' '; }
@@ -258,6 +270,13 @@ MC_CULL_BATCH=1 run bash "$mc" cull --types enderman,zombie --confirm --no-annou
 [ "$(areas_left)" -eq 0 ] || fail "ticking areas were left on the server"
 echo "  ok: --no-announce and a batch of one"
 
+# The save lags the unload by a few seconds on the real server. A verdict
+# taken from a snapshot inside that lag counts mobs that are already dead.
+FAKE_SAVE_LAG=2 MC_CULL_SETTLE_WAIT=2 run bash "$mc" cull --types enderman,zombie --confirm --no-announce
+[ "$rc" -eq 0 ] || fail "a run whose kills all landed must not fail on a save that had not caught up, got $rc: $out"
+grep -q '^remaining: 0$' <<<"$out" || fail "the verdict must be read once the save holds the kills: $out"
+echo "  ok: the verdict waits for the save to catch up with the kills"
+
 # --- targets that survive -------------------------------------------------
 cp "$work/fx/listing-2.ndjson" "$work/fx/listing-2.clean"
 python3 - "$work/fx/listing-2.ndjson" <<'PY'
@@ -351,7 +370,7 @@ echo "  ok: a missing timeout command refuses the run before anything is sent"
 interrupt() {
   rm -rf "$work/state"; mkdir -p "$work/state"; : > "$work/sent"
   env PATH="$work/bin:$PATH" CAPTURE="$work/sent" STATE="$work/state" FIXTURES="$work/fx" FAKE_REMOVE_DELAY="${3:+0.3}" \
-    RELEASE_NAME=fwb MC_RELEASE=fwb MC_NAMESPACE=test-ns MC_CULL_LOAD_WAIT=3 MC_CULL_KILL_GAP=0 MC_CULL_POLL=0 MC_CULL_REPLY_POLL=0 \
+    RELEASE_NAME=fwb MC_RELEASE=fwb MC_NAMESPACE=test-ns MC_CULL_LOAD_WAIT=3 MC_CULL_KILL_GAP=0 MC_CULL_SETTLE_WAIT=0 MC_CULL_POLL=0 MC_CULL_REPLY_POLL=0 \
     python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
     bash "$mc" cull --types enderman,zombie --confirm --no-announce > "$work/interrupted" 2>&1 &
   pid=$!
