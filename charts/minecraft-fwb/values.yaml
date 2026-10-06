@@ -1944,7 +1944,14 @@ map:
     # structures, beds, containers, named mobs and the player's waypoints,
     # slime chunks worked out in the browser, the world spawn, and each
     # player's trail in a colour of their own.
-    tag: "1.12.0"
+    #
+    # 1.13.0 is the page for names and pictures: the game's own name in
+    # place of an id everywhere one was shown, a picture for each bed by
+    # colour, chest, trapped chest, barrel, shulker box, waypoint and
+    # structure, and named mobs drawn with their icon and a label, listed
+    # in the panel and marked where they are babies. Search finds a thing
+    # by the name the page gives it.
+    tag: "1.13.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
