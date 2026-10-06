@@ -38,6 +38,12 @@ remove() {
     printf "%s ERROR] No ticking areas named %s exist in the current dimension.\nFailed to execute 'tickingarea' as [Null]\n" "$stamp" "$name" >> "$console"
   fi
 }
+# Whether the listing job's snapshot step is still at work. It ends after
+# FAKE_SNAPSHOT_ENDS_AFTER looks at the pod, when a test sets that.
+snapshot_running() {
+  [ -n "${FAKE_SNAPSHOT_RUNNING:-}" ] \
+    && [ "$(cat "$STATE/pod-looks" 2>/dev/null || echo 0)" -le "${FAKE_SNAPSHOT_ENDS_AFTER:-999999}" ]
+}
 case "$1" in
   get)
     case "$*" in
@@ -52,11 +58,16 @@ case "$1" in
         fi ;;
       *"get job"*succeeded*) [ -n "${FAKE_JOB_FAILS:-}${FAKE_JOB_PENDING:-}" ] || printf 1 ;;
       *"get job"*failed*)    [ -n "${FAKE_JOB_FAILS:-}" ] && printf 1 ;;
-      # The snapshot step's exit code, once it has one.
-      *"get pods"*initContainerStatuses*) [ -n "${FAKE_SNAPSHOT_RUNNING:-}" ] || printf 0 ;;
+      *"get job"*active*)    snapshot_running && printf 1 ;;
+      # The snapshot step's exit code, once it has one. A job that was never
+      # started has no pod to report one, nor has one past its deadline.
+      *"get pods"*initContainerStatuses*)
+        n="$(cat "$STATE/pod-looks" 2>/dev/null || echo 0)"; echo "$((n + 1))" > "$STATE/pod-looks"
+        [ -e "$STATE/listings" ] && [ -z "${FAKE_POD_GONE:-}" ] && ! snapshot_running && printf 0 ;;
       *) printf 'server-0' ;;
     esac ;;
   create)
+    [ -n "${FAKE_NO_CRONJOB:-}" ] && exit 1
     printf '%s' '{"metadata":{"name":"listing"},"spec":{"template":{"spec":{"containers":[{"name":"metrics-publish","args":["keep"]},{"name":"census","args":["-world-dir","/snapshot","-metrics-file","/tmp/metrics.txt"]}]}}}}' ;;
   apply)
     n="$(cat "$STATE/listings" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" > "$STATE/listings"
@@ -624,5 +635,28 @@ FAKE_JOB_PENDING=1 MC_CULL_JOB_TIMEOUT=3 run bash "$mc" cull --types enderman,zo
 [ "$rc" -eq 1 ] || fail "a listing job that never finishes must fail the run, got $rc: $out"
 [ "$(sent 'delete job')" -ge 1 ] || fail "a stuck listing job whose snapshot had ended was not removed"
 echo "  ok: a stuck listing job past its snapshot is removed"
+
+# A snapshot still running when the run gives up, which ends while it waits.
+FAKE_JOB_PENDING=1 FAKE_SNAPSHOT_RUNNING=1 FAKE_SNAPSHOT_ENDS_AFTER=2 MC_CULL_JOB_TIMEOUT=3 MC_CULL_SNAPSHOT_TRIES=5 \
+  run bash "$mc" cull --types enderman,zombie --dry-run
+[ "$rc" -eq 1 ] || fail "a listing job that never finishes must fail the run, got $rc: $out"
+[ "$(sent 'delete job')" -eq 1 ] || fail "a listing job whose snapshot ended during the wait must be removed once: $(cat "$work/sent")"
+! grep -q 'left to finish' <<<"$out" || fail "a job removed after its snapshot ended was reported as left: $out"
+echo "  ok: a listing job is removed once its snapshot ends during the wait"
+
+# A job with no pod has no snapshot under way. One that was never created
+# leaves nothing to wait for or remove; one past its deadline is removed.
+FAKE_NO_CRONJOB=1 MC_CULL_SNAPSHOT_TRIES=2 run bash "$mc" cull --types enderman,zombie --dry-run
+[ "$rc" -eq 1 ] || fail "a listing job that could not be built must fail the run, got $rc: $out"
+grep -q 'could not build the listing job' <<<"$out" || fail "a job that could not be built must say so: $out"
+! grep -q 'left to finish' <<<"$out" || fail "a job that was never created was reported as left running: $out"
+[ "$(sent 'delete job')" -eq 0 ] || fail "a job that was never created was deleted: $(cat "$work/sent")"
+echo "  ok: a listing job that was never created is not waited on"
+
+FAKE_JOB_FAILS=1 FAKE_POD_GONE=1 MC_CULL_SNAPSHOT_TRIES=2 run bash "$mc" cull --types enderman,zombie --dry-run
+[ "$rc" -eq 1 ] || fail "a failed listing job must fail the command, got $rc: $out"
+! grep -q 'left to finish' <<<"$out" || fail "a failed job with no pod was reported as still taking its snapshot: $out"
+[ "$(sent 'delete job')" -eq 1 ] || fail "a failed listing job with no pod was not removed: $(cat "$work/sent")"
+echo "  ok: a failed listing job whose pod is gone is removed"
 
 echo "PASS"

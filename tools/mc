@@ -689,12 +689,18 @@ cull_cleanup() {
 # the Job under it sends the step a SIGTERM mid-copy, and a server left held
 # persists nothing until the next backup resumes it. So a job caught there is
 # given time to finish, and is otherwise left alone rather than deleted.
+#
+# A Job with no active pod has no step to wait for: one past its deadline has
+# had its pod removed, and would otherwise read as a snapshot that never ends.
 cull_snapshot_finished() {
-  local _ code
+  local _ code active
   for _ in $(seq 1 "$CULL_SNAPSHOT_TRIES"); do
     code="$(timeout -s KILL "$CULL_CALL_TIMEOUT" kubectl get pods -n "$NAMESPACE" -l "job-name=$CULL_JOB" \
       -o jsonpath='{.items[*].status.initContainerStatuses[?(@.name=="snapshot")].state.terminated.exitCode}' 2>/dev/null)" || return 1
     [ -n "$code" ] && return 0
+    active="$(timeout -s KILL "$CULL_CALL_TIMEOUT" kubectl get job -n "$NAMESPACE" "$CULL_JOB" \
+      -o jsonpath='{.status.active}' 2>/dev/null)" || return 1
+    [ "${active:-0}" = 0 ] && return 0
     sleep "$CULL_POLL"
   done
   return 1
@@ -724,7 +730,7 @@ cull_save_holders() {
 # another holder of the save instead of refusing, and every way it can fail
 # says the kills happened: by then they have.
 cull_listing() {
-  local out="$1" types="$2" note="" i=0 succeeded failed holders
+  local out="$1" types="$2" note="" i=0 succeeded failed holders job
   [ "${3:-}" = verdict ] && note="the kills were done but could not be verified: "
   while :; do
     holders="$(cull_save_holders)" || err "${note}could not list the jobs in $NAMESPACE" "kubectl get jobs -n $NAMESPACE"
@@ -739,8 +745,8 @@ cull_listing() {
     [ "$CULL_POLL" = 0 ] && i=$((i + 1))
   done
   i=0
-  CULL_JOB="${RELEASE}-census-list-$(date -u +%m%d%H%M%S)"
-  kubectl create job -n "$NAMESPACE" "$CULL_JOB" --from="cronjob/${RELEASE}-census" --dry-run=client -o json 2>/dev/null \
+  job="${RELEASE}-census-list-$(date -u +%m%d%H%M%S)"
+  kubectl create job -n "$NAMESPACE" "$job" --from="cronjob/${RELEASE}-census" --dry-run=client -o json 2>/dev/null \
     | MC_TYPES="$types" python3 -c '
 import json, os, sys
 job = json.load(sys.stdin)
@@ -753,6 +759,7 @@ json.dump(job, sys.stdout)
     "the census may be off (census.enabled in charts/minecraft-fwb/values.yaml): kubectl get cronjob -n $NAMESPACE"
   kubectl apply -n "$NAMESPACE" -f "$CULL_WORK/job.json" >/dev/null 2>&1 \
     || err "${note}could not start the listing job" "kubectl get jobs -n $NAMESPACE | grep census-list"
+  CULL_JOB="$job"
 
   while :; do
     succeeded="$(kubectl get job -n "$NAMESPACE" "$CULL_JOB" -o jsonpath='{.status.succeeded}' 2>/dev/null)"
