@@ -518,6 +518,11 @@ CULL_AREA_PREFIX="mccull"
 # enough on 2026-10-05: 35 mobs survived two passes that twenty then cleared.
 CULL_LOAD_WAIT="${MC_CULL_LOAD_WAIT:-20}"
 CULL_KILL_GAP="${MC_CULL_KILL_GAP:-3}"
+# Seconds between the last unload and the verdict snapshot. The server writes
+# an unloaded chunk out over the next few seconds, and a save held before it
+# has still lists the mobs that were just killed. Six was enough on an idle
+# server; a busy one is given more.
+CULL_SETTLE_WAIT="${MC_CULL_SETTLE_WAIT:-30}"
 CULL_POLL="${MC_CULL_POLL:-5}"
 CULL_REPLY_POLL="${MC_CULL_REPLY_POLL:-1}"
 CULL_JOB_TIMEOUT="${MC_CULL_JOB_TIMEOUT:-900}"
@@ -993,6 +998,7 @@ cmd_cull() {
     | grep -a -oE 'INFO\] Killed .*' | sed 's/^INFO\] Killed //' | tr ',' '\n' | grep -a -c . || true)"
   echo "killed_lines: ${killed:-0}"
 
+  sleep "$CULL_SETTLE_WAIT"
   cull_listing "$CULL_WORK/after.ndjson" "$types" verdict
   local verdict
   verdict="$(cull_py remaining "$CULL_WORK/before.ndjson" "$CULL_WORK/after.ndjson" "$CULL_WORK/plan.tsv" 2>&1)" \
