@@ -187,7 +187,7 @@ cmd_run() {
   # The map's live layer writes to this console several times a second, so
   # the last five lines of it are five of those; they are left out so the
   # reply is what is shown.
-  console_recent "$pod" | grep -a -v '\[Scripting\] MCMAP1 ' | tail -5 | sed 's/^/  /'
+  console_recent "$pod" | sed '/\[Scripting\] MCMAP1 /d' | tail -5 | sed 's/^/  /'
 }
 
 # --- presence ----------------------------------------------------------------
