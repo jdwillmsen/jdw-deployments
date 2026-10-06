@@ -1912,7 +1912,12 @@ map:
     # 1.7.0 draws the structures the world has recorded -- monuments,
     # outposts, witch huts and nether fortresses -- and, once it is given
     # the seed that places them, the fortresses still to be found.
-    tag: "1.7.0"
+    #
+    # 1.8.0 is the page only: one grouped panel for every layer in place of
+    # a row of chips per feature, a countdown to the next refresh, and a
+    # pause and interval control for the live positions. Pausing closes the
+    # stream, so a paused tab costs the map nothing.
+    tag: "1.8.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
