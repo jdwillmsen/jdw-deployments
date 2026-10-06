@@ -105,6 +105,21 @@ spec:
             - name: AGENT_URL
               value: "http://{{ include "agent.name" . }}-metrics.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.agent.metrics.port }}"
             {{- end }}
+            - name: STRUCTURES_ENABLED
+              value: {{ .Values.map.structures.enabled | quote }}
+            {{- with .Values.map.structures.seedSecret }}
+            {{- if .name }}
+            # optional: a Secret that is not there leaves the variable unset
+            # and the pod starting, which is the state this runs in until
+            # someone decides the seed should be on the cluster at all.
+            - name: STRUCTURE_SEED
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: {{ .key }}
+                  optional: true
+            {{- end }}
+            {{- end }}
             - name: ICONS_ENABLED
               value: {{ .Values.map.icons.enabled | quote }}
             {{- with .Values.map.icons.ref }}

@@ -2025,7 +2025,11 @@ map:
     # and shows live markers as mob icons and player heads. It leaves the
     # pack alone, so the init step stays on 1.5.0 and the game server is not
     # restarted.
-    tag: "1.6.0"
+    #
+    # 1.7.0 draws the structures the world has recorded -- monuments,
+    # outposts, witch huts and nether fortresses -- and, once it is given
+    # the seed that places them, the fortresses still to be found.
+    tag: "1.7.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2185,6 +2189,37 @@ map:
     # token the two already share. false, or an agent that is not deployed,
     # leaves waypoints off the map and changes nothing else.
     waypoints: true
+
+  # Structures. The ones the world recorded as it generated them are read
+  # from each snapshot and drawn for every logged-in player.
+  #
+  # Predicting the ones not yet found needs the 32 bits the generator seeds
+  # structure placement with, and in this world those are NOT the low half of
+  # the seed in level.dat: that value explains none of the 19 monuments,
+  # outposts and huts the world holds, while another explains all of them.
+  # The map checks whatever it is given against the recorded structures on
+  # every survey and predicts nothing from a seed the world contradicts, so a
+  # wrong value is a quiet layer, not a wrong one.
+  #
+  # That value is as good as the world's seed, and this repository is public,
+  # so it is never written here. The map reads it from a Secret that is
+  # optional: without one it starts and runs as it does today, the predicted
+  # layer says why it is empty, and nothing else changes. Creating the Secret
+  # and restarting the map pod is all it takes to turn predictions on:
+  #
+  #   kubectl -n <namespace> create secret generic <seedSecret.name> \
+  #     --from-file=<seedSecret.key>=<(tr -d '[:space:]' < <file holding the number>)
+  #
+  # in your own terminal, like mc-bot-dispatch-token above. The map does not
+  # trim the value and refuses to start on anything but a whole number, so a
+  # trailing newline in the Secret is a crash-looping map pod; the tr above
+  # is what keeps one out.
+  structures:
+    # false reads no structures and serves none. Restarts the map only.
+    enabled: true
+    seedSecret:
+      name: fwb-structure-seed
+      key: seed
 
   # Pictures for the live markers: each mob's spawn-egg icon and each
   # player's own head.
