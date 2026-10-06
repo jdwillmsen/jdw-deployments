@@ -187,6 +187,17 @@ for batch in 0 11 four; do
 done
 echo "  ok: a batch size outside 1..10 is a usage error"
 
+# A count, a time limit, a whole number of seconds and a wait: each would
+# otherwise leave a loop without its end or a wait skipped, part-way through.
+for bad in MC_CULL_VERIFY_TRIES=3x MC_CULL_CALL_TIMEOUT=0 MC_CULL_POLL=0.5 MC_CULL_SETTLE_WAIT=soon; do
+  run env "$bad" bash "$mc" cull --types zombie --confirm
+  [ "$rc" -eq 2 ] || fail "$bad must be a usage error, got $rc: $out"
+  grep -q "${bad%%=*}" <<<"$out" || fail "a refused setting must be named: $out"
+  [ ! -s "$work/sent" ] || fail "$bad reached the server: $(cat "$work/sent")"
+  [ ! -e "$work/state/listings" ] || fail "$bad took a snapshot"
+done
+echo "  ok: a tuning setting that is not a usable number is a usage error"
+
 # --- another holder of the server's save -----------------------------------
 for holder in backup-29000100 census-29000100 version-check-29000100 scheduled-restart-29000100 census-list-1006033000; do
   FAKE_HOLDER="$holder" run bash "$mc" cull --types enderman,zombie --confirm
@@ -281,8 +292,28 @@ FAKE_SAVE_LAG=2 MC_CULL_SETTLE_WAIT=2 run bash "$mc" cull --types enderman,zombi
 grep -q '^remaining: 0$' <<<"$out" || fail "the verdict must be read once the save holds the kills: $out"
 echo "  ok: the verdict waits for the save to catch up with the kills"
 
-# --- targets that survive -------------------------------------------------
+# --- mobs in a kill box that are not a surviving target ----------------------
+# A zombie at x=30.5 z=20.5 in the second listing only. The box around the
+# target at x=10.5 z=20.5 is its chunk padded by 32, x=-32..47 z=-16..63, so
+# this one is inside it; no target was saved there, so it is a newcomer or a
+# target that walked, and the run has no way to tell which.
 cp "$work/fx/listing-2.ndjson" "$work/fx/listing-2.clean"
+python3 - "$work/fx/listing-2.ndjson" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+rows.append({"identifier": "zombie", "dimension": "overworld", "x": 30.5, "y": 64, "z": 20.5, "persistent": False})
+rows[0]["entities"] = len(rows) - 1
+open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+run bash "$mc" cull --types enderman,zombie --confirm --no-announce
+cp "$work/fx/listing-2.clean" "$work/fx/listing-2.ndjson"
+[ "$rc" -eq 0 ] || fail "a mob in a kill box that is not a planned target must not fail the run, got $rc: $out"
+grep -q '^remaining: 0$' <<<"$out" || fail "a mob at a position no target was saved at is not a remaining target: $out"
+grep -q '^in_kill_boxes_now: 1$' <<<"$out" || fail "a mob of a planned type inside a planned box must be counted: $out"
+[ "$(cat "$work/state/listings")" -eq 2 ] || fail "a listing with no planned target left must not be taken again, got $(($(cat "$work/state/listings") - 1)) verdict listings"
+echo "  ok: a mob in a kill box that is not a planned target is counted, not failed"
+
+# --- targets that survive -------------------------------------------------
 python3 - "$work/fx/listing-2.ndjson" <<'PY'
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1])]
