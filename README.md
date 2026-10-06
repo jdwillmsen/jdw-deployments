@@ -505,7 +505,10 @@ Things the console does not tell you, each learned on the live server:
 - The save lags the kills: a chunk is written out over the few seconds after
   its ticking area is removed, and a snapshot taken at once still lists the
   mobs that were just killed. The second listing waits 30 seconds first
-  (`MC_CULL_SETTLE_WAIT`).
+  (`MC_CULL_SETTLE_WAIT`), and with players on that is not always enough, so
+  a listing that still holds planned targets is taken again, up to three
+  times (`MC_CULL_VERIFY_TRIES`). Only a target present in every one of them
+  fails the run.
 - `remaining` counts a target only if its saved position did not move, which
   is true of one that never ticked. A target in chunks a player keeps loaded
   can survive, walk and be saved elsewhere, and cannot then be told from a mob
