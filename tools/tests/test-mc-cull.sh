@@ -75,6 +75,9 @@ case "$1" in
   exec)
     shift; while [[ "$1" != "--" ]]; do shift; done; shift 2
     printf '%s\n' "$*" >> "$CAPTURE"
+    # A stream that stays open and says nothing, as a stalled exec does, once
+    # an area is loaded: the list probe before that is a remove too.
+    [ -n "${FAKE_HANG_ON:-}" ] && [ -e "$STATE/added" ] && [[ "$*" == *"$FAKE_HANG_ON"* ]] && exec sleep 30
     [ -n "${FAKE_FAIL_ON:-}" ] && [[ "$*" == *"$FAKE_FAIL_ON"* ]] && exit 1
     if [[ "$*" =~ ^execute\ in\ ([a-z_]+)\ run\ tickingarea\ add\ .*\ ([a-z0-9]+)$ ]]; then
       echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" >> "$state"
@@ -307,6 +310,34 @@ FAKE_FAIL_ON="kill @e" run bash "$mc" cull --types enderman,zombie --confirm --n
 [ "$(sent 'tickingarea add')" -ge 1 ] || fail "the failure was not mid-batch: no area had been added"
 [ "$(areas_left)" -eq 0 ] || fail "a run that died mid-batch left ticking areas: $(cat "$work/state/areas")"
 echo "  ok: a run that fails mid-batch unloads what it loaded"
+
+# The same failure, with every remove the unload then sends stalling for 30
+# seconds. One area in three dimensions and the list probe are four console
+# commands: at a one-second limit each the run is over in a few seconds, and
+# it must not claim an unload it could not see.
+SECONDS=0
+MC_CULL_BATCH=1 MC_CULL_CALL_TIMEOUT=1 FAKE_FAIL_ON="kill @e" FAKE_HANG_ON="tickingarea remove" \
+  run bash "$mc" cull --types enderman,zombie --confirm --no-announce
+[ "$SECONDS" -lt 20 ] || fail "an unload whose console commands stall must be cut short, took ${SECONDS}s: $out"
+[ "$rc" -eq 1 ] || fail "a run whose unload stalled must exit 1, got $rc: $out"
+grep -q 'could not confirm the ticking areas were unloaded' <<<"$out" || fail "a stalled unload must be reported as unconfirmed: $out"
+grep -q '^hint:.*tickingarea list all-dimensions' <<<"$out" || fail "a stalled unload must come with the check to run by hand: $out"
+[ "$(areas_left)" -eq 1 ] || fail "the fake was meant to keep the area whose removes stalled, got $(areas_left)"
+echo "  ok: a console that stalls during the unload ends the run as unconfirmed"
+
+# Without the command that enforces that limit the run is refused up front.
+mkdir -p "$work/no-timeout"
+for tool in bash basename python3 mktemp; do ln -sf "$(command -v "$tool")" "$work/no-timeout/$tool"; done
+ln -sf "$work/bin/kubectl" "$work/no-timeout/kubectl"
+rm -rf "$work/state"; mkdir -p "$work/state"; : > "$work/sent"
+rc=0
+out="$(env -i PATH="$work/no-timeout" CAPTURE="$work/sent" STATE="$work/state" FIXTURES="$work/fx" \
+  bash "$mc" cull --types zombie --confirm 2>&1)" || rc=$?
+[ "$rc" -eq 1 ] || fail "a cull without the timeout command must be refused with 1, got $rc: $out"
+grep -q 'timeout command is required' <<<"$out" || fail "the missing command must be named: $out"
+[ ! -s "$work/sent" ] || fail "a cull without the timeout command reached the server: $(cat "$work/sent")"
+[ ! -e "$work/state/listings" ] || fail "a cull without the timeout command took a snapshot"
+echo "  ok: a missing timeout command refuses the run before anything is sent"
 
 # Stopped from outside while the areas are loading. The wait is long enough
 # for the signal to land inside it, which is where a real run spends its time.
