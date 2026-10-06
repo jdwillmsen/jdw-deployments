@@ -521,6 +521,8 @@ CULL_KILL_GAP="${MC_CULL_KILL_GAP:-3}"
 CULL_POLL="${MC_CULL_POLL:-5}"
 CULL_REPLY_POLL="${MC_CULL_REPLY_POLL:-1}"
 CULL_JOB_TIMEOUT="${MC_CULL_JOB_TIMEOUT:-900}"
+# Seconds one console command or one read of the console log may take.
+CULL_CALL_TIMEOUT="${MC_CULL_CALL_TIMEOUT:-15}"
 # Ticking areas held at once. The server allows ten in total.
 CULL_BATCH="${MC_CULL_BATCH:-4}"
 
@@ -557,8 +559,13 @@ EOF
 
 # One console line, sent as a single argument: a selector's brackets and
 # commas are not something to hand a second shell.
+#
+# Bounded from outside, as the save-protocol scripts in the chart bound the
+# same call: an exec is a stream, and one that stalls would otherwise hold
+# the unload for as long as it liked. KILL because the unload ignores INT and
+# TERM and its children inherit that.
 cull_send() {
-  kubectl exec --request-timeout=15s -n "$NAMESPACE" "$CULL_POD" -- send-command "$1" >/dev/null 2>&1
+  timeout -s KILL "$CULL_CALL_TIMEOUT" kubectl exec -n "$NAMESPACE" "$CULL_POD" -- send-command "$1" >/dev/null 2>&1
 }
 
 # Every ticking area this command could have left, in any dimension. Removal
@@ -587,7 +594,7 @@ cull_area_listing() {
   cull_send "tickingarea remove $probe" || return 1
   cull_send "tickingarea list all-dimensions" || return 1
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    out="$(kubectl logs --request-timeout=15s -n "$NAMESPACE" "$CULL_POD" --since=120s 2>/dev/null | tr -d '\000')"
+    out="$(timeout -s KILL "$CULL_CALL_TIMEOUT" kubectl logs -n "$NAMESPACE" "$CULL_POD" --since=120s 2>/dev/null | tr -d '\000')"
     reply="$(awk -v probe="$probe" '
       index($0, probe) { seen = 1; next }
       !seen { next }
@@ -630,8 +637,8 @@ cull_areas_in_use() {
 # that exited 0 would read as one that finished.
 #
 # A second signal is ignored from here on: it would otherwise end the script
-# with areas still loaded. The calls below are each bounded by a request
-# timeout instead, since nothing short of SIGKILL can now cut one short.
+# with areas still loaded. Each call below is bounded by `timeout` instead,
+# since nothing short of SIGKILL can now cut one short.
 cull_cleanup() {
   local rc=$?
   trap - EXIT
@@ -653,7 +660,7 @@ cull_cleanup() {
       rc=1
     fi
   fi
-  [ -n "${CULL_JOB:-}" ] && kubectl delete job --request-timeout=15s -n "$NAMESPACE" "$CULL_JOB" --wait=false >/dev/null 2>&1
+  [ -n "${CULL_JOB:-}" ] && timeout -s KILL "$CULL_CALL_TIMEOUT" kubectl delete job -n "$NAMESPACE" "$CULL_JOB" --wait=false >/dev/null 2>&1
   [ -n "${CULL_WORK:-}" ] && rm -rf "$CULL_WORK"
   exit "$rc"
 }
@@ -867,6 +874,7 @@ cmd_cull() {
   [[ "$CULL_BATCH" =~ ^([1-9]|10)$ ]] \
     || usage_err "MC_CULL_BATCH must be a number from 1 to 10, not '$CULL_BATCH'" "unset it for the default of 4"
   command -v python3 >/dev/null 2>&1 || err "python3 is required for cull" "install python3, then re-run"
+  command -v timeout >/dev/null 2>&1 || err "the timeout command is required for cull" "it is part of GNU coreutils; install that, then re-run"
 
   CULL_POD="$(server_pod)" || exit 1
   CULL_WORK="$(mktemp -d)"
