@@ -24,8 +24,19 @@ case "$1" in
     # FAKE_BINARY prepends a real NUL. It cannot come in through FAKE_LOGS:
     # bash discards null bytes in command substitution, so a fixture built
     # that way silently loses the very byte the test is about.
-    [[ -n "${FAKE_BINARY:-}" ]] && printf 'noise \x00\x1b[0m binary\n'
-    printf '%s\n' "${FAKE_LOGS:-There are 0/10 players online:}"
+    # FAKE_NOISE buries the reply under that many lines of the map's live
+    # layer, and the fake honours --tail as the real one does: a reader that
+    # asks for the last 20 lines gets 20 map lines and no reply.
+    {
+      [[ -n "${FAKE_BINARY:-}" ]] && printf 'noise \x00\x1b[0m binary\n'
+      printf '%s\n' "${FAKE_LOGS:-There are 0/10 players online:}"
+      for _ in $(seq 1 "${FAKE_NOISE:-0}"); do
+        echo '[2026-10-06 00:34:20:607 INFO] [Scripting] MCMAP1 {"gen":28230,"kind":"tick","players":3,"mobs":362}'
+      done
+    } > "$CAPTURE.console"
+    tail=""
+    for arg in "$@"; do [[ "$arg" == --tail=* ]] && tail="${arg#--tail=}"; done
+    if [[ -n "$tail" ]]; then tail -n "$tail" "$CAPTURE.console"; else cat "$CAPTURE.console"; fi
     ;;
 esac
 exit 0
@@ -83,6 +94,29 @@ out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns \
 grep -q "players: 3" <<<"$out" || fail "a log containing binary bytes must still parse the player count"
 grep -q "Alice" <<<"$out" || fail "a log containing binary bytes must still list players"
 echo "  ok: a binary-bearing console log still parses"
+
+# The map's live layer writes to the console several times a second. A reply
+# looked for in the last 20 lines is gone within five seconds -- observed live
+# on 2026-10-06 as `players: 0` with five people online, and as a nightly
+# backup that could not find the server's answer to `save query`.
+out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns FAKE_NOISE=100 \
+       FAKE_LOGS="$(printf 'There are 3/10 players online:\nAlice, Bob, Carol')" \
+       bash "$mc" players)"
+grep -q "players: 3" <<<"$out" || fail "a reply buried under map lines must still be found: $out"
+grep -q "Alice" <<<"$out" || fail "a player list buried under map lines must still be read: $out"
+
+# FAKE_GET=true because the one answer the fake gives for every `get` is
+# also what status reads as the pod's readiness, and it only asks who is
+# online of a ready pod.
+out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns FAKE_NOISE=100 FAKE_GET=true \
+       FAKE_LOGS="There are 3/10 players online:" bash "$mc")"
+grep -q "players: 3/10" <<<"$out" || fail "status must read the count through the map's lines: $out"
+
+out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns FAKE_NOISE=100 \
+       FAKE_LOGS="showcoordinates = true" bash "$mc" run gamerule showcoordinates)"
+grep -q "showcoordinates = true" <<<"$out" || fail "run must show the server's reply, not five map lines: $out"
+grep -q "MCMAP1" <<<"$out" && fail "run printed the map's own lines as the command's output: $out"
+echo "  ok: replies are read through a console the map is writing to"
 
 # --- errors ---------------------------------------------------------------
 out="$(env PATH="$work/bin:$PATH" MC_NAMESPACE=test-ns bash "$mc" say 2>&1 || true)"
