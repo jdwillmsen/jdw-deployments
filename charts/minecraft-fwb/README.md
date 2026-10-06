@@ -392,7 +392,7 @@ browser                    GET /api/live, server-sent events, behind the map's l
   experiments, no resource pack, so the world stays a no-cheats world with
   its achievements. It ships inside the map image and is put into the world
   by the `install-map-pack` init container on the game server pod
-  (`minecraft-bedrock.initContainers` in `values.yaml`), which runs
+  (`minecraft-bedrock.initContainers` in `values-map-pack.yaml`), which runs
   `install-pack` before the server opens the world.
 - **The bridge** (0.7.0 and later) recognises the pack's lines by their
   `[Scripting] MCMAP1` prefix and holds them apart from the join and leave
@@ -411,7 +411,9 @@ is built not to: a missing world, an unwritable volume, a pack list it cannot
 parse — the installer logs it and exits 0, and the server starts without the
 pack. `tools/tests/test-map.sh` pins the pod spec around it so that stays
 true — no Secret, one mount, the map's own image at a tag no newer than the
-map's, the server's own user, no wrapper and no probe. The comment on `minecraft-bedrock.initContainers`
+map's, the server's own user, no wrapper and no probe. The step is in a file of its own,
+`values-map-pack.yaml`, which Renovate is told to leave alone: the map's image is merged
+unattended, and that update must not reach the game server's pod. The comment on `minecraft-bedrock.initContainers`
 has the reasons.
 
 Two things can still hold the server in `Init`:
@@ -437,7 +439,7 @@ Delete the block and the server restarts with the pack still loaded.
 
 To take the pack out of the world:
 
-1. In `values.yaml`, change the init container's argument from `install-pack`
+1. In `values-map-pack.yaml`, change the init container's argument from `install-pack`
    to `uninstall-pack`. Leave the rest of the block exactly as it is.
 2. In the same change set `map.live.enabled: false`, so the map stops asking
    for records and the two live alerts are not rendered. Without this

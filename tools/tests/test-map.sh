@@ -37,7 +37,7 @@ helm template minecraft-fwb "$chart" \
   --namespace jdwillmsen-prd \
   -f "$chart/values.yaml" \
   -f "$chart/values-prd.yaml" \
-  -f "$chart/values-console-bridge.yaml" > "$work/rendered.yaml"
+  -f "$chart/values-console-bridge.yaml" -f "$chart/values-map-pack.yaml" > "$work/rendered.yaml"
 
 # Ten minutes before each job starts, because a snapshot that began just
 # before it must be finished and resumed by then: the bridge caps one hold at
@@ -184,7 +184,7 @@ PY
 # fires on every evaluation, so the render has to refuse it.
 for bad in 1.5h 15.0m 0m m 90s 15; do
   if helm template minecraft-fwb "$chart" --namespace jdwillmsen-prd \
-      -f "$chart/values.yaml" -f "$chart/values-prd.yaml" -f "$chart/values-console-bridge.yaml" \
+      -f "$chart/values.yaml" -f "$chart/values-prd.yaml" -f "$chart/values-console-bridge.yaml" -f "$chart/values-map-pack.yaml" \
       --set-string "map.live.alert.staleAfter=$bad" >/dev/null 2>&1; then
     fail "map.live.alert.staleAfter=$bad rendered; only whole hours or minutes may"
   fi
@@ -750,5 +750,44 @@ if ! out="$(cd "$work" && promtool test rules tests.yaml 2>&1)"; then
   echo "$out"
   fail "the map alert rules do not behave as specified"
 fi
+
+# The pack's init step is on the game server's pod and carries the map's
+# image, which Renovate merges unattended. Three things together keep that
+# update off the game server, and each is easy to undo without noticing: the
+# step lives in its own file, Renovate is switched off for that file, and
+# the Application still lists it.
+python3 - "$here" <<'PY' || fail "the pack's init step is no longer fenced off from unattended image updates"
+import json, sys, yaml
+here = sys.argv[1]
+chart = f"{here}/charts/minecraft-fwb"
+bad = []
+
+base = yaml.safe_load(open(f"{chart}/values.yaml"))
+if (base.get("minecraft-bedrock") or {}).get("initContainers"):
+    bad.append("values.yaml defines minecraft-bedrock.initContainers again; Renovate updates images in that file")
+
+pack = yaml.safe_load(open(f"{chart}/values-map-pack.yaml"))
+if len((pack.get("minecraft-bedrock") or {}).get("initContainers") or []) != 1:
+    bad.append("values-map-pack.yaml does not hold exactly one init container")
+if set(pack) != {"minecraft-bedrock"} or set(pack["minecraft-bedrock"]) != {"initContainers"}:
+    bad.append("values-map-pack.yaml holds something besides the init step; whatever else is there stops being updated too")
+
+rules = json.load(open(f"{here}/renovate.json")).get("packageRules") or []
+fence = [i for i, r in enumerate(rules)
+         if r.get("enabled") is False and r.get("matchFileNames") == ["charts/minecraft-fwb/values-map-pack.yaml"]]
+if not fence:
+    bad.append("renovate.json has no rule disabling updates in charts/minecraft-fwb/values-map-pack.yaml")
+elif fence[-1] != len(rules) - 1:
+    bad.append("the rule disabling updates in values-map-pack.yaml is not last, so a later rule can switch them back on")
+
+apps = yaml.safe_load(open(f"{here}/argocd/prd/config.yaml"))["apps"]
+listed = next(a for a in apps if a["name"] == "minecraft-fwb-prd")["valueFiles"]
+if "values-map-pack.yaml" not in listed:
+    bad.append("the production Application does not list values-map-pack.yaml, so the pack is never installed")
+
+for line in bad:
+    print(line)
+sys.exit(1 if bad else 0)
+PY
 
 echo "PASS: map quiet windows cover the backup and census, the internal token is generated once, only the public port is published and only behind the login, the pack's init step cannot hold the server, and the map and live alerts fire when they should"

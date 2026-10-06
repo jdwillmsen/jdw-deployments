@@ -1,0 +1,151 @@
+# The game server's one init step: it installs the world map's script pack
+# into the world before the server starts.
+#
+# It is in a file of its own for one reason. The step's image is the map's
+# image, and Renovate merges map image updates unattended because a map bump
+# restarts only the map pod. An init container on the game server pod breaks
+# that promise: on 2026-10-06 the same unattended update moved this tag and
+# restarted the world. renovate.json disables every update found in this
+# file, so the tag here moves only when someone moves it.
+#
+# When to move it: when minecraft/mcmap/pack or its installer changed, which
+# the map's release notes say, and never past map.image.tag. An older pack is
+# read by a newer map; a newer pack is not. Moving it restarts the game
+# server, announced by the deploy-announce hook like any change to that pod.
+#
+# The ArgoCD Application must list this file, or the pack is never installed
+# or updated (an installed pack stays on the volume either way).
+minecraft-bedrock:
+  # Puts the map's script pack into the world before the server opens it.
+  #
+  # The pack is what the map's live layer draws from: once a second it prints
+  # where every player and mob is to the server's console, the console bridge
+  # keeps those lines, and the map streams them to browsers. It has to be an
+  # init step in this pod because nothing else can write to the world's
+  # volume before the server has it open: the claim is ReadWriteOnce and
+  # mounted here.
+  #
+  # This is a container that runs ahead of the game server, so anything it
+  # waits on, the server waits on. Three rules follow, and tools/tests/
+  # test-map.sh fails the build on each:
+  #
+  #  1. Nothing from a Secret. No secretKeyRef, no envFrom, no secret volume.
+  #     A reference that cannot resolve leaves the pod in
+  #     CreateContainerConfigError with the server never started, which is
+  #     exactly how a sidecar's secret took this world offline for 40 hours
+  #     (docs/incidents/2026-09-06-fwb-console-bridge-secret.md). The
+  #     installer needs no credential and must never be given one.
+  #  2. One mount, the world's volume. A second volume is a second thing that
+  #     has to attach before the server may start.
+  #  3. The map's image, at a tag no newer than map.image.tag. The pack and
+  #     the service that parses its records ship in one image, and the hazard
+  #     is a pack newer than its parser: records the map does not understand
+  #     are dropped. An older pack is safe -- the map ignores fields it does
+  #     not know, and the record sentinel carries the format's own version --
+  #     so this tag stays where it is across map releases that do not change
+  #     the pack. That matters because moving it restarts the game server,
+  #     and with it every client: the agent has taken nine minutes to rejoin.
+  #     Move it when minecraft/mcmap/pack or the installer changed, which the
+  #     map's release notes say.
+  #
+  # initContainers is rendered by plain toYaml in the vendored subchart's
+  # deployment.yaml (confirmed by reading it), never passed through tpl. So,
+  # unlike sidecarContainers below, nothing in it can be conditional and
+  # nothing can be read from another value: the image is a literal string
+  # for the same reason the console-bridge sidecar's is, and the level name
+  # and mob cap are literals too. It also means this step is in every render,
+  # with or without values-console-bridge.yaml. Without the bridge the pack
+  # still prints its records and nothing reads them, which is waste, not
+  # harm.
+  #
+  # The installer fails open: a missing world, an unwritable volume, a pack
+  # list it cannot parse, a missing variable or a panic is logged and exits
+  # 0, and the server starts without the pack. Its one non-zero exit is a
+  # replacement it could neither finish nor undo, which the kubelet's retry
+  # repairs on the next attempt. That property is the only reason this step
+  # is allowed here, so do not wrap it: no `command` (a shell that is not in
+  # this distroless image would fail where the installer would not), no
+  # probes, and nothing that waits for the map or the bridge to be up. A
+  # pack that did not install shows up as JdwillmsenMinecraftMapLiveNeverStarted,
+  # not as a server that did not start.
+  #
+  # What this step cannot fail open on is its own image pull. The tag is
+  # pulled once per node and kept (IfNotPresent), and the map pod runs the
+  # same image, but a node that has to fetch it while the registry is down
+  # holds the server in Init until it can.
+  #
+  # Removing this block does NOT remove the pack. The files and the world's
+  # registration of them are on the volume and stay there. To turn the pack
+  # off, change `install-pack` below to `uninstall-pack` and let the server
+  # restart; README, "Live layer", has the procedure and when to use it.
+  #
+  # The pack only loads when the server starts, so everything here -- the
+  # step itself, a new image tag, a changed PACK_MOB_CAP -- takes effect on
+  # the restart that applying it causes, and that restart is announced by the
+  # deploy-announce hook like any other change to this pod.
+  #
+  # A volume with no world on it yet is the one start this step sits out on
+  # purpose: the server creates worlds/FWB on its first run, and the
+  # installer will not write a registration into a world directory the server
+  # did not make. The pack goes in on the second start. A world restored onto
+  # the volume is already there when the pod comes back, so a restore does
+  # not have this gap.
+  initContainers:
+    - name: install-map-pack
+      # map.image.repository at a tag no newer than map.image.tag; see rule 3
+      # above for when to move it.
+      image: "ghcr.io/jdwillmsen/minecraft-map:1.7.0"
+      imagePullPolicy: IfNotPresent
+      # The image's entrypoint is the mcmap binary, so this is the whole
+      # command line. `uninstall-pack` is the only other value it may take.
+      args:
+        - install-pack
+      env:
+        - name: DATA_DIR
+          value: /data
+        # Must equal minecraftServer.levelName below. A name that matches no
+        # world is one more thing the installer logs and skips.
+        - name: LEVEL_NAME
+          value: FWB
+        # Most mobs the pack reports per dimension in one sample. This is the
+        # server-side cap: lowering it shrinks what is read, printed and
+        # logged, with no image release, on the next server restart.
+        # map.live.maxEntities is the browser-side counterpart and takes only
+        # a map restart. Neither is a way out of a tick-rate drop: the server
+        # still walks every entity to find the nearest thousand, so the
+        # answer to that is uninstall-pack.
+        - name: PACK_MOB_CAP
+          value: "1000"
+      volumeMounts:
+        # Read-write, the only writable mount in this pod besides the
+        # server's own: the installer writes behavior_packs/mcmap-live/ and
+        # worlds/FWB/world_behavior_packs.json, each staged beside its
+        # destination and renamed into place.
+        - name: datadir
+          mountPath: /data
+      # A static binary that copies three small files and exits.
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      securityContext:
+        # The server's own identity, spelled out rather than inherited. The
+        # server writes its files as uid 1000 and its directories are not
+        # group-writable, so only uid 1000 can add a pack: the image's
+        # default user, 65532, was tried and refused with `permission
+        # denied`. The pod security context already says 1000:3000 today
+        # (the subchart's default, with fsGroup 2000 giving new files the
+        # volume's group), but that default belongs to a chart this repo
+        # does not own, and inheriting it would let a subchart bump quietly
+        # turn the installer into a user the volume refuses. The test fails
+        # if these stop matching what the server container runs as.
+        runAsUser: 1000
+        runAsGroup: 3000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]

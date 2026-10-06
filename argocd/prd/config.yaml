@@ -16,3 +16,10 @@ apps:
       # ExternalSecret reading SecretSynced first -- see README, "Enabling the
       # console bridge", for why that order is not optional.
       - values-console-bridge.yaml
+      # The game server's init step that installs the map's script pack. In
+      # its own file so that Renovate, which merges map image updates
+      # unattended, cannot move the tag on the game server's pod; see the
+      # file's own comment. Removing this line stops the pack being
+      # installed or updated and restarts the server once; a pack already
+      # on the volume stays until uninstall-pack removes it.
+      - values-map-pack.yaml
