@@ -131,6 +131,12 @@ grep -q "MCMAP1" <<<"$out" && fail "run printed the map's own lines as the comma
 out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns FAKE_NOISE=100 \
        FAKE_LOGS="There are 3/10 players online:" bash "$mc" say hello)"
 grep -q "recipients: 3/10" <<<"$out" || fail "say must count its recipients through the map's lines: $out"
+
+# Most commands print nothing, so the window then holds only the map's lines.
+out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns FAKE_NOISE=100 FAKE_REPLY_AGE=60 \
+       bash "$mc" run gamerule showcoordinates true)" \
+  || fail "run must succeed when the server prints no reply: $out"
+grep -q "MCMAP1" <<<"$out" && fail "run printed the map's lines for a command with no reply: $out"
 echo "  ok: replies are read through a console the map is writing to"
 
 # --- errors ---------------------------------------------------------------
