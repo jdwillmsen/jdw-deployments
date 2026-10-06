@@ -74,7 +74,11 @@ case "$1" in
         if [ -e "$STATE/stale-$(cat "$STATE/listings")" ]; then
           cat "$FIXTURES/listing-1.ndjson"
         else
-          cat "$FIXTURES/listing-$(cat "$STATE/listings").ndjson"
+          # A third and later listing is another look at the world the
+          # second one saw, unless a test staged something else for it.
+          n="$(cat "$STATE/listings")"
+          [ -e "$FIXTURES/listing-$n.ndjson" ] || n=2
+          cat "$FIXTURES/listing-$n.ndjson"
         fi
         [ "${FAKE_LOGS_FAIL_ON:-}" = "$(cat "$STATE/listings")" ] && exit 1 ;;
       *)
@@ -295,7 +299,19 @@ grep -q '^remaining: 1$' <<<"$out" || fail "the surviving target must be counted
 grep -q '^in_kill_boxes_now: 1$' <<<"$out" || fail "mobs of a planned type inside a planned box must be reported: $out"
 grep -q 'zombie overworld x=700' <<<"$out" || fail "the surviving target must be located: $out"
 [ "$(areas_left)" -eq 0 ] || fail "ticking areas were left after an incomplete run"
+[ "$(cat "$work/state/listings")" -eq 4 ] || fail "a remaining target must be looked for three times before it is believed, got $(($(cat "$work/state/listings") - 1)) verdict listings"
 echo "  ok: a surviving target is reported with its position and a non-zero exit"
+
+# The same survivor in the first verdict listing only: the save had not caught
+# up, and the next listing shows it gone. Observed on the live server with
+# players on, where a fixed wait was not long enough.
+cp "$work/fx/listing-2.clean" "$work/fx/listing-3.ndjson"
+run bash "$mc" cull --types enderman,zombie --confirm --no-announce
+rm -f "$work/fx/listing-3.ndjson"
+[ "$rc" -eq 0 ] || fail "a target gone from the next listing must not fail the run, got $rc: $out"
+grep -q '^remaining: 0$' <<<"$out" || fail "the last listing is the verdict: $out"
+grep -q '^verify: listing 1 of 3 still holds 1 planned targets' <<<"$out" || fail "a repeated listing must be said, with what the first one held: $out"
+echo "  ok: a target the save had not caught up on is looked for again"
 
 # The same survivor, behind a verdict listing that cannot be trusted. Each of
 # these read as `remaining: 0` when the second listing was only counted.
