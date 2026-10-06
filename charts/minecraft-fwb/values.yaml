@@ -1926,7 +1926,12 @@ map:
     # 1.9.0 adds villages to the structures it draws, read from the game's
     # own village records: where each one is, and how many villagers, golems,
     # cats, beds, bells and job sites the game last counted in it.
-    tag: "1.9.0"
+    #
+    # 1.10.0 opens a card on a clicked mob or player with its exact x, y and
+    # z and a control to follow it, and is the first that can read biomes,
+    # answer a search and keep trails: see biomes and trails below, which
+    # are what switch those on.
+    tag: "1.10.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2117,6 +2122,28 @@ map:
     seedSecret:
       name: fwb-structure-seed
       key: seed
+
+  # The biome every block is in, as an overlay on the map, a list of the
+  # biomes each dimension holds, and something for search to find.
+  #
+  # Reading them is one more pass over the snapshot, about ten seconds of a
+  # CPU on this world, so the map skips it while no new chunk has been
+  # generated and reads again at least once an hour. It holds about 30 MB
+  # more in memory and keeps one file of about 11 MB on its volume. The map
+  # leaves this off unless it is asked for, so that an image update alone
+  # never adds a pass.
+  biomes:
+    # false reads no biomes and serves none. Restarts the map only.
+    enabled: true
+
+  # Where each player has been: the positions the live layer already
+  # receives, kept in the map's memory for a day and drawn as a line. Like
+  # the live layer they are shown to every logged-in player, and that
+  # includes a player who has since left. They are not written anywhere, so
+  # a map restart starts them again from nothing. Needs live.enabled.
+  trails:
+    # false keeps no positions and serves none. Restarts the map only.
+    enabled: true
 
   # Pictures for the live markers: each mob's spawn-egg icon and each
   # player's own head.

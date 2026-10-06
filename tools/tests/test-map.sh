@@ -374,6 +374,18 @@ if not (entities.isdigit() and 1 <= int(entities) <= 10000):
 if live.get("LIVE_ENABLED") not in ("true", "false"):
     bad.append(f"LIVE_ENABLED is {live.get('LIVE_ENABLED')!r}; it must be true or false")
 
+# The map leaves biomes and trails off unless it is told otherwise, so that a
+# new image alone adds no pass over the world. A chart that stopped saying
+# which it wants would switch them off without anyone having decided to.
+switches = {e["name"]: e.get("value") for e in map_container["env"] if e["name"] in ("BIOMES_ENABLED", "TRAILS_ENABLED")}
+for name in ("BIOMES_ENABLED", "TRAILS_ENABLED"):
+    if switches.get(name) not in ("true", "false"):
+        bad.append(f"{name} is {switches.get(name)!r}; the chart must set it to true or false")
+# Trails are made of the live layer's positions: on without it they are a
+# layer the page offers and nothing ever fills.
+if switches.get("TRAILS_ENABLED") == "true" and live.get("LIVE_ENABLED") != "true":
+    bad.append("TRAILS_ENABLED is true while LIVE_ENABLED is not")
+
 for line in bad:
     print(line)
 sys.exit(1 if bad else 0)
