@@ -887,6 +887,22 @@ cmd_cull() {
   # can never be free.
   [[ "$CULL_BATCH" =~ ^([1-9]|10)$ ]] \
     || usage_err "MC_CULL_BATCH must be a number from 1 to 10, not '$CULL_BATCH'" "unset it for the default of 4"
+  # Each of these bounds a loop or a wait: one that is not a number leaves the
+  # loop without its end or the wait skipped. The poll is added up in shell
+  # arithmetic, so it is whole; the waits only go to sleep.
+  local setting value
+  for setting in VERIFY_TRIES CALL_TIMEOUT JOB_TIMEOUT; do
+    value="CULL_$setting"
+    [[ "${!value}" =~ ^[1-9][0-9]*$ ]] \
+      || usage_err "MC_CULL_$setting must be a whole number of 1 or more, not '${!value}'" "unset it for the default"
+  done
+  [[ "$CULL_POLL" =~ ^(0|[1-9][0-9]*)$ ]] \
+    || usage_err "MC_CULL_POLL must be a whole number of seconds, not '$CULL_POLL'" "unset it for the default"
+  for setting in LOAD_WAIT KILL_GAP SETTLE_WAIT REPLY_POLL; do
+    value="CULL_$setting"
+    [[ "${!value}" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+      || usage_err "MC_CULL_$setting must be a number of seconds, not '${!value}'" "unset it for the default"
+  done
   command -v python3 >/dev/null 2>&1 || err "python3 is required for cull" "install python3, then re-run"
   command -v timeout >/dev/null 2>&1 || err "the timeout command is required for cull" "it is part of GNU coreutils; install that, then re-run"
 
