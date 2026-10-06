@@ -68,6 +68,13 @@
         "ghcr.io/jdwillmsen/minecraft-afk-bot"
       ],
       "enabled": false
+    },
+    {
+      "description": "The game server's init step, which installs the map's script pack, carries the map's image. Every update to that file is off: the map rule above merges unattended because a map bump restarts only the map pod, and an init container on the game server pod is the one place that is not true. On 2026-10-06 the same update moved this tag and restarted the world with nobody watching. The tag there moves by hand, when the pack changes. This rule is last so that it wins.",
+      "matchFileNames": [
+        "charts/minecraft-fwb/values-map-pack.yaml"
+      ],
+      "enabled": false
     }
   ],
   "platformAutomerge": true
