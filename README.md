@@ -461,13 +461,29 @@ area, kills by type inside that box, and unloads it again. It ends by taking a
 second listing and exits non-zero if any target it planned to kill is still in
 the save.
 
+**Do not start a cull in the backup window.** Each listing holds the server's
+save, and so do the backup, the nightly census, the version check and the
+scheduled restart. With two holders, the first to finish resumes saving under
+the other's copy, and nothing downstream can tell that archive is
+inconsistent. The schedules keep the CronJobs apart; a cull runs whenever it
+is started. So before each listing it looks for an active Job of one of those
+four: the first listing refuses the run before anything is sent, and the
+second waits for the job to finish, failing with the kills done but not
+verified if it never does. The check cannot see a job that starts during the
+listing's own two minutes, which is why the window still has to be avoided.
+
 What it will not do:
 
 - **Kill a name-tagged mob.** The kill is by type inside a box, so a group of
-  targets with a name-tagged mob of a targeted type inside its box is skipped
-  whole and reported under `skipped_targets`.
+  targets with a name-tagged mob of a targeted type in its box, or within 64
+  blocks of it, is skipped whole and reported under `skipped_targets`. This is
+  decided from the snapshot: a mob name-tagged after it was taken, or one that
+  walks more than 64 blocks into a box before that box's turn, is not
+  protected.
 - **Act on a stale listing.** If the snapshot could not be taken and the census
-  fell back to last night's archive, the run is refused.
+  fell back to last night's archive, the run is refused. The second listing is
+  held to the same checks: one that is cut short or came from an archive fails
+  the run, saying the kills were done but could not be verified.
 - **Leave chunks force-loaded.** Every exit path removes its ticking areas and
   then asks the server which remain; one that will not unload fails the run
   and is named.
