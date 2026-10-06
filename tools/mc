@@ -45,6 +45,16 @@ send() {
     || err "could not reach the server console" "the pod may be restarting: $SELF status"
 }
 
+# The server console since just before the command whose reply is wanted.
+#
+# By time, not by line count: the console is shared with chat and with the
+# map's live layer, which alone writes several lines a second, so "the last
+# 20 lines" was under five seconds of it and `players` read 0 with five people
+# on. The window is measured on the node, so this machine's clock is not in it.
+console_recent() {
+  kubectl logs -n "$NAMESPACE" "$1" --since=20s 2>/dev/null
+}
+
 cmd_status() {
   local pod ready restarts online
   pod="$(server_pod)" || exit 1
@@ -60,7 +70,7 @@ cmd_status() {
   if [ "$ready" = "true" ]; then
     send "$pod" list
     sleep 2
-    online="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
+    online="$(console_recent "$pod" \
       | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '[0-9]+/[0-9]+')"
     echo "players: ${online:-unknown}"
   fi
@@ -78,9 +88,9 @@ cmd_players() {
   pod="$(server_pod)" || exit 1
   send "$pod" list
   sleep 2
-  count="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
+  count="$(console_recent "$pod" \
     | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
-  names="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
+  names="$(console_recent "$pod" \
     | grep -a -A1 'players online' | tail -1 | tr -d '\r')"
 
   # An empty result is stated rather than printed as nothing, so a caller can
@@ -108,7 +118,7 @@ cmd_say() {
   send "$pod" list
   sleep 2
   local online
-  online="$(kubectl logs -n "$NAMESPACE" "$pod" --tail=20 2>/dev/null \
+  online="$(console_recent "$pod" \
     | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '[0-9]+/[0-9]+')"
   echo "delivered: unconfirmed"
   echo "recipients: ${online:-unknown}"
@@ -174,7 +184,10 @@ cmd_run() {
   sleep 2
   echo "ran: $*"
   echo "output:"
-  kubectl logs -n "$NAMESPACE" "$pod" --tail=5 2>/dev/null | sed 's/^/  /'
+  # The map's live layer writes to this console several times a second, so
+  # the last five lines of it are five of those; they are left out so the
+  # reply is what is shown.
+  console_recent "$pod" | grep -a -v '\[Scripting\] MCMAP1 ' | tail -5 | sed 's/^/  /'
 }
 
 # --- presence ----------------------------------------------------------------

@@ -213,8 +213,15 @@ spec:
                       sleep 3
                       timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- send-command save query >/dev/null || return 1
                       sleep 2
-                      manifest="$(kubectl logs -n "$NS" "$SERVER_POD" --tail=20 \
-                        | grep -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
+                      # A window of time, not of lines. The console is
+                      # shared, and the map's live layer alone writes to it
+                      # several times a second: the last 20 lines were under
+                      # five seconds of it, the reply was gone before this
+                      # read, and every night fell through to a cold copy.
+                      # grep -a because the console carries binary bytes,
+                      # which otherwise make grep refuse the whole stream.
+                      manifest="$(timeout 15s kubectl logs -n "$NS" "$SERVER_POD" --since=30s \
+                        | grep -a -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
                       [[ "$manifest" == *":"* ]] && break
                       manifest=""
                     done

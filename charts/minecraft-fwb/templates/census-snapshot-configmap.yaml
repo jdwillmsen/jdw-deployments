@@ -80,12 +80,14 @@ data:
       # shell -- leaving the server held, persisting nothing, until the next
       # morning's backup fails its own hold and resumes it.
       #
-      # --tail=200 because this is the game server's console and chat shares
-      # it (values-console-bridge.yaml sets CONTENT_LOG_CONSOLE_OUTPUT_ENABLED),
-      # so a busy evening can push the manifest out of a 20-line window.
+      # --since rather than --tail because this is the game server's console
+      # and everything shares it: chat (values-console-bridge.yaml sets
+      # CONTENT_LOG_CONSOLE_OUTPUT_ENABLED) and the map's live layer, which
+      # writes several lines a second. Any window counted in lines is a few
+      # seconds on a busy evening, and the backup's 20 stopped being enough.
       # grep -a because that console carries binary bytes, which otherwise
       # make grep refuse the whole stream.
-      manifest="$(timeout 10s kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --tail=200 | grep -a -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
+      manifest="$(timeout 10s kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --since=30s | grep -a -A1 'ready to be copied' | tail -1 | tr -d '\r')" || true
       [[ "$manifest" == *":"* ]] && break
       manifest=""
     done

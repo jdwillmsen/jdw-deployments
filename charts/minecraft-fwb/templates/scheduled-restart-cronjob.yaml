@@ -109,11 +109,13 @@ spec:
                   # Ask the server who is on. `grep -a` because the console log
                   # carries binary bytes and grep otherwise refuses the whole
                   # stream -- the same defect that makes `tools/mc players`
-                  # report zero while four people are playing.
+                  # report zero while four people are playing. A window of
+                  # time rather than of lines, because the map's live layer
+                  # buries the reply under its own lines within seconds.
                   timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
                     -- send-command list >/dev/null 2>&1
                   sleep 2
-                  ONLINE="$(timeout 15s kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --tail=20 2>/dev/null \
+                  ONLINE="$(timeout 15s kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --since=20s 2>/dev/null \
                     | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 \
                     | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
 
