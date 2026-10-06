@@ -25,17 +25,28 @@ case "$1" in
     # bash discards null bytes in command substitution, so a fixture built
     # that way silently loses the very byte the test is about.
     # FAKE_NOISE buries the reply under that many lines of the map's live
-    # layer, and the fake honours --tail as the real one does: a reader that
-    # asks for the last 20 lines gets 20 map lines and no reply.
+    # layer, and the fake honours --tail and --since as the real one does: the
+    # reply is FAKE_REPLY_AGE seconds old and the map's lines are newer, so a
+    # reader that asks for the last 20 lines gets 20 map lines and no reply,
+    # and one whose window is shorter than the reply's age gets none either.
+    tail="" since=""
+    for arg in "$@"; do
+      [[ "$arg" == --tail=* ]] && tail="${arg#--tail=}"
+      [[ "$arg" == --since=* ]] && since="${arg#--since=}"
+    done
+    since="${since%s}"
+    # tools/mc sleeps two seconds between asking and reading, and each call
+    # takes time of its own.
+    age="${FAKE_REPLY_AGE:-5}"
     {
-      [[ -n "${FAKE_BINARY:-}" ]] && printf 'noise \x00\x1b[0m binary\n'
-      printf '%s\n' "${FAKE_LOGS:-There are 0/10 players online:}"
+      if [[ -z "$since" || "$age" -le "$since" ]]; then
+        [[ -n "${FAKE_BINARY:-}" ]] && printf 'noise \x00\x1b[0m binary\n'
+        printf '%s\n' "${FAKE_LOGS:-There are 0/10 players online:}"
+      fi
       for _ in $(seq 1 "${FAKE_NOISE:-0}"); do
         echo '[2026-10-06 00:34:20:607 INFO] [Scripting] MCMAP1 {"gen":28230,"kind":"tick","players":3,"mobs":362}'
       done
     } > "$CAPTURE.console"
-    tail=""
-    for arg in "$@"; do [[ "$arg" == --tail=* ]] && tail="${arg#--tail=}"; done
     if [[ -n "$tail" ]]; then tail -n "$tail" "$CAPTURE.console"; else cat "$CAPTURE.console"; fi
     ;;
 esac

@@ -7,7 +7,9 @@
 # layer writes several lines a second, and on 2026-10-06 the reply was no
 # longer in the 20 lines the script read, so the hold was abandoned and the
 # cold copy that followed failed. The fake honours --tail and --since as the
-# real kubectl does, which is the property that failure depended on.
+# real kubectl does, which is the property that failure depended on: the reply
+# is FAKE_REPLY_AGE seconds old, the map's lines are newer, and a reader gets
+# only what its window reaches.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -42,7 +44,8 @@ PY
 mkdir -p "$work/sa" "$work/backup" "$work/bin"
 echo -n "test-ns" > "$work/sa/namespace"
 sed -i -e "s|/var/run/secrets/kubernetes.io/serviceaccount/namespace|$work/sa/namespace|" \
-       -e "s|/data/worlds|$work/worlds|g" -e "s|/backup|$work/backup|g" "$work/backup.sh"
+       -e "s|/data/worlds|$work/worlds|g" -e "s|/backup|$work/backup|g" \
+       -e "s|/tmp/metrics.txt|$work/metrics.txt|g" "$work/backup.sh"
 
 # shellcheck disable=SC1091  # written above from the rendered chart
 . "$work/env"
@@ -68,16 +71,25 @@ case "$1" in
     shift; while [[ "$1" != "--" ]]; do shift; done; shift 2
     printf '%s\n' "$*" >> "$CAPTURE" ;;
   logs)
+    tail="" since=""
+    for arg in "$@"; do
+      [[ "$arg" == --tail=* ]] && tail="${arg#--tail=}"
+      [[ "$arg" == --since=* ]] && since="${arg#--since=}"
+    done
+    since="${since%s}"
+    # The script sleeps two seconds between asking and reading, and each call
+    # takes time of its own, so the reply is some seconds old when it is read.
+    age="${FAKE_REPLY_AGE:-5}"
     {
-      printf 'noise \x00 binary\n'
-      echo '[2026-10-06 04:00:09:480 INFO] Data saved. Files are now ready to be copied.'
-      echo "$FAKE_MANIFEST"
+      if [[ -z "$since" || "$age" -le "$since" ]]; then
+        printf 'noise \x00 binary\n'
+        echo '[2026-10-06 04:00:09:480 INFO] Data saved. Files are now ready to be copied.'
+        echo "$FAKE_MANIFEST"
+      fi
       for _ in $(seq 1 "${FAKE_NOISE:-0}"); do
         echo '[2026-10-06 04:00:10:607 INFO] [Scripting] MCMAP1 {"gen":28230,"kind":"tick","players":3,"mobs":362}'
       done
     } > "$CAPTURE.console"
-    tail=""
-    for arg in "$@"; do [[ "$arg" == --tail=* ]] && tail="${arg#--tail=}"; done
     if [[ -n "$tail" ]]; then tail -n "$tail" "$CAPTURE.console"; else cat "$CAPTURE.console"; fi ;;
 esac
 exit 0
