@@ -537,12 +537,17 @@ options:
                      tickingarea or chat command
   --confirm          required for a real run
   --no-announce      skip the chat announcement
-  --announce <text>  replace the default announcement
 
 Both modes take a world snapshot through the census job, which holds the
-server's save for a few seconds exactly as the nightly census does.
+server's save for a few seconds exactly as the nightly census does; a real
+run takes a second one at the end. Do not start a cull in the backup window:
+with two holders of the save, the first to finish resumes saving under the
+other's copy. A listing is refused, or at the end waited for, while a backup,
+census, version-check or scheduled-restart job is active, but that check
+cannot see a job that starts during the listing's own two minutes.
 Name-tagged mobs are never targeted: a group of targets with a name-tagged
-mob of a targeted type inside its kill box is skipped and reported.
+mob of a targeted type in its kill box, or within 64 blocks of it, is skipped
+and reported. That is decided from the snapshot.
 
 exit codes: 0 done, 1 could not be done or targets remain, 2 usage
 EOF
@@ -603,7 +608,7 @@ cull_area_listing() {
 cull_leftover_areas() {
   local reply
   reply="$(cull_area_listing)" || return 1
-  grep -oE "^[[:space:]]*- ${CULL_AREA_PREFIX}[0-9]+:" <<<"$reply" | grep -oE "${CULL_AREA_PREFIX}[0-9]+" | sort -u
+  grep -a -oE "^[[:space:]]*- ${CULL_AREA_PREFIX}[0-9]+:" <<<"$reply" | grep -a -oE "${CULL_AREA_PREFIX}[0-9]+" | sort -u
   return 0
 }
 
@@ -611,11 +616,11 @@ cull_leftover_areas() {
 cull_areas_in_use() {
   local reply
   reply="$(cull_area_listing)" || return 1
-  if grep -q "No ticking areas exist" <<<"$reply"; then
+  if grep -a -q "No ticking areas exist" <<<"$reply"; then
     echo 0
     return 0
   fi
-  grep -oE '[0-9]+/10 ticking areas in use' <<<"$reply" | tail -1 | cut -d/ -f1
+  grep -a -oE '[0-9]+/10 ticking areas in use' <<<"$reply" | tail -1 | cut -d/ -f1
 }
 
 # $1 is set when a signal brought it here. $? is then the status of whatever
@@ -646,11 +651,45 @@ cull_cleanup() {
   exit "$rc"
 }
 
+# Names of the active Jobs that drive this server's save protocol, one per
+# line. Two holders must not overlap: whichever finishes first resumes saving
+# while the other is still copying, a world written mid-copy that nothing
+# downstream can detect. The CronJobs are kept apart by their schedules; a
+# listing started by hand has only this check, and it cannot see a job that
+# starts once the listing is under way.
+cull_save_holders() {
+  local jobs
+  jobs="$(kubectl get jobs -n "$NAMESPACE" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.active}{"\n"}{end}' 2>/dev/null)" || return 1
+  awk -F'\t' -v release="$RELEASE" '
+    BEGIN { n = split("backup census version-check scheduled-restart", kinds, " ") }
+    $2 + 0 > 0 { for (i = 1; i <= n; i++) if (index($1, release "-" kinds[i]) == 1) { print $1; next } }
+  ' <<<"$jobs"
+}
+
 # Runs the census job in listing mode against a fresh snapshot and writes the
 # listing to $1. The job is the CronJob's own template with only the census
 # arguments replaced, so the snapshot is taken exactly as the nightly one is.
+#
+# $3 is `verdict` for the listing taken after the kills. That one waits for
+# another holder of the save instead of refusing, and every way it can fail
+# says the kills happened: by then they have.
 cull_listing() {
-  local out="$1" types="$2" i=0 succeeded failed
+  local out="$1" types="$2" note="" i=0 succeeded failed holders
+  [ "${3:-}" = verdict ] && note="the kills were done but could not be verified: "
+  while :; do
+    holders="$(cull_save_holders)" || err "${note}could not list the jobs in $NAMESPACE" "kubectl get jobs -n $NAMESPACE"
+    [ -z "$holders" ] && break
+    holders="$(tr '\n' ' ' <<<"$holders" | sed 's/ *$//')"
+    [ -n "$note" ] || err "$holders is running and holds the server's save; nothing was sent" \
+      "a cull must not overlap it; wait for it to finish: kubectl get jobs -n $NAMESPACE"
+    i=$((i + CULL_POLL))
+    [ "$i" -ge "$CULL_JOB_TIMEOUT" ] && err "${note}$holders still held the server's save after ${CULL_JOB_TIMEOUT}s" \
+      "once it has finished: $SELF cull --types $types --dry-run"
+    sleep "$CULL_POLL"
+    [ "$CULL_POLL" = 0 ] && i=$((i + 1))
+  done
+  i=0
   CULL_JOB="${RELEASE}-census-list-$(date -u +%m%d%H%M%S)"
   kubectl create job -n "$NAMESPACE" "$CULL_JOB" --from="cronjob/${RELEASE}-census" --dry-run=client -o json 2>/dev/null \
     | MC_TYPES="$types" python3 -c '
@@ -661,34 +700,39 @@ for c in job["spec"]["template"]["spec"]["containers"]:
         c["args"] = ["-world-dir", "/snapshot", "-backup-dir", "/backup", "-list", "-types", os.environ["MC_TYPES"]]
 json.dump(job, sys.stdout)
 ' > "$CULL_WORK/job.json" 2>/dev/null
-  [ -s "$CULL_WORK/job.json" ] || err "could not build the listing job from cronjob/${RELEASE}-census" \
+  [ -s "$CULL_WORK/job.json" ] || err "${note}could not build the listing job from cronjob/${RELEASE}-census" \
     "the census may be off (census.enabled in charts/minecraft-fwb/values.yaml): kubectl get cronjob -n $NAMESPACE"
   kubectl apply -n "$NAMESPACE" -f "$CULL_WORK/job.json" >/dev/null 2>&1 \
-    || err "could not start the listing job" "kubectl get jobs -n $NAMESPACE | grep census-list"
+    || err "${note}could not start the listing job" "kubectl get jobs -n $NAMESPACE | grep census-list"
 
   while :; do
     succeeded="$(kubectl get job -n "$NAMESPACE" "$CULL_JOB" -o jsonpath='{.status.succeeded}' 2>/dev/null)"
     failed="$(kubectl get job -n "$NAMESPACE" "$CULL_JOB" -o jsonpath='{.status.failed}' 2>/dev/null)"
     [ "${succeeded:-0}" -ge 1 ] 2>/dev/null && break
     if [ "${failed:-0}" -ge 1 ] 2>/dev/null; then
-      echo "error: the listing job failed"
+      echo "error: ${note}the listing job failed"
       echo "server: $(kubectl logs -n "$NAMESPACE" "job/$CULL_JOB" -c census --tail=3 2>&1 | tr '\n' ' ')"
       echo "hint: the census image needs -list; check census image in charts/minecraft-fwb/values.yaml"
       exit 1
     fi
     i=$((i + CULL_POLL))
-    [ "$i" -ge "$CULL_JOB_TIMEOUT" ] && err "the listing job did not finish in ${CULL_JOB_TIMEOUT}s" \
+    [ "$i" -ge "$CULL_JOB_TIMEOUT" ] && err "${note}the listing job did not finish in ${CULL_JOB_TIMEOUT}s" \
       "kubectl describe job -n $NAMESPACE $CULL_JOB"
     sleep "$CULL_POLL"
     [ "$CULL_POLL" = 0 ] && i=$((i + 1))
   done
-  kubectl logs -n "$NAMESPACE" "job/$CULL_JOB" -c census 2>/dev/null > "$out"
+  kubectl logs -n "$NAMESPACE" "job/$CULL_JOB" -c census 2>/dev/null > "$out" \
+    || err "${note}could not read the listing job's log" "kubectl logs -n $NAMESPACE job/$CULL_JOB -c census"
   kubectl delete job -n "$NAMESPACE" "$CULL_JOB" --wait=false >/dev/null 2>&1
   CULL_JOB=""
-  [ -s "$out" ] || err "the listing job printed nothing" "kubectl get jobs -n $NAMESPACE | grep census"
+  [ -s "$out" ] || err "${note}the listing job printed nothing" "kubectl get jobs -n $NAMESPACE | grep census"
 }
 
-# Reads a listing and prints the plan as tab-separated lines:
+# The two steps that read a listing, in one program so that both hold it to
+# the same checks: the one the kills are planned from and the one that says
+# whether they worked.
+#
+# `plan <listing>` prints the plan as tab-separated lines:
 #   meta  <world_taken_at> <source> <listed>
 #   area  <dimension> <x1> <z1> <x2> <z2> <types,csv> <count>
 #   skip  <dimension> <x1> <z1> <x2> <z2> <count> <reason>
@@ -698,87 +742,98 @@ json.dump(job, sys.stdout)
 # is its targets' chunks padded by two more: a ticking area covering only the
 # mob's own chunk loads it without its neighbours and the mob does not tick.
 # Nine chunks square is 81 of the 100 chunks one ticking area may hold.
-cull_plan() {
-  python3 - "$1" <<'PY'
+#
+# `remaining <before> <after> <plan>` prints how many of the planned targets
+# are still in the second listing, and where the first few are. A target is
+# the same record if nothing about its saved position moved, which is true
+# only of one that never ticked.
+cull_py() {
+  python3 - "$@" <<'PY'
 import collections, json, math, sys
 
 # A job log interleaves stderr, where the census says why it fell back to an
 # archive, so the listing is the lines that are JSON objects and not line 1.
-lines = [json.loads(l) for l in open(sys.argv[1], errors="replace") if l.startswith("{")]
-if not lines or "world_taken_at" not in lines[0]:
-    sys.exit("the listing has no header line")
-header, entities = lines[0], lines[1:]
-if header.get("entities") != len(entities):
-    sys.exit("the listing is cut short: header counts %s entities, %d arrived" % (header.get("entities"), len(entities)))
-print("meta", header["world_taken_at"], header.get("source", ""), len(entities), sep="\t")
+def read_listing(path):
+    lines = [json.loads(l) for l in open(path, errors="replace") if l.startswith("{")]
+    if not lines or "world_taken_at" not in lines[0]:
+        sys.exit("the listing has no header line")
+    header, entities = lines[0], lines[1:]
+    if header.get("entities") != len(entities):
+        sys.exit("the listing is cut short: header counts %s entities, %d arrived" % (header.get("entities"), len(entities)))
+    # A listing from last night's archive names mobs that have since moved or
+    # died: it loads chunks for nothing, and as a verdict it describes a world
+    # from before the kills.
+    if header.get("source") != "snapshot":
+        sys.exit("the listing came from %s, not a fresh snapshot" % header.get("source"))
+    return header, entities
 
-DIMENSIONS = {"overworld": "overworld", "nether": "nether", "end": "the_end"}
-CELL, PAD = 80, 32
-named = [e for e in entities if e.get("name")]
-for e in named:
-    print("named", e["identifier"], e["dimension"], round(e["x"]), round(e["y"]), round(e["z"]), e["name"], sep="\t")
+def plan(path):
+    header, entities = read_listing(path)
+    print("meta", header["world_taken_at"], header["source"], len(entities), sep="\t")
 
-cells = collections.defaultdict(list)
-for e in entities:
-    if e.get("name") or e["dimension"] not in DIMENSIONS:
-        continue
-    cells[(e["dimension"], math.floor(e["x"] / CELL), math.floor(e["z"] / CELL))].append(e)
+    DIMENSIONS = {"overworld": "overworld", "nether": "nether", "end": "the_end"}
+    CELL, PAD = 80, 32
+    # The listing is minutes old by the time a box is killed in, and a mob in
+    # chunks a player keeps loaded goes on walking. A name-tagged one this
+    # close to a box is treated as inside it.
+    MARGIN = 64
+    named = [e for e in entities if e.get("name")]
+    for e in named:
+        print("named", e["identifier"], e["dimension"], round(e["x"]), round(e["y"]), round(e["z"]), e["name"], sep="\t")
 
-chunk = lambda v: math.floor(v / 16) * 16
-for (dim, _, _), group in sorted(cells.items()):
-    x1 = chunk(min(e["x"] for e in group)) - PAD
-    z1 = chunk(min(e["z"] for e in group)) - PAD
-    x2 = chunk(max(e["x"] for e in group)) + 15 + PAD
-    z2 = chunk(max(e["z"] for e in group)) + 15 + PAD
-    types = sorted({e["identifier"] for e in group})
-    inside = [n for n in named if n["dimension"] == dim and n["identifier"] in types
-              and x1 <= n["x"] <= x2 + 1 and z1 <= n["z"] <= z2 + 1]
-    if inside:
-        print("skip", DIMENSIONS[dim], x1, z1, x2, z2, len(group),
-              "name-tagged %s '%s' is inside the kill box" % (inside[0]["identifier"], inside[0]["name"]), sep="\t")
-        continue
-    print("area", DIMENSIONS[dim], x1, z1, x2, z2, ",".join(types), len(group), sep="\t")
-PY
-}
+    cells = collections.defaultdict(list)
+    for e in entities:
+        if e.get("name") or e["dimension"] not in DIMENSIONS:
+            continue
+        cells[(e["dimension"], math.floor(e["x"] / CELL), math.floor(e["z"] / CELL))].append(e)
 
-# Prints how many of the planned targets are still in the second listing, and
-# where the first few are. A target is the same record if nothing about its
-# saved position moved, which is true only of one that never ticked.
-cull_remaining() {
-  python3 - "$1" "$2" "$3" <<'PY'
-import collections, json, sys
+    chunk = lambda v: math.floor(v / 16) * 16
+    for (dim, _, _), group in sorted(cells.items()):
+        x1 = chunk(min(e["x"] for e in group)) - PAD
+        z1 = chunk(min(e["z"] for e in group)) - PAD
+        x2 = chunk(max(e["x"] for e in group)) + 15 + PAD
+        z2 = chunk(max(e["z"] for e in group)) + 15 + PAD
+        types = sorted({e["identifier"] for e in group})
+        near = [n for n in named if n["dimension"] == dim and n["identifier"] in types
+                and x1 - MARGIN <= n["x"] <= x2 + 1 + MARGIN and z1 - MARGIN <= n["z"] <= z2 + 1 + MARGIN]
+        if near:
+            print("skip", DIMENSIONS[dim], x1, z1, x2, z2, len(group),
+                  "name-tagged %s '%s' is within %d blocks of the kill box" % (near[0]["identifier"], near[0]["name"], MARGIN), sep="\t")
+            continue
+        print("area", DIMENSIONS[dim], x1, z1, x2, z2, ",".join(types), len(group), sep="\t")
 
-def targets(path):
-    rows = [json.loads(l) for l in open(path, errors="replace") if l.startswith("{")][1:]
-    return collections.Counter((e["identifier"], e["dimension"], e["x"], e["y"], e["z"]) for e in rows if not e.get("name"))
+def remaining(before_path, after_path, plan_path):
+    def targets(path):
+        return collections.Counter((e["identifier"], e["dimension"], e["x"], e["y"], e["z"])
+                                   for e in read_listing(path)[1] if not e.get("name"))
 
-DIMENSIONS = {"overworld": "overworld", "nether": "nether", "the_end": "end"}
-boxes = []
-for line in open(sys.argv[3]):
-    f = line.rstrip("\n").split("\t")
-    if f[0] == "area":
-        boxes.append((DIMENSIONS[f[1]], int(f[2]), int(f[3]), int(f[4]), int(f[5])))
-planned = lambda k: any(d == k[1] and x1 <= k[2] <= x2 + 1 and z1 <= k[4] <= z2 + 1 for d, x1, z1, x2, z2 in boxes)
+    DIMENSIONS = {"overworld": "overworld", "nether": "nether", "the_end": "end"}
+    boxes = []
+    for line in open(plan_path):
+        f = line.rstrip("\n").split("\t")
+        if f[0] == "area":
+            boxes.append((DIMENSIONS[f[1]], int(f[2]), int(f[3]), int(f[4]), int(f[5])))
+    planned = lambda k: any(d == k[1] and x1 <= k[2] <= x2 + 1 and z1 <= k[4] <= z2 + 1 for d, x1, z1, x2, z2 in boxes)
 
-before, after = targets(sys.argv[1]), targets(sys.argv[2])
-left = sorted(k for k in (before & after).elements() if planned(k))
-print("remaining: %d" % len(left))
-print("present_now: %d" % sum(after.values()))
-for k in left[:10]:
-    print("  - %s %s x=%d y=%d z=%d" % (k[0], k[1], round(k[2]), round(k[3]), round(k[4])))
+    before, after = targets(before_path), targets(after_path)
+    left = sorted(k for k in (before & after).elements() if planned(k))
+    print("remaining: %d" % len(left))
+    print("present_now: %d" % sum(after.values()))
+    for k in left[:10]:
+        print("  - %s %s x=%d y=%d z=%d" % (k[0], k[1], round(k[2]), round(k[3]), round(k[4])))
+
+{"plan": plan, "remaining": remaining}[sys.argv[1]](*sys.argv[2:])
 PY
 }
 
 cmd_cull() {
-  local types="" dry="" confirm="" announce="yes" text=""
+  local types="" dry="" confirm="" announce="yes"
   while [ $# -gt 0 ]; do
     case "$1" in
       --types)       [ $# -ge 2 ] || usage_err "--types needs a list" "$SELF cull --types zombie,pillager --dry-run"; types="$2"; shift 2 ;;
-      --types=*)     types="${1#--types=}"; shift ;;
       --dry-run)     dry=1; shift ;;
       --confirm)     confirm=1; shift ;;
       --no-announce) announce=""; shift ;;
-      --announce)    [ $# -ge 2 ] || usage_err "--announce needs the text" "$SELF cull --help"; text="$2"; shift 2 ;;
       -h|--help|help) cull_usage; return 0 ;;
       *) usage_err "unknown cull option: $1" "$SELF cull --help" ;;
     esac
@@ -791,6 +846,10 @@ cmd_cull() {
   [ -n "$dry" ] && [ -n "$confirm" ] && usage_err "--dry-run and --confirm are opposites" "$SELF cull --help"
   [ -n "$dry" ] || [ -n "$confirm" ] \
     || usage_err "cull kills mobs; pass --dry-run to see the plan or --confirm to run it" "$SELF cull --types $types --dry-run"
+  # Zero never advances through the regions, and more than the server's ten
+  # can never be free.
+  [[ "$CULL_BATCH" =~ ^([1-9]|10)$ ]] \
+    || usage_err "MC_CULL_BATCH must be a number from 1 to 10, not '$CULL_BATCH'" "unset it for the default of 4"
   command -v python3 >/dev/null 2>&1 || err "python3 is required for cull" "install python3, then re-run"
 
   CULL_POD="$(server_pod)" || exit 1
@@ -803,8 +862,9 @@ cmd_cull() {
 
   cull_listing "$CULL_WORK/before.ndjson" "$types"
   local plan_err
-  if ! plan_err="$(cull_plan "$CULL_WORK/before.ndjson" 2>&1 >"$CULL_WORK/plan.tsv")"; then
-    err "could not read the listing: $(tail -1 <<<"$plan_err")" "$SELF cull --types $types --dry-run"
+  if ! plan_err="$(cull_py plan "$CULL_WORK/before.ndjson" 2>&1 >"$CULL_WORK/plan.tsv")"; then
+    err "could not read the listing: $(tail -1 <<<"$plan_err")" \
+      "the server may have refused the save hold or not been ready: $SELF status, then re-run"
   fi
 
   local taken source listed areas targets skipped named
@@ -828,11 +888,6 @@ cmd_cull() {
   echo "skipped_targets: $skipped"
   awk -F'\t' '$1=="skip"{printf "  - %s x=%s..%s z=%s..%s: %d targets, %s\n", $2, $3, $5, $4, $6, $7, $8}' "$CULL_WORK/plan.tsv"
 
-  # A listing from last night's archive names mobs that have since moved or
-  # died, and loads chunks for nothing.
-  [ "$source" = "snapshot" ] || err "the listing came from $source, not a fresh snapshot" \
-    "the server refused the save hold or was not ready: $SELF status, then re-run"
-
   if [ -n "$dry" ]; then
     echo "dry_run: yes"
     echo
@@ -855,10 +910,10 @@ cmd_cull() {
     "$SELF run tickingarea list all-dimensions, or set MC_CULL_BATCH lower"
 
   if [ -n "$announce" ]; then
-    [ -n "$text" ] || text="Clearing ${types//,/, } world-wide to reduce server lag. Drops near you despawn in 5 minutes; drops elsewhere stay until someone visits. Name-tagged mobs are not affected."
+    local text="Clearing ${types//,/, } world-wide to reduce server lag. Drops near you despawn in 5 minutes; drops elsewhere stay until someone visits. Name-tagged mobs are not affected."
     # In a subshell: announce exits on its own outcomes, and only a rejected
     # payload is a reason to stop here.
-    ( cmd_announce "$text" ) | sed 's/^/  /' | { echo "announce:"; grep -E 'delivered|reason' || true; }
+    ( cmd_announce "$text" ) | sed 's/^/  /' | { echo "announce:"; grep -a -E 'delivered|reason' || true; }
     [ "${PIPESTATUS[0]}" -eq 0 ] || err "the announcement was rejected; nothing was killed" "$SELF announce <text> to see why, or pass --no-announce"
   fi
 
@@ -900,13 +955,13 @@ cmd_cull() {
   # loads and prints nothing, so this is a floor, not the result.
   local killed
   killed="$(kubectl logs -n "$NAMESPACE" "$CULL_POD" --since-time="$started" 2>/dev/null | tr -d '\000' \
-    | grep -a -oE 'INFO\] Killed .*' | sed 's/^INFO\] Killed //' | tr ',' '\n' | grep -c . || true)"
+    | grep -a -oE 'INFO\] Killed .*' | sed 's/^INFO\] Killed //' | tr ',' '\n' | grep -a -c . || true)"
   echo "killed_lines: ${killed:-0}"
 
-  cull_listing "$CULL_WORK/after.ndjson" "$types"
+  cull_listing "$CULL_WORK/after.ndjson" "$types" verdict
   local verdict
-  verdict="$(cull_remaining "$CULL_WORK/before.ndjson" "$CULL_WORK/after.ndjson" "$CULL_WORK/plan.tsv")" \
-    || err "could not compare the listings" "$SELF cull --types $types --dry-run"
+  verdict="$(cull_py remaining "$CULL_WORK/before.ndjson" "$CULL_WORK/after.ndjson" "$CULL_WORK/plan.tsv" 2>&1)" \
+    || err "the kills were done but could not be verified: $(tail -1 <<<"$verdict")" "$SELF cull --types $types --dry-run"
   echo "$verdict"
   echo "ticking_areas_left: 0"
   if ! grep -q '^remaining: 0$' <<<"$verdict"; then
