@@ -1931,7 +1931,14 @@ map:
     # z and a control to follow it, and is the first that can read biomes,
     # answer a search and keep trails: see biomes and trails below, which
     # are what switch those on.
-    tag: "1.10.0"
+    #
+    # 1.11.0 serves the game's own names for mobs, beds, containers and
+    # structures, and a picture for each bed, chest, barrel, shulker box,
+    # waypoint and structure, fetched from the same pinned copy of Mojang's
+    # samples as the mob icons and added to the volume that already holds
+    # them. Markers gain a bed's and shulker box's colour, trapped chests
+    # and whether a named mob is a baby. The page does not use them yet.
+    tag: "1.11.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
