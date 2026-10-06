@@ -84,14 +84,16 @@ cmd_status() {
 }
 
 cmd_players() {
-  local pod names count
+  local pod names count console
   pod="$(server_pod)" || exit 1
   send "$pod" list
   sleep 2
-  count="$(console_recent "$pod" \
-    | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
-  names="$(console_recent "$pod" \
-    | grep -a -A1 'players online' | tail -1 | tr -d '\r')"
+  # Read once: two reads are two windows, and a count from one beside names
+  # from the other can disagree. Null bytes go because a variable cannot hold
+  # them.
+  console="$(console_recent "$pod" | tr -d '\000')"
+  count="$(grep -a -oE 'There are [0-9]+/[0-9]+ players online' <<<"$console" | tail -1 | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
+  names="$(grep -a -A1 'players online' <<<"$console" | tail -1 | tr -d '\r')"
 
   # An empty result is stated rather than printed as nothing, so a caller can
   # tell "nobody online" apart from "the command did not work".
