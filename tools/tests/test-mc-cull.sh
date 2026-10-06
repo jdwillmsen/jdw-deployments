@@ -289,6 +289,10 @@ PY
 run bash "$mc" cull --types enderman,zombie --confirm --no-announce
 [ "$rc" -eq 1 ] || fail "a run that left a target must exit 1, got $rc: $out"
 grep -q '^remaining: 1$' <<<"$out" || fail "the surviving target must be counted: $out"
+# Counted separately from the exit code: every mob of a planned type inside
+# a planned box now. Here that is the survivor alone; the zombie that
+# spawned at x=55 stands outside the box around x=10, which ends at x=47.
+grep -q '^in_kill_boxes_now: 1$' <<<"$out" || fail "mobs of a planned type inside a planned box must be reported: $out"
 grep -q 'zombie overworld x=700' <<<"$out" || fail "the surviving target must be located: $out"
 [ "$(areas_left)" -eq 0 ] || fail "ticking areas were left after an incomplete run"
 echo "  ok: a surviving target is reported with its position and a non-zero exit"

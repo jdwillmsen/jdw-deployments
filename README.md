@@ -506,6 +506,13 @@ Things the console does not tell you, each learned on the live server:
   its ticking area is removed, and a snapshot taken at once still lists the
   mobs that were just killed. The second listing waits 30 seconds first
   (`MC_CULL_SETTLE_WAIT`).
+- `remaining` counts a target only if its saved position did not move, which
+  is true of one that never ticked. A target in chunks a player keeps loaded
+  can survive, walk and be saved elsewhere, and cannot then be told from a mob
+  that spawned since. `in_kill_boxes_now` counts every mob of a planned type
+  inside a planned box in the second listing, survivors and newcomers alike;
+  it does not change the exit code, and a large number away from any base is
+  the sign to run again.
 - Drops land in chunks that unload seconds later. They stay until someone
   visits, which is why the announcement promises a five-minute despawn only
   near players.

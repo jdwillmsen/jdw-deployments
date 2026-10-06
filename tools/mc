@@ -846,6 +846,13 @@ def remaining(before_path, after_path, plan_path):
     before, after = targets(before_path), targets(after_path)
     left = sorted(k for k in (before & after).elements() if planned(k))
     print("remaining: %d" % len(left))
+    # A target whose chunk a player loaded can outlive both kills, walk, and
+    # be saved somewhere else: it is no longer the same record, so it is not
+    # in the count above. Nor can it be told from a mob that spawned in the
+    # box since, which near a base is most of them. So these are reported
+    # and left out of the exit code.
+    inside = [k for k in after.elements() if planned(k)]
+    print("in_kill_boxes_now: %d" % len(inside))
     print("present_now: %d" % sum(after.values()))
     for k in left[:10]:
         print("  - %s %s x=%d y=%d z=%d" % (k[0], k[1], round(k[2]), round(k[3]), round(k[4])))
