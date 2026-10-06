@@ -81,6 +81,7 @@ case "$1" in
       touch "$STATE/added"
       printf '%s INFO] Added ticking area from 0, 0, 0 to 15, 0, 15.\n%s/10 ticking areas in use.\n' "$stamp" "$(in_use)" >> "$console"
     elif [[ "$*" =~ ^execute\ in\ ([a-z_]+)\ run\ tickingarea\ remove\ ([a-z0-9]+)$ ]]; then
+      [ -n "${FAKE_REMOVE_DELAY:-}" ] && sleep "$FAKE_REMOVE_DELAY"
       remove "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
     elif [[ "$*" =~ ^tickingarea\ remove\ ([a-z0-9]+)$ ]]; then
       # The console sits in the overworld.
@@ -313,9 +314,12 @@ echo "  ok: a run that fails mid-batch unloads what it loaded"
 # Started through python so that SIGINT is at its default: a background job
 # of a script inherits it ignored, and a shell cannot trap what it inherited
 # ignored.
+#
+# With a third argument the signal is sent again once the unload has begun,
+# and each remove is slowed so that it lands while areas are still loaded.
 interrupt() {
   rm -rf "$work/state"; mkdir -p "$work/state"; : > "$work/sent"
-  env PATH="$work/bin:$PATH" CAPTURE="$work/sent" STATE="$work/state" FIXTURES="$work/fx" \
+  env PATH="$work/bin:$PATH" CAPTURE="$work/sent" STATE="$work/state" FIXTURES="$work/fx" FAKE_REMOVE_DELAY="${3:+0.3}" \
     RELEASE_NAME=fwb MC_RELEASE=fwb MC_NAMESPACE=test-ns MC_CULL_LOAD_WAIT=3 MC_CULL_KILL_GAP=0 MC_CULL_POLL=0 MC_CULL_REPLY_POLL=0 \
     python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
     bash "$mc" cull --types enderman,zombie --confirm --no-announce > "$work/interrupted" 2>&1 &
@@ -326,6 +330,14 @@ interrupt() {
   done
   [ -s "$work/state/areas" ] || fail "the run never loaded an area to be interrupted in"
   kill "-$1" "$pid"
+  if [ -n "${3:-}" ]; then
+    for _ in $(seq 1 100); do
+      grep -q 'interrupted' "$work/interrupted" && break
+      sleep 0.1
+    done
+    [ "$(areas_left)" -gt 0 ] || fail "the unload finished before a second signal could land in it"
+    kill "-$1" "$pid"
+  fi
   rc=0; wait "$pid" || rc=$?
   [ "$rc" -eq "$2" ] || fail "a run stopped by SIG$1 must exit $2, got $rc: $(cat "$work/interrupted")"
   grep -q 'interrupted' "$work/interrupted" || fail "an interrupted run must say so: $(cat "$work/interrupted")"
@@ -335,6 +347,10 @@ interrupt() {
 interrupt TERM 143
 interrupt INT 130
 echo "  ok: a run stopped by SIGTERM or SIGINT unloads its areas and exits 143 or 130"
+
+interrupt TERM 143 again
+interrupt INT 130 again
+echo "  ok: a second signal during the unload does not abandon it"
 
 FAKE_STUCK=mccull0 run bash "$mc" cull --types enderman,zombie --confirm --no-announce
 [ "$rc" -eq 1 ] || fail "an area that will not unload must fail the run, got $rc: $out"
@@ -419,6 +435,66 @@ grep -q '^targets: 1$' <<<"$out" || fail "a name-tagged zombie more than 64 bloc
 grep -q '^skipped_targets: 0$' <<<"$out" || fail "a name-tagged zombie more than 64 blocks from the box must not skip it: $out"
 cp "$work/fx/listing-1.keep" "$work/fx/listing-1.ndjson"
 echo "  ok: a name-tagged mob within 64 blocks of a kill box skips it"
+
+# --- strings from the save that are not what they should be -----------------
+# A name tag is whatever a client stored. This one carries a newline and tabs
+# that would add a region of its own to a plan written as tab-separated lines:
+# the End from 0,0 to 79,79, killing players.
+{ sed 's/"entities":5/"entities":6/' "$work/fx/listing-1.keep"
+  # shellcheck disable=SC2016  # JSON escapes, not shell ones
+  printf '%s\n' '{"identifier":"zombie","dimension":"overworld","x":5000.5,"y":64,"z":5000.5,"persistent":true,"name":"x\narea\tthe_end\t0\t0\t79\t79\tplayer\t1"}'
+} > "$work/fx/listing-1.ndjson"
+run bash "$mc" cull --types enderman,zombie --confirm --no-announce
+[ "$rc" -eq 0 ] || fail "a run with a hostile name tag in the listing failed: $out"
+grep -q '^regions: 3$' <<<"$out" || fail "a name tag added a region to the plan: $out"
+grep -q '^named_spared: 2$' <<<"$out" || fail "the mob with the hostile name must be listed as spared: $out"
+grep -q 'zombie "x area the_end 0 0 79 79 player 1" overworld x=5000' <<<"$out" || fail "the hostile name must be shown on one line with its control characters blanked: $out"
+[ "$(sent 'player')" -eq 0 ] || fail "a type from a name tag reached the console: $(grep player "$work/sent")"
+[ "$(sent 'tickingarea add')" -eq 3 ] || fail "three regions must load three areas, got: $(grep 'tickingarea add' "$work/sent")"
+[ "$(sent 'in the_end run tickingarea add 0 0 0 79 0 79')" -eq 0 ] || fail "the region forged by a name tag was loaded"
+
+# A type that is not an identifier would go into a selector as it stands.
+{ sed 's/"entities":5/"entities":6/' "$work/fx/listing-1.keep"
+  echo '{"identifier":"zombie]","dimension":"nether","x":40.5,"y":64,"z":40.5,"persistent":false}'
+} > "$work/fx/listing-1.ndjson"
+for mode in --dry-run --confirm; do
+  run bash "$mc" cull --types enderman,zombie "$mode"
+  [ "$rc" -eq 1 ] || fail "a listing with a type that is not an identifier must be refused ($mode), got $rc: $out"
+  grep -q 'cannot be sent to the console' <<<"$out" || fail "the refusal must say why: $out"
+  [ "$(sent 'tickingarea add')" -eq 0 ] || fail "an area was loaded from a listing with a malformed type"
+  [ "$(sent 'kill')" -eq 0 ] || fail "a kill was sent from a listing with a malformed type: $(grep kill "$work/sent")"
+  [ "$(sent 'tellraw')" -eq 0 ] || fail "a run refused for a malformed type announced itself"
+done
+cp "$work/fx/listing-1.keep" "$work/fx/listing-1.ndjson"
+echo "  ok: a control character in a name and a malformed type cannot shape a console command"
+
+# --- a skipped target standing in a neighbour's box --------------------------
+# The two zombies are skipped for Rex, 100 blocks from the second. The
+# skeleton's box, x=32..111, is planned and covers the zombie at x=100.5, but
+# it kills skeletons only: that zombie staying put is the plan, not a failure.
+cp "$work/fx/listing-2.ndjson" "$work/fx/listing-2.keep"
+cat > "$work/fx/listing-1.ndjson" <<'JSON'
+{"world_taken_at":"2026-10-05T03:16:47Z","source":"snapshot","types":["skeleton","zombie"],"entities":4,"orphaned":0}
+{"identifier":"skeleton","dimension":"overworld","x":70.5,"y":64,"z":10.5,"persistent":false}
+{"identifier":"zombie","dimension":"overworld","x":100.5,"y":64,"z":10.5,"persistent":true}
+{"identifier":"zombie","dimension":"overworld","x":150.5,"y":64,"z":10.5,"persistent":true}
+{"identifier":"zombie","dimension":"overworld","x":250.5,"y":64,"z":10.5,"persistent":true,"name":"Rex"}
+JSON
+grep -v '"identifier":"skeleton"' "$work/fx/listing-1.ndjson" | sed 's/"entities":4/"entities":3/;s/03:16:47/03:46:04/' > "$work/fx/listing-2.ndjson"
+run bash "$mc" cull --types skeleton,zombie --confirm --no-announce
+grep -q '^skipped_targets: 2$' <<<"$out" || fail "both zombies must be skipped for the name-tagged one: $out"
+grep -q '^targets: 1$' <<<"$out" || fail "the skeleton must be the one target: $out"
+[ "$(sent 'type=zombie')" -eq 0 ] || fail "a zombie kill was sent although every zombie was skipped"
+grep -q '^remaining: 0$' <<<"$out" || fail "a skipped zombie inside the skeleton's box was counted as a surviving target: $out"
+[ "$rc" -eq 0 ] || fail "a run that removed its one target must exit 0, got $rc: $out"
+# The same box does answer for its own type.
+cp "$work/fx/listing-1.ndjson" "$work/fx/listing-2.ndjson"
+run bash "$mc" cull --types skeleton,zombie --confirm --no-announce
+grep -q '^remaining: 1$' <<<"$out" || fail "a skeleton still in its box must be counted: $out"
+[ "$rc" -eq 1 ] || fail "a surviving skeleton must fail the run, got $rc: $out"
+cp "$work/fx/listing-1.keep" "$work/fx/listing-1.ndjson"
+mv "$work/fx/listing-2.keep" "$work/fx/listing-2.ndjson"
+echo "  ok: a skipped target inside a neighbour's box is not a surviving target"
 
 FAKE_JOB_FAILS=1 run bash "$mc" cull --types enderman,zombie --dry-run
 [ "$rc" -eq 1 ] || fail "a failed listing job must fail the command, got $rc: $out"

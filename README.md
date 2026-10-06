@@ -486,7 +486,8 @@ What it will not do:
   the run, saying the kills were done but could not be verified.
 - **Leave chunks force-loaded.** Every exit path removes its ticking areas and
   then asks the server which remain; one that will not unload fails the run
-  and is named.
+  and is named. Ctrl-C is one of those paths, and a second Ctrl-C is ignored
+  while the areas unload.
 
 Things the console does not tell you, each learned on the live server:
 
