@@ -127,6 +127,10 @@ out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns FAKE
        FAKE_LOGS="showcoordinates = true" bash "$mc" run gamerule showcoordinates)"
 grep -q "showcoordinates = true" <<<"$out" || fail "run must show the server's reply, not five map lines: $out"
 grep -q "MCMAP1" <<<"$out" && fail "run printed the map's own lines as the command's output: $out"
+
+out="$(env PATH="$work/bin:$PATH" CAPTURE="$work/sent" MC_NAMESPACE=test-ns FAKE_NOISE=100 \
+       FAKE_LOGS="There are 3/10 players online:" bash "$mc" say hello)"
+grep -q "recipients: 3/10" <<<"$out" || fail "say must count its recipients through the map's lines: $out"
 echo "  ok: replies are read through a console the map is writing to"
 
 # --- errors ---------------------------------------------------------------
