@@ -643,7 +643,7 @@ backup:
   # protocol through exec and reads the manifest back off the pod log — if a
   # skewed client ever misbehaves it does so on the one path that protects the
   # world, and it does so silently.
-  image: alpine/k8s:1.37.0
+  image: alpine/k8s:1.37.1
   # Archives live on the file tier, not the block class the world uses.
   storageClass: truenas-nfs
   size: 20Gi
@@ -688,7 +688,7 @@ versionCheck:
   # below, without paying an unconditional restart every run.
   enabled: true
   schedule: "0 * * * *"
-  image: alpine/k8s:1.37.0
+  image: alpine/k8s:1.37.1
   # Generous against the CI smoke test's confirmed ~6s cold-pull-to-ready for
   # this same image, plus two 60s poll loops (candidate Running, then
   # mc-monitor reporting) the script itself allows, plus the 600s notice
@@ -827,7 +827,7 @@ deployAnnounce:
 
   # Same image as the other in-cluster actors: it needs kubectl and python3,
   # both of which this one already carries.
-  image: alpine/k8s:1.37.0
+  image: alpine/k8s:1.37.1
 
 volumeRecovery:
   # The server's volume has twice remounted read-only underneath a running pod
@@ -851,7 +851,7 @@ volumeRecovery:
   # Five minutes bounds the outage without polling hard. The last occurrence
   # ran thirteen minutes and was noticed only by chance.
   schedule: "*/5 * * * *"
-  image: alpine/k8s:1.37.0
+  image: alpine/k8s:1.37.1
 
   # Deletion is gated on this exact line rather than on "not ready", so a pod
   # failing for a reason deletion cannot fix is left in its crash loop where it
@@ -895,7 +895,7 @@ restore:
   # Same image family as the other two jobs in this chart, and the same
   # kubectl-skew reasoning the backup CronJob documents -- this job also
   # drives the server StatefulSet through the API.
-  image: alpine/k8s:1.37.0
+  image: alpine/k8s:1.37.1
 
   # Refuses to overwrite an existing level directory on the scratch PVC
   # unless a human sets this for a second attempt. A restore that silently
@@ -1777,7 +1777,7 @@ census:
   # Drives the save protocol through kubectl exec, exactly as the backup job
   # does, so it tracks the cluster's minor version for the same reason: a
   # skewed client misbehaves on the one path that touches a live world.
-  image: alpine/k8s:1.37.0
+  image: alpine/k8s:1.37.1
 
   # The hold poll is 30 iterations of roughly 5s, and a scan of the 570MB
   # production world measured 270ms, so a run that reaches this is wedged
@@ -1891,7 +1891,7 @@ scheduledRestart:
 
   # Same image as the other in-cluster actors. It needs kubectl and python3,
   # both of which this one already carries.
-  image: alpine/k8s:1.37.0
+  image: alpine/k8s:1.37.1
 
   # What a player experiences, so it is the one number here worth arguing
   # about. Two minutes matches the deploy announcement's lead: long enough to
