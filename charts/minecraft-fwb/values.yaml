@@ -963,7 +963,11 @@ bot:
     # world, and closes its session and stops reconnecting while parked. With
     # it unset the bot behaves exactly as before. 1.2.1 is the same code, the
     # first build from the gameops monorepo.
-    tag: "1.2.1"
+    #
+    # 1.2.2 closes a login it gives up on, the same fix as the agent's
+    # 0.27.1: the bot shares the fault because it carries a copy of the
+    # agent's client code.
+    tag: "1.2.2"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -1073,8 +1077,8 @@ bot2:
     # until the farm says the Go one works.
     #
     # 1.2.1 (the presence release, first built from gameops), the same as bot
-    # above and for the same reason.
-    tag: "1.2.1"
+    # above and for the same reason. 1.2.2 likewise.
+    tag: "1.2.2"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
@@ -1455,7 +1459,13 @@ agent:
     #
     # 0.27.0 serves a player's waypoints to the map and reports each online
     # player's head to it, both over the token the two already share.
-    tag: "0.27.0"
+    #
+    # 0.27.1 closes a login it gives up on. Before it, the connection was
+    # left open, the server finished the login by itself and held the
+    # gamertag for minutes, and every retry was refused: nine minutes out of
+    # the world after a server restart. A login the server has accepted now
+    # also gets 90 seconds for the world to spawn it, not what is left of 30.
+    tag: "0.27.1"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
