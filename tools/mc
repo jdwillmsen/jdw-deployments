@@ -548,6 +548,8 @@ cannot see a job that starts during the listing's own two minutes.
 Name-tagged mobs are never targeted: a group of targets with a name-tagged
 mob of a targeted type in its kill box, or within 64 blocks of it, is skipped
 and reported. That is decided from the snapshot.
+Ctrl-C stops a run and unloads its ticking areas; a second Ctrl-C is ignored
+while they unload.
 
 exit codes: 0 done, 1 could not be done or targets remain, 2 usage
 EOF
@@ -556,7 +558,7 @@ EOF
 # One console line, sent as a single argument: a selector's brackets and
 # commas are not something to hand a second shell.
 cull_send() {
-  kubectl exec -n "$NAMESPACE" "$CULL_POD" -- send-command "$1" >/dev/null 2>&1
+  kubectl exec --request-timeout=15s -n "$NAMESPACE" "$CULL_POD" -- send-command "$1" >/dev/null 2>&1
 }
 
 # Every ticking area this command could have left, in any dimension. Removal
@@ -585,7 +587,7 @@ cull_area_listing() {
   cull_send "tickingarea remove $probe" || return 1
   cull_send "tickingarea list all-dimensions" || return 1
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    out="$(kubectl logs -n "$NAMESPACE" "$CULL_POD" --since=120s 2>/dev/null | tr -d '\000')"
+    out="$(kubectl logs --request-timeout=15s -n "$NAMESPACE" "$CULL_POD" --since=120s 2>/dev/null | tr -d '\000')"
     reply="$(awk -v probe="$probe" '
       index($0, probe) { seen = 1; next }
       !seen { next }
@@ -626,9 +628,14 @@ cull_areas_in_use() {
 # $1 is set when a signal brought it here. $? is then the status of whatever
 # was running, usually a sleep that ended cleanly, and an interrupted cull
 # that exited 0 would read as one that finished.
+#
+# A second signal is ignored from here on: it would otherwise end the script
+# with areas still loaded. The calls below are each bounded by a request
+# timeout instead, since nothing short of SIGKILL can now cut one short.
 cull_cleanup() {
   local rc=$?
-  trap - EXIT INT TERM
+  trap - EXIT
+  trap '' INT TERM
   if [ -n "${1:-}" ]; then
     rc="$1"
     echo "error: interrupted; unloading ticking areas"
@@ -646,7 +653,7 @@ cull_cleanup() {
       rc=1
     fi
   fi
-  [ -n "${CULL_JOB:-}" ] && kubectl delete job -n "$NAMESPACE" "$CULL_JOB" --wait=false >/dev/null 2>&1
+  [ -n "${CULL_JOB:-}" ] && kubectl delete job --request-timeout=15s -n "$NAMESPACE" "$CULL_JOB" --wait=false >/dev/null 2>&1
   [ -n "${CULL_WORK:-}" ] && rm -rf "$CULL_WORK"
   exit "$rc"
 }
@@ -749,12 +756,18 @@ json.dump(job, sys.stdout)
 # only of one that never ticked.
 cull_py() {
   python3 - "$@" <<'PY'
-import collections, json, math, sys
+import collections, json, math, re, sys
 
 # A job log interleaves stderr, where the census says why it fell back to an
 # archive, so the listing is the lines that are JSON objects and not line 1.
+#
+# Every string is stripped of control characters as it is read. A name tag is
+# whatever a client stored, and the plan is lines of tab-separated fields: a
+# tab or newline in one would write fields and lines of its own.
 def read_listing(path):
-    lines = [json.loads(l) for l in open(path, errors="replace") if l.startswith("{")]
+    text = lambda v: re.sub(r"[\x00-\x1f\x7f]", " ", v) if isinstance(v, str) else v
+    lines = [{k: text(v) for k, v in json.loads(l).items()}
+             for l in open(path, errors="replace") if l.startswith("{")]
     if not lines or "world_taken_at" not in lines[0]:
         sys.exit("the listing has no header line")
     header, entities = lines[0], lines[1:]
@@ -812,8 +825,11 @@ def remaining(before_path, after_path, plan_path):
     for line in open(plan_path):
         f = line.rstrip("\n").split("\t")
         if f[0] == "area":
-            boxes.append((DIMENSIONS[f[1]], int(f[2]), int(f[3]), int(f[4]), int(f[5])))
-    planned = lambda k: any(d == k[1] and x1 <= k[2] <= x2 + 1 and z1 <= k[4] <= z2 + 1 for d, x1, z1, x2, z2 in boxes)
+            boxes.append((DIMENSIONS[f[1]], int(f[2]), int(f[3]), int(f[4]), int(f[5]), f[6].split(",")))
+    # Boxes overlap their neighbours' cells, and a box kills only its own
+    # types: a skipped group's mob standing in the next box was never a target.
+    planned = lambda k: any(d == k[1] and k[0] in kinds and x1 <= k[2] <= x2 + 1 and z1 <= k[4] <= z2 + 1
+                            for d, x1, z1, x2, z2, kinds in boxes)
 
     before, after = targets(before_path), targets(after_path)
     left = sorted(k for k in (before & after).elements() if planned(k))
@@ -867,11 +883,23 @@ cmd_cull() {
       "the server may have refused the save hold or not been ready: $SELF status, then re-run"
   fi
 
+  # A region's fields go into console commands and shell arithmetic, and
+  # they were read out of the save. One that is not plainly a dimension, a
+  # whole number or an identifier stops the run here.
+  local dim x1 z1 x2 z2 kinds count rest whole='^-?[0-9]+$'
+  awk -F'\t' '$1=="area"' "$CULL_WORK/plan.tsv" > "$CULL_WORK/areas.tsv"
+  while IFS=$'\t' read -r _ dim x1 z1 x2 z2 kinds count rest; do
+    [[ "$dim" =~ ^(overworld|nether|the_end)$ && "$x1" =~ $whole && "$z1" =~ $whole && "$x2" =~ $whole && "$z2" =~ $whole \
+      && "$kinds" =~ ^[a-z0-9_]+(,[a-z0-9_]+)*$ && "$count" =~ ^[0-9]+$ && -z "$rest" ]] \
+      || err "the listing gave a region that cannot be sent to the console; nothing was sent" \
+        "an entity's type or position in the listing is not a plain value: check the census image"
+  done < "$CULL_WORK/areas.tsv"
+
   local taken source listed areas targets skipped named
   taken="$(awk -F'\t' '$1=="meta"{print $2}' "$CULL_WORK/plan.tsv")"
   source="$(awk -F'\t' '$1=="meta"{print $3}' "$CULL_WORK/plan.tsv")"
   listed="$(awk -F'\t' '$1=="meta"{print $4}' "$CULL_WORK/plan.tsv")"
-  areas="$(awk -F'\t' '$1=="area"' "$CULL_WORK/plan.tsv" | wc -l | tr -d ' ')"
+  areas="$(wc -l < "$CULL_WORK/areas.tsv" | tr -d ' ')"
   targets="$(awk -F'\t' '$1=="area"{n+=$8} END{print n+0}' "$CULL_WORK/plan.tsv")"
   skipped="$(awk -F'\t' '$1=="skip"{n+=$7} END{print n+0}' "$CULL_WORK/plan.tsv")"
   named="$(awk -F'\t' '$1=="named"' "$CULL_WORK/plan.tsv" | wc -l | tr -d ' ')"
@@ -917,9 +945,8 @@ cmd_cull() {
     [ "${PIPESTATUS[0]}" -eq 0 ] || err "the announcement was rejected; nothing was killed" "$SELF announce <text> to see why, or pass --no-announce"
   fi
 
-  local started dim x1 z1 x2 z2 kinds count kind i n=0 batch_file="$CULL_WORK/batch.tsv"
+  local started kind i n=0 batch_file="$CULL_WORK/batch.tsv"
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  awk -F'\t' '$1=="area"' "$CULL_WORK/plan.tsv" > "$CULL_WORK/areas.tsv"
   while [ "$n" -lt "$areas" ]; do
     sed -n "$((n + 1)),$((n + CULL_BATCH))p" "$CULL_WORK/areas.tsv" > "$batch_file"
     CULL_AREAS_HELD=1
