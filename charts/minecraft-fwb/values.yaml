@@ -1951,7 +1951,13 @@ map:
     # structure, and named mobs drawn with their icon and a label, listed
     # in the panel and marked where they are babies. Search finds a thing
     # by the name the page gives it.
-    tag: "1.13.0"
+    #
+    # 1.14.0 can predict ocean monuments, pillager outposts and villages as
+    # well as fortresses, each kind only while its sites agree with what
+    # the world has recorded, and marks a site in terrain not generated yet
+    # as a candidate. Like the fortresses, none is predicted until the
+    # Secret that map.structures.seedSecret.name names exists.
+    tag: "1.14.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
