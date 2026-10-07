@@ -386,6 +386,19 @@ for name in ("BIOMES_ENABLED", "TRAILS_ENABLED"):
 if switches.get("TRAILS_ENABLED") == "true" and live.get("LIVE_ENABLED") != "true":
     bad.append("TRAILS_ENABLED is true while LIVE_ENABLED is not")
 
+# The map refuses to start on a trail limit outside what it accepts, so one
+# that is wrong here is a map that never comes up.
+import re
+env = {e["name"]: e.get("value") for e in map_container["env"]}
+# ASCII digits only: the map parses these in Go, which takes no others.
+age = re.fullmatch(r"([0-9]+)(m|h)", env.get("TRAILS_MAX_AGE") or "")
+minutes = int(age.group(1)) * (60 if age.group(2) == "h" else 1) if age else 0
+if not 1 <= minutes <= 168 * 60:
+    bad.append(f"TRAILS_MAX_AGE is {env.get('TRAILS_MAX_AGE')!r}; the map accepts 1m to 168h, in whole minutes or hours")
+points = env.get("TRAILS_MAX_POINTS") or ""
+if not (re.fullmatch(r"[0-9]+", points) and 10 <= int(points) <= 50000):
+    bad.append(f"TRAILS_MAX_POINTS is {points!r}; the map accepts 10 to 50000")
+
 for line in bad:
     print(line)
 sys.exit(1 if bad else 0)

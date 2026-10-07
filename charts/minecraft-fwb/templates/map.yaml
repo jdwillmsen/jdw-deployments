@@ -111,6 +111,10 @@ spec:
               value: {{ .Values.map.biomes.enabled | quote }}
             - name: TRAILS_ENABLED
               value: {{ and .Values.map.live.enabled .Values.map.trails.enabled | quote }}
+            - name: TRAILS_MAX_AGE
+              value: {{ .Values.map.trails.maxAge | quote }}
+            - name: TRAILS_MAX_POINTS
+              value: {{ .Values.map.trails.maxPoints | quote }}
             {{- with .Values.map.structures.seedSecret }}
             {{- if .name }}
             # optional: a Secret that is not there leaves the variable unset

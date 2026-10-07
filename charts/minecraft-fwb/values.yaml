@@ -1957,7 +1957,18 @@ map:
     # the world has recorded, and marks a site in terrain not generated yet
     # as a candidate. Like the fortresses, none is predicted until the
     # Secret that map.structures.seedSecret.name names exists.
-    tag: "1.14.0"
+    #
+    # 1.15.0 thins a trail's older points instead of dropping them, which is
+    # what makes the week under trails below affordable.
+    #
+    # 1.16.0 is a pass over the page after its first real use: the search
+    # box finds online players, a named mob's marker opens the card and can
+    # be followed, the live rows break down by type and can be filtered,
+    # the refresh interval and trail window take a typed length, a
+    # structure opens a sheet of details, the grid can focus a chunk, there
+    # are keyboard shortcuts, the login screen copies its whole command,
+    # and a phone gives most of its screen to the map.
+    tag: "1.16.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2170,6 +2181,13 @@ map:
   trails:
     # false keeps no positions and serves none. Restarts the map only.
     enabled: true
+    # How far back a trail goes and how many points one player's may hold.
+    # The map keeps the last hour at full detail, a point every 4 blocks,
+    # the rest of a day at every 16 and anything older at every 64, so a
+    # week of route fits: at these limits 64 players come to about 44 MB.
+    # The map accepts 1m to 168h and 10 to 50000.
+    maxAge: 168h
+    maxPoints: 20000
 
   # Pictures for the live markers: each mob's spawn-egg icon and each
   # player's own head.
