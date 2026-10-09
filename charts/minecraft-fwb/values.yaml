@@ -1978,7 +1978,10 @@ map:
     # fortress's spawners, and what each holds. It also finds trial
     # chambers and strongholds by their blocks; strongholds stay off the
     # map until a viewer asks for them.
-    tag: "1.18.0"
+    #
+    # 1.19.0 works the structure seed out from the world's own records when
+    # the one in level.dat does not place them; see structures below.
+    tag: "1.19.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2150,19 +2153,26 @@ map:
   # every survey and predicts nothing from a seed the world contradicts, so a
   # wrong value is a quiet layer, not a wrong one.
   #
-  # That value is as good as the world's seed, and this repository is public,
-  # so it is never written here. The map reads it from a Secret that is
-  # optional: without one it starts and runs as it does today, the predicted
-  # layer says why it is empty, and nothing else changes. Creating the Secret
-  # and restarting the map pod is all it takes to turn predictions on:
+  # From 1.19.0 the map finds that value itself. When the seed it has is
+  # refuted it tries all 2^32 against those recorded structures, on one
+  # goroutine: about fifty minutes of a whole CPU, so nearer two hours under
+  # the limit above, once, with renders slower meanwhile. What it finds is
+  # kept on the map's volume and used from the next survey, so a restart
+  # does not search again. STRUCTURE_SEED_SEARCH=false in the map's
+  # environment switches that off.
+  #
+  # The Secret below is the way to give the value by hand instead, and is
+  # optional: without one the map searches as above. That value is as good
+  # as the world's seed, and this repository is public, so it is never
+  # written here. A seed given this way is never searched past, so one the
+  # world refutes stays refuted until the Secret is deleted:
   #
   #   kubectl -n <namespace> create secret generic <seedSecret.name> \
-  #     --from-file=<seedSecret.key>=<(tr -d '[:space:]' < <file holding the number>)
+  #     --from-file=<seedSecret.key>=<file holding the number>
   #
-  # in your own terminal, like mc-bot-dispatch-token above. The map does not
-  # trim the value and refuses to start on anything but a whole number, so a
-  # trailing newline in the Secret is a crash-looping map pod; the tr above
-  # is what keeps one out.
+  # in your own terminal, like mc-bot-dispatch-token above. A whole world
+  # seed is accepted and cut to its low 32 bits, and whitespace round the
+  # value is ignored.
   structures:
     # false reads no structures and serves none. Restarts the map only.
     enabled: true
