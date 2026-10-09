@@ -1968,7 +1968,17 @@ map:
     # structure opens a sheet of details, the grid can focus a chunk, there
     # are keyboard shortcuts, the login screen copies its whole command,
     # and a phone gives most of its screen to the map.
-    tag: "1.16.0"
+    #
+    # 1.17.0 adds saved views and appearance settings, kept in the browser:
+    # a named set of layers and filters to switch to, share as a link or
+    # open with the page, and a theme, sizes and label choices.
+    #
+    # 1.18.0 says more about each structure from the world's own records:
+    # a village's villagers by profession, a monument's elder guardians, a
+    # fortress's spawners, and what each holds. It also finds trial
+    # chambers and strongholds by their blocks; strongholds stay off the
+    # map until a viewer asks for them.
+    tag: "1.18.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
