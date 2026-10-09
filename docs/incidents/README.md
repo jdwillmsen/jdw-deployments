@@ -13,6 +13,7 @@ new code.
 | 2026-08-31 | [Bedrock server crashes when a player joins](2026-08-31-bedrock-crash-on-player-join.md) | minecraft-fwb | none | Open — upstream defect, no local fix |
 | 2026-09-06 | [FWB offline 40 hours on a Vault secret that never existed](2026-09-06-fwb-console-bridge-secret.md) | minecraft-fwb | none | Resolved; Vault document still to be created |
 | 2026-09-15 | [Bedrock version checks stopped when Mojang changed the default transport](2026-09-15-fwb-version-check-nethernet.md) | minecraft-fwb | none | Resolved by the version update; a further 104 min of bot downtime was self-inflicted |
+| 2026-10-08 | [FWB agent offline 7.5 hours until Microsoft got a second sign-in step](2026-10-08-fwb-agent-xbox-token-revoked.md) | minecraft-fwb | none | Resolved by enabling two-step verification on the agent account; underlying trigger unknown |
 
 ## Recording an incident
 

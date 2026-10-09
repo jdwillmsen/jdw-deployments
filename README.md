@@ -228,13 +228,12 @@ depends on it. Do not collapse them.
    on its own.
 4. Publish the image tag named in `agent.image.tag`, then set
    `agent.enabled: true` and merge/sync.
-5. Read the agent pod's log for a `device_code_required` event and complete
-   that login once, same caveats as the bots above — **a device code can
-   land on the wrong account**; confirm the gamertag that actually connects
-   in the server log, and if it's wrong, clear the cache
-   (`kubectl exec -n jdwillmsen-prd <agent-pod> -- sh -c 'rm -rf /data/auth/*'`,
-   `kubectl delete pod -n jdwillmsen-prd <agent-pod>`) and redo the login in
-   a fresh incognito window.
+5. Complete the agent's one-time Microsoft sign-in. As of agent 0.28.0 the
+   code is a plain log line, not a `device_code_required` event, and there is
+   no auth volume to clear (the token is a row in Postgres): follow
+   [docs/minecraft-fwb-agent-reauth-runbook.md](docs/minecraft-fwb-agent-reauth-runbook.md),
+   which also covers **a device code landing on the wrong account** and a
+   sign-in Microsoft accepts and then rejects.
 6. Add the agent's gamertag to the server allowlist — it cannot join without
    this, and the console-bridge only ever *reads* `allowlist.json`, never
    writes it:
@@ -328,6 +327,11 @@ should be present and has been out for most of thirty minutes — including a
 died pod, which a silent bot's status ages out after a minute. A bot's
 Deployment having no available replica also pages, but only while the agent
 exports no presence series for it; `replicas: 0` in git never pages.
+
+When `JdwillmsenMinecraftAgentDisconnected` fires with the agent pod running
+but not ready and `auth_rejected` in its log, Microsoft has rejected the agent's
+login. The runbook tells the causes apart and gives the next action for each:
+[docs/minecraft-fwb-agent-reauth-runbook.md](docs/minecraft-fwb-agent-reauth-runbook.md).
 `JdwillmsenMinecraftActorParkedLong` (new, warning) fires when an override
 with no expiry has stood for over 24 hours — set `--for` on longer parks, or
 `tools/mc presence unpark` before then. Changing the chart default does not
