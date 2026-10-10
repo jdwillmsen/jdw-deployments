@@ -1990,7 +1990,7 @@ map:
     # broken down into items to switch one at a time -- each player, mob
     # type, bed colour, container kind, structure kind, biome and trail.
     # It also shows the notice the game's publisher asks of community sites.
-    tag: "1.20.0"
+    tag: "1.21.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
