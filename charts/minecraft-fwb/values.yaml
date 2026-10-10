@@ -1343,7 +1343,7 @@ agent:
     # classic layout was reported with no head at all; the head is now found
     # from the skin's own model, and a player whose skin has none there gets
     # a badge drawn from their gamertag.
-    tag: "0.28.0"
+    tag: "0.28.2"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -1981,7 +1981,7 @@ map:
     #
     # 1.19.0 works the structure seed out from the world's own records when
     # the one in level.dat does not place them; see structures below.
-    tag: "1.19.0"
+    tag: "1.20.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
