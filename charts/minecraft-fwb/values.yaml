@@ -1990,6 +1990,13 @@ map:
     # broken down into items to switch one at a time -- each player, mob
     # type, bed colour, container kind, structure kind, biome and trail.
     # It also shows the notice the game's publisher asks of community sites.
+    #
+    # 1.21.0 draws mobs by their faces, cut from the game's own models and
+    # textures, and chests, barrels, shulker boxes and beds as small blocks,
+    # with a choice of marker style: dots, pictures on plates, or large
+    # pictures. On first start it fetches about 7.7 MB from the same pinned
+    # copy of Mojang's samples as before (1.6 MB until now), in about a
+    # quarter of a minute, and keeps serving what it holds meanwhile.
     tag: "1.21.0"
     pullPolicy: IfNotPresent
 
