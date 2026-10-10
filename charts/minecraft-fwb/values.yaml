@@ -1981,6 +1981,15 @@ map:
     #
     # 1.19.0 works the structure seed out from the world's own records when
     # the one in level.dat does not place them; see structures below.
+    #
+    # 1.19.1 shows a named mob once: live while it is loaded, and as a
+    # faded, dashed mark saying how long ago it was saved while it is not.
+    #
+    # 1.20.0 rebuilds the layer panel: docked beside the map and sized by
+    # dragging, a rail when folded and a sheet on a phone, with every layer
+    # broken down into items to switch one at a time -- each player, mob
+    # type, bed colour, container kind, structure kind, biome and trail.
+    # It also shows the notice the game's publisher asks of community sites.
     tag: "1.20.0"
     pullPolicy: IfNotPresent
 
