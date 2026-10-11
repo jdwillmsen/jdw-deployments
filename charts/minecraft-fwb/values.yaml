@@ -2006,7 +2006,13 @@ map:
     # Strongholds, end cities, mansions and ancient cities stay off until a
     # viewer turns them on; buried treasure is withheld by the server unless
     # STRUCTURES_WITHHELD says otherwise.
-    tag: "1.22.0"
+    #
+    # 1.23.0 mends following: with any player's head listed, a script error
+    # on every frame left a followed player or mob drifting off the middle
+    # while the button still said Following. It also keeps markers their
+    # size while the map zooms, centres faces on their plates, and marks a
+    # village with the game's own village mark.
+    tag: "1.23.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
