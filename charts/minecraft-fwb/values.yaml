@@ -2012,7 +2012,13 @@ map:
     # while the button still said Following. It also keeps markers their
     # size while the map zooms, centres faces on their plates, and marks a
     # village with the game's own village mark.
-    tag: "1.23.0"
+    #
+    # 1.23.1 keeps following a mob that the live list leaves out for a
+    # moment: one missing sample used to end the follow for good, and the
+    # list leaves mobs out for reasons that are not theirs. It also centres
+    # a face by what is drawn when the map has not yet said where its head
+    # is.
+    tag: "1.23.1"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
