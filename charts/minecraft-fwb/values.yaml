@@ -1997,7 +1997,16 @@ map:
     # pictures. On first start it fetches about 7.7 MB from the same pinned
     # copy of Mojang's samples as before (1.6 MB until now), in about a
     # quarter of a minute, and keeps serving what it holds meanwhile.
-    tag: "1.21.0"
+    #
+    # 1.22.0 reads the structure records a newer game writes and each
+    # chunk's own generation seed, and with them maps many more kinds in all
+    # three dimensions -- pyramids, temples, igloos, camps, trail ruins,
+    # ocean ruins, shipwrecks, ruined portals, bastions, end cities and
+    # gateways -- listing only those the dimension on screen can hold.
+    # Strongholds, end cities, mansions and ancient cities stay off until a
+    # viewer turns them on; buried treasure is withheld by the server unless
+    # STRUCTURES_WITHHELD says otherwise.
+    tag: "1.22.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
