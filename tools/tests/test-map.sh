@@ -503,6 +503,7 @@ render --set map.checks.secret.create=true > "$work/checks-secret.yaml"
 render "${checks_on[@]}" > "$work/checks-on.yaml"
 render "${checks_on[@]}" --set map.checks.secret.generation=2 > "$work/checks-rotated.yaml"
 render "${checks_on[@]}" --set map.checks.evidence.enabled=true > "$work/checks-evidence.yaml"
+render "${checks_on[@]}" --set "map.checks.schedule=5 1 * * *" --set map.checks.resources.limits.memory=2Gi > "$work/checks-moved.yaml"
 
 # Wiring a workload to a Secret in the step that first creates it is how this
 # chart got its 40-hour outage, so the order is enforced and not only
@@ -533,11 +534,11 @@ checks = yaml.safe_load(open(sys.argv[1]))["map"]["checks"]
 sys.exit(0 if checks["networkPolicyEnforced"] is False and checks["enabled"] is False and checks["secret"]["create"] is False and checks["evidence"]["enabled"] is False else 1)
 PY
 
-python3 - "$work/rendered.yaml" "$work/checks-secret.yaml" "$work/checks-on.yaml" "$work/checks-rotated.yaml" "$work/checks-evidence.yaml" <<'PY' || fail "the browser checks are not as contained as they were made"
+python3 - "$work/rendered.yaml" "$work/checks-secret.yaml" "$work/checks-on.yaml" "$work/checks-rotated.yaml" "$work/checks-evidence.yaml" "$work/checks-moved.yaml" <<'PY' || fail "the browser checks are not as contained as they were made"
 import re, sys, yaml
 
 load = lambda path: [d for d in yaml.safe_load_all(open(path)) if d]
-off, staged, on, rotated, kept = (load(p) for p in sys.argv[1:6])
+off, staged, on, rotated, kept, moved = (load(p) for p in sys.argv[1:7])
 text = {"off": open(sys.argv[1]).read(), "on": open(sys.argv[3]).read()}
 named = lambda docs: {(d["kind"], d["metadata"]["name"]) for d in docs}
 by = lambda docs, kind, suffix: next(d for d in docs if d["kind"] == kind and (d["metadata"]["name"].endswith(suffix) or suffix + "-g" in d["metadata"]["name"]))
@@ -614,11 +615,23 @@ before, after = index(on), index(rotated)
 changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
 want = {("Password", "minecraft-fwb-map-checks-secret-g1"), ("ExternalSecret", "minecraft-fwb-map-checks-secret-g1"),
         ("Password", "minecraft-fwb-map-checks-secret-g2"), ("ExternalSecret", "minecraft-fwb-map-checks-secret-g2"),
-        ("Deployment", "minecraft-fwb-map"), ("CronJob", "minecraft-fwb-map-checks")}
+        ("Deployment", "minecraft-fwb-map"), ("CronJob", "minecraft-fwb-map-checks"),
+        # The map restarts, so players are told: the digest the announcement
+        # is decided by moves, where it is recorded and where it is read.
+        ("ConfigMap", "minecraft-fwb-server-spec-hash"), ("Job", "minecraft-fwb-deploy-announce")}
 if changed != want:
     bad.append(f"raising map.checks.secret.generation changes {sorted(changed ^ want)} differently from the Secret, the map and the job")
 if map_env(rotated)["SERVICE_SESSION_SECRET"]["valueFrom"]["secretKeyRef"]["name"] != "minecraft-fwb-map-checks-secret-g2" or names_secret(rotated) != "minecraft-fwb-map-checks-secret-g2":
     bad.append("after a rotation the map does not read, or is not restarted onto, the new Secret")
+# Players are told before the map restarts, by a digest of what its pod
+# reads. The checks' values are in it only where they reach the map's pod:
+# having them there to switch on, generating the Secret, or moving the job's
+# schedule or limits restarts nothing and must announce nothing.
+digest = lambda docs: by(docs, "ConfigMap", "-server-spec-hash")["data"]["mapHash"]
+if not (digest(off) == digest(staged) and digest(on) == digest(moved)):
+    bad.append("a change to the checks that does not restart the map would be announced to players as a map restart")
+if digest(on) == digest(staged) or digest(rotated) == digest(on):
+    bad.append("switching the checks on, or rotating their secret, restarts the map without players being told")
 rotated_job = by(rotated, "CronJob", "-map-checks")["spec"]["jobTemplate"]["spec"]["template"]
 if [v["secret"]["secretName"] for v in rotated_job["spec"]["volumes"] if "secret" in v] != ["minecraft-fwb-map-checks-secret-g2"]:
     bad.append("after a rotation the job does not present the new Secret")

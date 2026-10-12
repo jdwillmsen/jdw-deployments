@@ -588,7 +588,6 @@ path logs and exits 0.
 Tested by `tools/tests/test-deploy-announce.sh`, which runs the script as
 rendered against a stubbed `kubectl`.
 
-||||||| parent of d5e2cee (feat(minecraft-fwb): run browser checks against the live map, off by default)
 ## Browser checks
 
 `map.checks` runs the map's own browser checks against this map on a
