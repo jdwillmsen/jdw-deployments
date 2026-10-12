@@ -593,8 +593,9 @@ rendered against a stubbed `kubectl`.
 
 `map.checks` runs the map's own browser checks against this map on a
 schedule: a real browser, loading the page from the public hostname, with a
-session that belongs to no player and can only read. It is **off**, and
-nothing in production's values turns it on.
+session that belongs to no player and can only read. It is **off**, nothing
+in production's values turns it on, and **as this cluster stands it cannot
+be turned on**: see "What has to be true first".
 
 It exists because the map can only be entered by a player typing a code in
 the game, so nothing automated had ever seen the page with a session. Faults
@@ -607,31 +608,75 @@ checks").
 
 | Resource | What it is for |
 |---|---|
-| `Password` and `ExternalSecret` `<release>-map-checks-secret` | The secret the checks exchange for a session, generated in the cluster and never seen by anyone |
-| `SERVICE_SESSION_SECRET` on the map | Switches the map's exchange on, on its internal port only |
+| `Password` and `ExternalSecret` `<release>-map-checks-secret-g<n>` | The secret the checks exchange for a session, generated in the cluster and never seen by anyone |
+| `SERVICE_SESSION_SECRET` and an annotation on the map | Switches the map's exchange on, on its internal port only, and restarts the map onto each new Secret |
 | `CronJob` `<release>-map-checks` | One run: an exchange on the internal port, then about two and a half minutes of browser against `map.host` |
 | `NetworkPolicy` `<release>-map-checks` | Limits the job's pod to the name server, the map's internal port and the gateway |
-| `PersistentVolumeClaim` `<release>-map-checks` | The last run's results, and evidence of failed checks |
-| `Deployment`, `Service`, `ServiceMonitor` `<release>-map-checks-exporter` | Serves the last run's results to Prometheus; where evidence is fetched from |
 | `PrometheusRule` `<release>-map-checks` | The alerts below |
+| With `evidence.enabled`: a `PersistentVolumeClaim` and a `Deployment` `<release>-map-checks-evidence` | Screenshots of failed checks, and a pod to read them through |
 
 The route is not touched. The exchange is on the map's internal port, which
 the route has never published, and `tools/tests/test-map.sh` fails if
 turning the checks on changes that.
 
+### What has to be true first
+
+**The platform does not enforce network policy in this namespace, and the
+checks must not run until it does.** The tenant definition in the platform
+repository (`tenants/jdwillmsen/tenant.yaml`) gives `jdwillmsen-prd` the
+default policy tier without `enforce: true`, and a namespace that is not
+enforced is rendered allow-all policies for ingress and egress. Policies
+only ever add, so the checks' own `NetworkPolicy` would be applied here and
+restrict nothing.
+
+That matters for this workload more than any other in the chart. The job is
+a browser, and Chromium in a container runs without its own sandbox, because
+the sandbox is made of user namespaces an unprivileged container may not
+create. What stands in for it is the pod around it, and the part of that
+which keeps a misbehaving browser from the game server's console bridge,
+the agent and every other Service in the cluster is the network policy.
+
+So the chart refuses to render the checks enabled unless
+`map.checks.networkPolicyEnforced` is `true`, and that value is to be set
+only once it is. What has to change is in the platform repository, is the
+owner's to decide, and is not small:
+
+- `enforce: true` on the `jdwillmsen-prd` namespace in
+  `tenants/jdwillmsen/tenant.yaml`. That makes the whole namespace
+  default-deny, not only the checks.
+- Before that, every flow the namespace's workloads rely on has to be
+  allowed by name, because today nothing has ever had to be. At least:
+  players reaching the game server from outside; the game server and the
+  agent reaching Xbox Live and whatever else they authenticate against (the
+  tenant file itself records that its 443-only external egress is
+  unverified for this); the agent's and the bots' other outbound calls; the
+  gateway reaching the map's public port; Prometheus scraping every
+  metrics port; the map reaching the console bridge and the agent, and the
+  agent reaching the map's internal port; and the jobs that speak to the
+  cluster's API.
+- A way to see it took: a pod in the namespace that can no longer reach
+  something it was never meant to.
+
+Until then the secret can be generated (step one below) and nothing else.
+
 ### Turning it on
 
-Two releases have to be out first, both from `gameops`: a map image that has
-service sessions, and the first `minecraft-map-checks` image. Then two
-changes here, in two pull requests, in this order.
+Three things from elsewhere, then two changes here.
+
+- A map image that has service sessions, and the first
+  `minecraft-map-checks` image, both released from `gameops`.
+- The platform enforcing network policy in this namespace, as above.
+- The owner's approval to run the scheduled checks against the live map.
+  Merging step two is that approval; nobody else gives it.
 
 1. **Generate the Secret.** Set `map.checks.secret.create: true` and
    nothing else. This renders the generator and its `ExternalSecret` only;
-   the map does not read the Secret and serves no exchange. Merge, let
-   ArgoCD sync, and confirm the `ExternalSecret` is `SecretSynced`:
+   the map does not read the Secret, is not restarted, and serves no
+   exchange. Merge, let ArgoCD sync, and confirm the `ExternalSecret` is
+   `SecretSynced`:
 
    ```bash
-   kubectl get externalsecret -n jdwillmsen-prd minecraft-fwb-map-checks-secret
+   kubectl get externalsecret -n jdwillmsen-prd minecraft-fwb-map-checks-secret-g1
    ```
 
    The order is not a nicety. A workload wired to a secret in the commit
@@ -639,64 +684,80 @@ changes here, in two pull requests, in this order.
    (`docs/incidents/2026-09-06-fwb-console-bridge-secret.md`). The chart
    refuses to render step two without step one.
 
-2. **Switch the checks on.** Set `map.checks.enabled: true`, and
-   `map.checks.image.tag` and `map.checks.image.digest` to the released
-   image's; the chart refuses a tag without a digest. Set `map.image.tag` to
-   a map that has service sessions if it is not there already. This restarts
-   the map, which is a few seconds of the page being away and costs the game
-   nothing.
+2. **Switch the checks on.** Set `map.checks.enabled: true`,
+   `map.checks.networkPolicyEnforced: true`, and `map.checks.image.tag` and
+   `map.checks.image.digest` to the released image's; the chart refuses a
+   tag without a digest. Set `map.image.tag` to a map that has service
+   sessions if it is not there already. This restarts the map, which is a
+   few seconds of the page being away and costs the game nothing.
 
-Before step two, three things about this cluster want an answer, because
-nothing in this repository can give one:
-
-- **Does `truenas-nfs` give out `ReadWriteMany` claims?** The job and the
-  exporter mount the same volume from whichever nodes they land on. If it
-  does not, set `map.checks.results.accessMode: ReadWriteOnce` and expect
-  the job to wait for the exporter's node.
-- **Does the network plugin enforce `NetworkPolicy`?** If not, the policy
-  is a statement of intent and the job's pod can reach what any pod can.
-- **Does the public hostname resolve, from a pod, to something the policy
-  lets through?** The policy allows the gateway's namespace. A plugin that
-  judges the address the browser dialled, and not the gateway pod behind it,
-  needs that address in `map.checks.networkPolicy.publicCIDRs`. The first
-  run says: with the policy in the way, `login-screen` and `map-loads`
-  fail and nothing after them runs.
+One thing about this cluster still wants an answer, because nothing in this
+repository can give it: whether the public hostname resolves, from a pod, to
+something the policy lets through. The policy allows the gateway's
+namespace. A network plugin that judges the address the browser dialled,
+and not the gateway pod behind it, needs that address in
+`map.checks.networkPolicy.publicCIDRs`. The first run says: with the policy
+in the way, `login-screen` and `map-loads` fail and nothing after them
+runs.
 
 The first scheduled run is at twenty past the next hour that is not one of
 the hours left out. To see one sooner, wait: creating a Job by hand is a
 change to the cluster made outside git.
 
-### Turning it off, and taking the session back
+### The Secret, the map, and the order they arrive in
 
-Set `map.checks.enabled: false`. The job, its policy, its volume and its
-alerts go, and the map restarts without the secret, which switches the
-exchange off and ends any session still alive. Leave `secret.create` on if
-the checks are coming back; turn it off too to remove the Secret.
+The map reads the secret once, when it starts, and the reference is
+optional so that the map can never be left waiting on a Secret, which is
+the outage this chart has had. The cost of that choice is a failure mode:
+**a map that starts before its Secret exists runs with the exchange off,
+and stays that way until it is restarted.** The exchange answers 404, the
+`exchange` check fails on every run, and
+`JdwillmsenMinecraftMapChecksFailing` fires.
 
-To revoke without turning the checks off, rotate: delete the Secret, let the
-generator make another, and restart the map.
+Two things keep that from happening, and one gets out of it:
 
-```bash
-kubectl delete secret -n jdwillmsen-prd minecraft-fwb-map-checks-secret
-kubectl rollout restart -n jdwillmsen-prd deployment/minecraft-fwb-map
-```
+- The Secret's generator and `ExternalSecret` are a sync wave ahead of
+  everything else, so ArgoCD has seen the Secret exist before it changes
+  the map.
+- The map's pods carry the Secret's name as an annotation, so a new Secret
+  is a change to the map's pod template and the map is restarted onto it,
+  after the wave above.
+- If it happens anyway, raise `map.checks.secret.generation`. A new Secret
+  is made and the map restarted onto it, in that order.
 
-Sessions are signed with a key derived from the secret, so every session
-issued under the old one stops working as the map comes back. Both commands
-change the cluster by hand, which is otherwise not done here; they are
-written down because revoking a credential is the case that cannot wait for
-a pull request.
+### Rotating the secret, and taking the session back
+
+Raise `map.checks.secret.generation` by one, in git. The number is part of
+the Secret's name, so:
+
+- a Secret of the new name is generated;
+- the map is restarted onto it, and the job presents it from its next run;
+- the old `ExternalSecret` is pruned by ArgoCD, and the Secret it owned
+  goes with it;
+- sessions are signed with a key derived from the secret, so every session
+  issued under the old one stops working as the map comes back.
+
+`tools/tests/test-map.sh` renders both generations and fails if the change
+touches anything but the generated Secret, the map and the job. Nothing is
+deleted or restarted by hand, and no alert here tells anyone to.
+
+To switch the checks off, set `map.checks.enabled: false`. The job, its
+policy and its alerts go, and the map restarts without the secret, which
+switches the exchange off and ends any session still alive. Leave
+`secret.create` on if the checks are coming back; turn it off too to remove
+the Secret.
 
 ### What it may see and do
 
 The session reads what every logged-in player is shown alike and nothing
 that is one player's own: no waypoints, no standing with a village, no
-"me". It can send nothing but a `GET`. It lasts `map.checks.sessionTTL`,
-ten minutes, and cannot be renewed. The runner itself aborts every request
-that is not a read before it leaves the browser, and never touches the
-game.
+"me". It is no player by how the map is made, holds no role and can be
+given none. It can send nothing but a `GET`. It lasts
+`map.checks.sessionTTL`, ten minutes, and cannot be renewed. The runner
+itself aborts every request that is not a read before it leaves the
+browser, and never touches the game.
 
-### When it runs
+### When it runs, and as what
 
 `map.checks.schedule`, hourly at twenty past, UTC, leaving out 03:00 to
 06:59 (the backup, the census and the map's quiet windows) and 16:00 to
@@ -707,88 +768,100 @@ overlap one.
 The pod is a browser on the nodes the game server runs on, so it is held
 to one CPU and 1 GiB, which a run fits in with room; it requests a quarter
 of a CPU and 512 MiB; and the scheduler is asked to put it on a node the
-server is not on, where there is one. It runs as a user that is not root,
-on a read-only root filesystem, with no capabilities and no service account
-token: it asks nothing of the cluster's API.
+server is not on, where there is one. It runs as the image's own
+unprivileged user, uid 1001, on a read-only root filesystem, with no
+capabilities, no privilege escalation, the default seccomp profile and no
+service account token: it asks nothing of the cluster's API. Its image is
+pinned by digest.
 
 ### Results
 
-The job's log is one line of JSON a check: its name, `pass`, `fail` or
-`skip`, how long it took and what it measured. A check that needs a player
-online or a mob loaded skips on a quiet world, and a skip is not a failure.
-The log never holds a coordinate, a gamertag or a name: that is the
-runner's rule, tested in `gameops`, and it is what makes the log safe to
-paste.
+A run's verdict is its Job's. The runner exits 0 when every check passed or
+had nothing to look at, 1 when a check failed and 2 when the run broke or
+was stopped, so a failed Job is a failed run, and that is true whatever
+became of the pod: one killed for memory or at its deadline wrote nothing
+and is a failed Job all the same. The alerts read the Job's and the
+CronJob's own state from kube-state-metrics. There is no exporter and
+nothing to scrape.
 
-The same results are served to Prometheus by the exporter:
-
-| Metric | Meaning |
-|---|---|
-| `mcmap_e2e_run_success` | 1 if no check of the last run failed |
-| `mcmap_e2e_run_timestamp_seconds`, `mcmap_e2e_run_duration_seconds` | When the last run finished, and how long it took |
-| `mcmap_e2e_checks{status}` | Checks of the last run that ended `pass`, `fail`, `skip` |
-| `mcmap_e2e_check_status{check}` | Each check: 1 passed, 0 failed, -1 skipped |
-| `mcmap_e2e_check_duration_seconds{check}` | How long each took |
-| `mcmap_e2e_measure{check,measure}` | What each measured: the stream's longest gap, how far off the middle Follow was, and so on |
-| `mcmap_e2e_api_seconds{endpoint}` | How long each answer the page is built from took through the gateway |
-| `mcmap_e2e_face_offset_pixels{face}`, `mcmap_e2e_face_offset_x_pixels{face}` | How far each mob's face sits from the middle of its plate, on the real page with the real pictures |
+What each check found is in the Job's log: one line of JSON a check, with
+its name, `pass`, `fail` or `skip`, a reason, how long it took and what it
+measured. A check that needs a player online or a mob loaded skips on a
+quiet world, and a skip is not a failure. The log has no field that holds
+words off the page: a name, a reason and a measure are each one of a
+closed list in the suite, so it holds no coordinate, gamertag or name, and
+is safe to paste. How far each mob's face sits from the middle of its plate
+on the real page is there too, as `gauge` lines.
 
 ### Evidence
 
-A failed check leaves a screenshot, a browser trace and the full text of
-what went wrong under `evidence/` on the checks' volume, one directory a
-run. **These are pictures of the live map: real coordinates, real
-gamertags.** So:
+Off. A failure is then its log line.
 
-- They stay on the volume. The newest `map.checks.evidence.keepRuns` failed
-  runs are kept, five, and none older than `keepDays`, seven; the runner
-  deletes the rest at the start of each run.
-- They are fetched by whoever is looking into the failure, to their own
-  machine, from the exporter's pod, which has the volume mounted read-only:
+`map.checks.evidence.enabled: true` keeps a screenshot of the page for each
+failed check, on a volume. **A screenshot is a picture of the live map: real
+coordinates, real gamertags.** Nothing else is kept: no browser trace, no
+request or response, and never the session cookie.
+`map.checks.evidence.pages: true` adds the page's HTML and the text of what
+went wrong, which is more of the map than a picture. So, with it on:
+
+- It stays on the volume. The newest `keepRuns` failed runs are kept, five,
+  and none older than `keepDays`, seven; a run's evidence is capped at
+  `maxMegabytesPerRun`; a volume that is full costs the evidence and never
+  the run's verdict.
+- The volume is `ReadWriteOnce`. The job writes it; a pod that does
+  nothing, `<release>-map-checks-evidence`, holds it read-only so that
+  there is something to copy it out of, and the job is made to run on that
+  pod's node.
+- It is fetched by whoever is looking into the failure, to their own
+  machine:
 
   ```bash
   kubectl cp -n jdwillmsen-prd \
-    "$(kubectl get pod -n jdwillmsen-prd -l app=minecraft-fwb-map-checks-exporter -o name | cut -d/ -f2)":/var/lib/mcmap-e2e/evidence ./evidence
+    "$(kubectl get pod -n jdwillmsen-prd -l app=minecraft-fwb-map-checks-evidence -o name | cut -d/ -f2)":/var/lib/mcmap-e2e/evidence ./evidence
   ```
 
-- They are never committed, attached to a pull request, an issue or a
-  ticket, or pasted into a chat. What goes in those is the log line.
+- It is never committed, attached to a pull request, an issue or a ticket,
+  or pasted into a chat. What goes in those is the log line.
 - Delete the copy when the failure is understood.
-
-`map.checks.evidence.enabled: false` keeps none at all.
 
 ### Alerts
 
 | Alert | Fires when |
 |---|---|
-| `JdwillmsenMinecraftMapChecksFailing` | The last run had a failing check, for `alert.failingFor` |
-| `JdwillmsenMinecraftMapChecksStale` | No run has finished for `alert.staleAfter`, six hours, which is longer than the night's gap |
-| `JdwillmsenMinecraftMapChecksNeverRan` | Switched on, and no run has ever reported |
-| `JdwillmsenMinecraftMapServiceExchangeRefused` | The map refused an exchange: a wrong secret, a lock, a rate limit. Nothing that holds the secret presents a wrong one |
+| `JdwillmsenMinecraftMapChecksFailing` | The last run's Job failed: a check failed, the run broke, the pod was killed, or it never finished by its deadline. Until a run passes |
+| `JdwillmsenMinecraftMapChecksStale` | No run has been started for `alert.staleAfter`, seven hours, and still none `alert.staleFor` later. Seven covers the five the schedule leaves each night and a run skipped beside it |
+| `JdwillmsenMinecraftMapChecksNeverRan` | Switched on, and the CronJob has never started a run |
+| `JdwillmsenMinecraftMapServiceExchangeRefused` | The map refused an exchange. Nothing that holds the secret presents a wrong one |
 | `JdwillmsenMinecraftMapServiceExchangeFromOutside` | An exchange came over a port-forward or from an address with no business at the internal port, whether or not it was let in |
 | `JdwillmsenMinecraftMapServiceExchangeRate` | More sessions were issued in an hour than `alert.maxExchangesPerHour` |
 
-When `ChecksFailing` fires: read the job's log for the failing check's line
-(`kubectl logs -n jdwillmsen-prd job/<the last job>`), then
-`mcmap_e2e_measure` for its numbers. `page-errors` names the script and
-line that threw. `exchange` failing means the job and the map disagree
-about the secret, and `ServiceExchangeRefused` will be firing beside it.
+When `ChecksFailing` fires: read the last Job's log
+(`kubectl logs -n jdwillmsen-prd job/<the last job>`) for the line whose
+status is `fail`; its `reason` says what and its `measures` how far.
+`page-errors` gives the count for each of the page's scripts and the line
+of the first. `exchange` failing means the job and the map are not reading
+the same Secret, or the map started before its Secret: see above. A log
+with no last `run` line is a run that was killed.
 
-### Running the checks from outside the cluster
+### Who has to approve what
 
-The runner can also be run from a developer's or an agent's machine, before
-and after a rollout: it reads the Secret through `kubectl` into its own
-memory, exchanges it over a port-forward to the internal port, and drives a
-browser against the public hostname. The secret is printed nowhere and
-passes through no shell.
+Two separate approvals, both the owner's.
 
-**This needs the owner's explicit approval before it is first used against
-production, and each time after.** It reads a credential from the cluster
-and looks at the live map from outside it. It is not a step of any routine
-here, and an agent does not start one on its own judgment. When it is run
-it shows: `JdwillmsenMinecraftMapServiceExchangeFromOutside` fires, and the
-map's log line for the exchange carries who was named as approving it. The
-procedure is in the map's README; it has been exercised against the
+1. **The scheduled checks.** Enabling them is the owner's decision, made
+   by merging step two.
+2. **Every run from outside the cluster.** The runner can also be run from
+   a developer's or an agent's machine, before and after a rollout: it
+   reads the Secret through `kubectl` into its own memory, exchanges it
+   over a port-forward to the internal port, and drives a browser against
+   the public hostname. Each such run against production needs the
+   owner's approval, each time, before it starts. An approval for one run
+   is not one for the next, and an agent does not start one on its own
+   judgment. The runner requires `--approved-by <who>@<when>`, which is
+   free text nothing can check, and the map writes it on its audit line
+   for the exchange. Every such run also shows:
+   `JdwillmsenMinecraftMapServiceExchangeFromOutside` fires.
+
+The procedure is in the map's README. It has been exercised against the
 suite's harness only.
 
 ## Tests

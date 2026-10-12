@@ -96,16 +96,24 @@ exporter must all name the same things.
 {{ include "map.name" . }}-checks
 {{- end -}}
 
+{{/*
+The Secret's name carries its generation. Raising map.checks.secret.generation
+in git is how the secret is rotated: a Secret of a new name is generated, the
+map and the job are pointed at it, and the old one is pruned with its
+ExternalSecret. Nothing is deleted or restarted by hand.
+*/}}
 {{- define "map.checks.secret.name" -}}
-{{ include "map.checks.name" . }}-secret
+{{- $g := .Values.map.checks.secret.generation | toString -}}
+{{- if not (regexMatch "^[1-9][0-9]{0,5}$" $g) -}}{{ fail (printf "map.checks.secret.generation must be a whole number from 1, got %q" $g) }}{{- end -}}
+{{ include "map.checks.name" . }}-secret-g{{ $g }}
 {{- end -}}
 
 {{- define "map.checks.secret.key" -}}
 secret
 {{- end -}}
 
-{{- define "map.checks.exporter.name" -}}
-{{ include "map.checks.name" . }}-exporter
+{{- define "map.checks.evidence.name" -}}
+{{ include "map.checks.name" . }}-evidence
 {{- end -}}
 
 {{/*
@@ -118,6 +126,7 @@ arrives.
 {{- if and .Values.map.enabled .Values.global.consoleBridge.enabled .Values.map.checks.enabled -}}
 {{- if not .Values.map.checks.secret.create -}}{{ fail "map.checks.enabled needs map.checks.secret.create: the map and the job both read a Secret that only the generator makes. Turn create on first, see the Secret Synced, then enable." }}{{- end -}}
 {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" (.Values.map.checks.image.digest | toString)) -}}{{ fail "map.checks.image.digest must be the sha256 digest of the minecraft-map-checks image: it holds a credential's worth of access to the map, and a tag can be moved" }}{{- end -}}
+{{- if not (eq (.Values.map.checks.networkPolicyEnforced | toString) "true") -}}{{ fail "map.checks.enabled needs map.checks.networkPolicyEnforced: true, and that is only true once the platform enforces network policy in this namespace. The checks run a browser without its own sandbox, and their NetworkPolicy is the thing that keeps it to the map; in a namespace that is not enforced the policy renders and does nothing. See \"Browser checks\" in the chart README for what has to change in the platform first." }}{{- end -}}
 true
 {{- end -}}
 {{- end -}}

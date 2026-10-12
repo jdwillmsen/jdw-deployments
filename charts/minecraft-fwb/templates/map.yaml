@@ -64,6 +64,14 @@ spec:
     metadata:
       labels:
         app: {{ include "map.name" . }}
+      {{- if include "map.checks.on" . }}
+      annotations:
+        # The map reads the checks' secret once, at start. Naming the Secret
+        # here makes a new one a change to this pod, so the map is restarted
+        # onto it: when the checks are switched on, and each time
+        # map.checks.secret.generation is raised.
+        minecraft-fwb/map-checks-secret: {{ include "map.checks.secret.name" . | quote }}
+      {{- end }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -98,8 +106,13 @@ spec:
             # exchange on, so with the checks off the variable is not set
             # and the map serves no such route.
             #
-            # optional, so that a Secret that is not there yet leaves the
-            # map starting with the exchange off, and never waiting.
+            # optional, so that a Secret that is not there leaves the map
+            # starting with the exchange off, and never waiting. The cost is
+            # that a map which starts before its Secret exists does not pick
+            # it up later: the exchange answers 404 and the checks' first
+            # check after the login fails. The Secret is a sync wave ahead
+            # so that this does not happen, and raising
+            # map.checks.secret.generation is the way out if it does.
             - name: SERVICE_SESSION_SECRET
               valueFrom:
                 secretKeyRef:

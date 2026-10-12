@@ -14,27 +14,28 @@
 # hostname, through the gateway, because the gateway is part of what has to
 # work: it cuts a connection idle for 30 s, and the live stream is a
 # connection that is often idle.
+{{- if .Values.map.checks.evidence.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "map.checks.name" . }}
+  name: {{ include "map.checks.evidence.name" . }}
   namespace: {{ .Release.Namespace }}
 spec:
-  # Two things live here: the last run's results, a few KB, and what a failed
-  # check left as evidence. A volume and not an emptyDir, because the job's
-  # pod is gone minutes after it ran and a screenshot of a failure is only
-  # worth taking if someone can fetch it in the morning.
+  # Only with evidence on. A failed check's screenshot is worth taking only
+  # if someone can fetch it in the morning, and the job's pod is gone minutes
+  # after it ran, so it is a volume and not an emptyDir.
   #
-  # File storage, shared: the exporter below reads what the job writes, from
-  # whichever node each lands on. A ReadWriteOnce block claim would pin both
-  # to one node, which is the trap recorded on the backup exporter.
-  storageClassName: {{ .Values.map.checks.results.storageClass }}
+  # ReadWriteOnce: the job writes it and the reader below reads it, and the
+  # job is made to run on the reader's node so that one attachment serves
+  # both. Nothing needs it from two nodes at once.
+  storageClassName: {{ .Values.map.checks.evidence.storageClass }}
   accessModes:
-    - {{ .Values.map.checks.results.accessMode }}
+    - ReadWriteOnce
   resources:
     requests:
-      storage: {{ .Values.map.checks.results.size }}
+      storage: {{ .Values.map.checks.evidence.size }}
 ---
+{{- end }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -72,20 +73,28 @@ spec:
         metadata:
           labels:
             app: {{ include "map.checks.name" . }}
+          annotations:
+            # Which secret this run presents, written where it shows: the
+            # same name is on the map's pods, and the two have to agree.
+            minecraft-fwb/map-checks-secret: {{ include "map.checks.secret.name" . | quote }}
         spec:
           restartPolicy: Never
           # The job asks nothing of the cluster. Its secret is a file, the
-          # map is an address and its results are a file, so it carries no
-          # token: a browser that has just loaded a page from the internet
+          # map is an address, and its results are its log and its exit
+          # status, so it carries no token: a browser that has just loaded a page from the internet
           # is the last process that should hold one.
           automountServiceAccountToken: false
           # Nor the address of every Service in the namespace in its
           # environment.
           enableServiceLinks: false
+          # The image's own unprivileged user, pwuser. Its Chromium runs
+          # without the browser's own sandbox, as it must in a container
+          # that may not make user namespaces, so everything from here to
+          # the network policy below is what contains it.
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
+            runAsUser: 1001
+            runAsGroup: 1001
             fsGroup: 2000
             seccompProfile:
               type: RuntimeDefault
@@ -101,6 +110,16 @@ spec:
                     labelSelector:
                       matchLabels:
                         app: {{ include "backup.serverStatefulSet" . }}
+{{- if .Values.map.checks.evidence.enabled }}
+            # Required: the evidence volume attaches to one node, and the
+            # reader already holds it there.
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app: {{ include "map.checks.evidence.name" . }}
+{{- end }}
           containers:
             - name: checks
               image: {{ include "map.checks.image" . | quote }}
@@ -119,20 +138,24 @@ spec:
                 # logs its environment.
                 - "--secret-file"
                 - "/var/run/mcmap-e2e/secret"
-                - "--metrics-file"
-                - "/var/lib/mcmap-e2e/metrics.prom"
 {{- if .Values.map.checks.evidence.enabled }}
-                # A failed check leaves a screenshot and a trace here. They
-                # are pictures of the live map, with real coordinates and
-                # gamertags, so they stay on this volume: see "Browser
-                # checks" in the chart README for how they are fetched and
-                # why they are never attached to anything.
+                # A failed check leaves a screenshot here: a picture of the
+                # live map, with real coordinates and gamertags, and nothing
+                # else. No trace, no request, no cookie. See "Browser
+                # checks" in the chart README for how it is fetched and why
+                # it is never attached to anything.
                 - "--evidence-dir"
                 - "/var/lib/mcmap-e2e/evidence"
                 - "--evidence-keep"
                 - {{ .Values.map.checks.evidence.keepRuns | quote }}
                 - "--evidence-days"
                 - {{ .Values.map.checks.evidence.keepDays | quote }}
+                - "--evidence-max-mb"
+                - {{ .Values.map.checks.evidence.maxMegabytesPerRun | quote }}
+{{- if .Values.map.checks.evidence.pages }}
+                # And the page's HTML and the fault's text beside it.
+                - "--evidence-pages"
+{{- end }}
 {{- end }}
                 - "--stream-seconds"
                 - {{ .Values.map.checks.streamSeconds | quote }}
@@ -149,8 +172,10 @@ spec:
                 - name: secret
                   mountPath: /var/run/mcmap-e2e
                   readOnly: true
-                - name: results
+{{- if .Values.map.checks.evidence.enabled }}
+                - name: evidence
                   mountPath: /var/lib/mcmap-e2e
+{{- end }}
                 # The browser's profile and scratch for one run, which the
                 # read-only root leaves nowhere else to put.
                 - name: tmp
@@ -165,13 +190,14 @@ spec:
                 items:
                   - key: {{ include "map.checks.secret.key" . }}
                     path: secret
-            - name: results
+{{- if .Values.map.checks.evidence.enabled }}
+            - name: evidence
               persistentVolumeClaim:
-                claimName: {{ include "map.checks.name" . }}
+                claimName: {{ include "map.checks.evidence.name" . }}
+{{- end }}
             - name: tmp
               emptyDir:
                 sizeLimit: {{ .Values.map.checks.tmpSizeLimit }}
-{{- if .Values.map.checks.networkPolicy.enabled }}
 ---
 # What the job's pod may talk to: the name server, the map's internal port
 # for the exchange, and the gateway that serves the public hostname. Nothing
@@ -183,8 +209,12 @@ spec:
 # The map's public port is deliberately not here. A run that could reach the
 # pod directly could pass while the gateway was down.
 #
-# This is only as good as the cluster's network plugin: one that does not
-# enforce NetworkPolicy leaves it a statement of intent.
+# It restricts nothing unless the platform enforces network policy in this
+# namespace. A tenant namespace that is not enforced is given allow-all
+# policies by the platform, and policies only ever add, so this one would
+# render, apply and change nothing. That is why the chart will not render the
+# checks at all until map.checks.networkPolicyEnforced says the namespace is
+# enforced: this policy is what stands in for the browser's own sandbox.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -237,43 +267,46 @@ spec:
         - protocol: TCP
           port: 443
 {{- end }}
-{{- end }}
+{{- if .Values.map.checks.evidence.enabled }}
 ---
-# Serves the last run's results, which were written by a job that is gone.
-#
-# Same shape as the census and backup exporters: a shell loop copies one file
-# and busybox serves it. It is also where evidence is fetched from, since it
-# is the one pod that always has the volume mounted, and it has it read-only.
+# Holds the evidence volume so that it can be read. It does nothing: the
+# job's pod is gone minutes after a run, and fetching a screenshot needs a
+# pod that is there, with the volume mounted, read-only. Without it the only
+# way to the evidence would be a pod made by hand.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "map.checks.exporter.name" . }}
+  name: {{ include "map.checks.evidence.name" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ include "map.checks.exporter.name" . }}
+    app: {{ include "map.checks.evidence.name" . }}
 spec:
   replicas: 1
   revisionHistoryLimit: 0
+  # The claim attaches once, so the old pod lets go before the new one asks.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      app: {{ include "map.checks.exporter.name" . }}
+      app: {{ include "map.checks.evidence.name" . }}
   template:
     metadata:
       labels:
-        app: {{ include "map.checks.exporter.name" . }}
+        app: {{ include "map.checks.evidence.name" . }}
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
+        runAsUser: 1001
+        runAsGroup: 1001
         fsGroup: 2000
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: exporter
-          image: {{ .Values.map.checks.exporter.image }}
+        - name: reader
+          image: {{ .Values.map.checks.evidence.reader.image | quote }}
+          command: ["/bin/sh", "-c", "while true; do sleep 3600; done"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -281,110 +314,27 @@ spec:
               drop: ["ALL"]
           resources:
             requests:
-              memory: 16Mi
-              cpu: 10m
+              memory: 8Mi
+              cpu: 5m
             limits:
-              memory: 64Mi
-              cpu: 100m
-          ports:
-            - name: metrics
-              containerPort: {{ .Values.map.checks.exporter.port }}
-          env:
-            - name: REFRESH_SECONDS
-              value: {{ .Values.map.checks.exporter.refreshSeconds | quote }}
-            - name: PORT
-              value: {{ .Values.map.checks.exporter.port | quote }}
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              set -eu
-              OUT=/run/metrics
-              SRC=/var/lib/mcmap-e2e/metrics.prom
-              mkdir -p "$OUT"
-              # Before the first run there is nothing to serve, and nothing
-              # is what is served: the series are absent, which is what the
-              # never-ran rule reads.
-              : > "$OUT/metrics.txt"
-
-              # Copied, not served from the volume: only the results are
-              # published, and the evidence beside them is not.
-              #
-              # The runner writes the file whole and renames it into place,
-              # so a copy is either the last run or the one before. The last
-              # line it writes is checked for all the same: Prometheus drops
-              # a whole scrape on one malformed line.
-              #
-              # The loop runs beside httpd, and takes PID 1 with it if it
-              # ends, so that a frozen file is never served by a pod that
-              # looks healthy.
-              (
-                trap 'kill 1' EXIT
-                while true; do
-                  if [ -s "$SRC" ] && cp "$SRC" "$OUT/.metrics.tmp" 2>/dev/null \
-                    && grep -q '^mcmap_e2e_run_timestamp_seconds [0-9]' "$OUT/.metrics.tmp"; then
-                    mv "$OUT/.metrics.tmp" "$OUT/metrics.txt"
-                  fi
-                  sleep "$REFRESH_SECONDS"
-                done
-              ) &
-
-              # The .txt suffix is what makes busybox httpd answer
-              # text/plain with no MIME configuration to get wrong.
-              exec httpd -f -v -p "$PORT" -h "$OUT"
-          readinessProbe:
-            httpGet:
-              path: /metrics.txt
-              port: metrics
-            initialDelaySeconds: 5
-            periodSeconds: 10
+              memory: 32Mi
+              cpu: 50m
           volumeMounts:
-            - name: results
+            - name: evidence
               mountPath: /var/lib/mcmap-e2e
               readOnly: true
-            - name: metrics
-              mountPath: /run/metrics
       volumes:
-        - name: results
+        - name: evidence
           persistentVolumeClaim:
-            claimName: {{ include "map.checks.name" . }}
-            readOnly: true
-        - name: metrics
-          emptyDir: {}
+            claimName: {{ include "map.checks.evidence.name" . }}
+{{- end }}
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "map.checks.exporter.name" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app: {{ include "map.checks.exporter.name" . }}
-spec:
-  selector:
-    app: {{ include "map.checks.exporter.name" . }}
-  ports:
-    - name: metrics
-      port: {{ .Values.map.checks.exporter.port }}
-      targetPort: metrics
----
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: {{ include "map.checks.exporter.name" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app: {{ include "map.checks.exporter.name" . }}
-spec:
-  selector:
-    matchLabels:
-      app: {{ include "map.checks.exporter.name" . }}
-  namespaceSelector:
-    matchNames:
-      - {{ .Release.Namespace }}
-  endpoints:
-    - port: metrics
-      path: /metrics.txt
-      interval: 60s
----
+# Whether a run passed is whether its Job succeeded: the runner exits 0 when
+# every check passed or had nothing to look at, and non-zero when one failed
+# or the run broke. So the rules about runs read the Job's and the CronJob's
+# own state from kube-state-metrics, which is there whatever became of the
+# run: a pod killed for memory, or at its deadline, wrote nothing and is a
+# failed Job all the same. What each check measured is in the run's log.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -395,66 +345,89 @@ spec:
     - name: minecraft-fwb-map-checks
       rules:
         - alert: JdwillmsenMinecraftMapChecksFailing
-          # The exporter serves the last run's verdict until the next run
-          # replaces it, so this is "the last run failed" and stays so for
-          # as long as it is true. The `for` is only there to ride out the
-          # exporter restarting; one failed run is worth being told about,
-          # since a check that skips for a quiet world is not a failure.
+          # The newest failed Job of this CronJob began after the CronJob
+          # last succeeded: the last run failed. It stays so until a run
+          # passes, and is not held by a failed Job from yesterday that
+          # later runs have put behind them.
           #
-          # max by (namespace), so that the alert does not carry the
-          # exporter pod's name and resolve and fire again when it moves.
+          # A failed Job is any of: a check failed, the run broke, the pod
+          # was killed, or the run was still going at its deadline and
+          # never finished. Ownership is read from kube_job_owner and not
+          # guessed from the Job's name.
+          #
+          # A CronJob that has never succeeded has no last success to
+          # compare with, so it is given zero.
+          #
+          # No `for`: the condition is already the state of the last run
+          # and not a reading that could flap.
           expr: |
-            max by (namespace) (mcmap_e2e_run_success{namespace="{{ .Release.Namespace }}"}) == 0
-          for: {{ .Values.map.checks.alert.failingFor }}
+            max by (namespace) (
+              max by (namespace, job_name) (kube_job_status_start_time{namespace="{{ .Release.Namespace }}"})
+              and on (namespace, job_name)
+                (max by (namespace, job_name) (kube_job_status_failed{namespace="{{ .Release.Namespace }}"}) > 0)
+              and on (namespace, job_name)
+                kube_job_owner{namespace="{{ .Release.Namespace }}", owner_kind="CronJob", owner_name="{{ include "map.checks.name" . }}"}
+            )
+            > on (namespace)
+            (
+              max by (namespace) (kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}", cronjob="{{ include "map.checks.name" . }}"})
+              or on (namespace)
+              max by (namespace) (kube_cronjob_spec_suspend{namespace="{{ .Release.Namespace }}", cronjob="{{ include "map.checks.name" . }}"} * 0)
+            )
           labels:
             severity: warning
             namespace: {{ .Release.Namespace }}
           annotations:
             summary: The Minecraft FWB map failed its browser checks
             description: >-
-              The last run of the map's browser checks had a failing check.
-              mcmap_e2e_check_status says which (0 is failed, -1 skipped) and
-              mcmap_e2e_measure what it measured. The job's log has one line a
-              check with its own words for what went wrong; a screenshot and a
-              trace of the failure are on the checks' volume.
-              charts/minecraft-fwb/README.md, "Browser checks".
+              The last run of the map's browser checks failed: a check did, or the
+              run was killed or did not finish by its deadline. The Job's log has
+              one line of JSON a check, with a verdict, a reason from the suite's
+              own list and what it measured; a run that was killed has no last
+              line saying how it ended. charts/minecraft-fwb/README.md, "Browser
+              checks".
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
         - alert: JdwillmsenMinecraftMapChecksStale
-          # The other way to have no failing checks: no checks. The limit
-          # has to be longer than the longest gap the schedule leaves on
-          # purpose, which is the night's quiet hours.
+          # The other way to have no failing checks: no checks. This is
+          # the controller not having started a run, whatever became of the
+          # runs before: a CronJob suspended, or one that cannot be
+          # scheduled.
+          #
+          # The limit is the longest gap the schedule leaves on purpose,
+          # the five hours of the night, and one run skipped beside it,
+          # with room. The `for` is over that again, so a controller
+          # restart that reports nothing for a few minutes is not a page.
           expr: |
-            (time() - max by (namespace) (mcmap_e2e_run_timestamp_seconds{namespace="{{ .Release.Namespace }}"}))
+            (time() - max by (namespace) (kube_cronjob_status_last_schedule_time{namespace="{{ .Release.Namespace }}", cronjob="{{ include "map.checks.name" . }}"}))
               > {{ include "map.checks.staleSeconds" . }}
+          for: {{ .Values.map.checks.alert.staleFor }}
           labels:
             severity: warning
             namespace: {{ .Release.Namespace }}
           annotations:
             summary: The Minecraft FWB map's browser checks have stopped running
             description: >-
-              No run of the map's browser checks has finished for
-              {{ "{{ $value | humanizeDuration }}" }}. Nothing is watching the page
-              meanwhile. Check the {{ include "map.checks.name" . }} CronJob and its
-              last Job: a run that could not exchange its secret ends at once and
-              says so in its log.
+              No run of the map's browser checks has been started for
+              {{ "{{ $value | humanizeDuration }}" }}, which is longer than the
+              schedule ever leaves. Nothing is watching the page meanwhile. Check
+              that the {{ include "map.checks.name" . }} CronJob is not suspended
+              and that its pods can be scheduled.
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
         - alert: JdwillmsenMinecraftMapChecksNeverRan
-          # A series that was never written is absent, not old, and the
-          # rule above has nothing to subtract.
+          # A CronJob that has never started a run has no schedule time at
+          # all, and the rule above has nothing to subtract.
           expr: |
-            absent(mcmap_e2e_run_timestamp_seconds{namespace="{{ .Release.Namespace }}"})
+            absent(kube_cronjob_status_last_schedule_time{namespace="{{ .Release.Namespace }}", cronjob="{{ include "map.checks.name" . }}"})
           for: {{ .Values.map.checks.alert.staleAfter }}
           labels:
             severity: warning
             namespace: {{ .Release.Namespace }}
           annotations:
-            summary: The Minecraft FWB map's browser checks have never reported
+            summary: The Minecraft FWB map's browser checks have never run
             description: >-
-              The checks are switched on and no run has ever published a result,
-              or the exporter is not being scraped. Check the
-              {{ include "map.checks.name" . }} CronJob, the
-              {{ include "map.checks.exporter.name" . }} Deployment and its
-              ServiceMonitor.
+              The checks are switched on and the
+              {{ include "map.checks.name" . }} CronJob has never started a run,
+              or kube-state-metrics is not reporting it.
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
         - alert: JdwillmsenMinecraftMapServiceExchangeRefused
           # Nothing that holds the secret ever presents a wrong one, and the
@@ -471,11 +444,10 @@ spec:
             description: >-
               The map's internal port was asked for a service session and said no.
               mcmap_service_exchanges_total by result says how: denied is a wrong
-              secret, locked is the five minutes after five wrong ones, limited is
-              more exchanges than one a minute, malformed is a secret put in an
-              address. The map logs each as "map service session refused" with the
-              caller's address. If the checks are failing too, the Secret was
-              changed without the map being restarted.
+              secret, limited is a wrong one past the few judged each minute,
+              malformed is a secret put in an address. The map logs each as "map
+              service session refused" with the caller's address. If the checks are failing too, the map and the job
+              are not reading the same Secret.
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
         - alert: JdwillmsenMinecraftMapServiceExchangeFromOutside
           # The job's exchange comes from a pod address and is counted as
@@ -514,7 +486,6 @@ spec:
               sessions were issued in an hour, and the schedule asks for fewer. Each
               is a "map service session issued" line in the map's log with the
               caller's address. If the callers are not the checks' own pods, rotate
-              the Secret: delete {{ include "map.checks.secret.name" . }} and restart
-              the map.
+              the Secret by raising map.checks.secret.generation.
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
 {{- end }}
