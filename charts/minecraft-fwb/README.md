@@ -549,11 +549,51 @@ stops with the server and resumes when the world has loaded, minutes later.
   restored onto the volume is there before the pod starts and is not
   affected.
 
+## Deploy announcements
+
+ArgoCD auto-syncs with selfHeal, so merging is deploying. A PreSync hook
+(`templates/deploy-announce-hook.yaml`) tells players in game before a sync
+disturbs them. It compares digests of the workloads' values, recorded by the
+previous sync in the `-server-spec-hash` ConfigMap, with the digests of the
+sync it is part of:
+
+| What changes | In game | Held |
+|---|---|---|
+| Game server pod | Countdown of `deployAnnounce.leadSeconds`, only if someone is online | Yes, for the countdown |
+| Chat agent pod | One line, server not restarting | No |
+| Web map pod | One line: the map is restarting, back in about two minutes, the game is not affected | No |
+| Map and server together | The server countdown only; the map line is not sent separately | As for the server |
+| Anything else | Nothing | No |
+
+Renovate merges map image bumps unattended, several times a week, so those
+restarts are now announced like any other. The map digest covers everything
+the map's pod template reads (image, env, resources, and the few values
+outside `map.*` that reach its env) and leaves out `map.host`,
+`map.persistence` and the alert thresholds, which never restart the pod.
+
+The map line is skipped, with a log line saying why, when the server reports
+nobody online or only the actors in `global.actors` (the agent and the AFK
+bots). If the player list cannot be read the line is sent anyway.
+
+The first sync after this was introduced finds no map digest in the ConfigMap.
+That is treated as unknown: nothing is announced and the digest is recorded,
+so the next map change is announced. The hook never fails a sync; every error
+path logs and exits 0.
+
+| Value | Default | Effect |
+|---|---|---|
+| `deployAnnounce.map.enabled` | `true` | Announce map restarts. Needs `map.enabled` and `deployAnnounce.enabled`. |
+| `deployAnnounce.map.message` | see `values.yaml` | The line sent, with section-sign colour codes. |
+
+Tested by `tools/tests/test-deploy-announce.sh`, which runs the script as
+rendered against a stubbed `kubectl`.
+
 ## Tests
 
 ```bash
 tools/tests/test-world-integrity-alerts.sh   # promtool unit tests for the rules above
 tools/tests/test-tick-rate-alerts.sh
+tools/tests/test-deploy-announce.sh          # the deploy-announce hook's decisions and digests
 tools/tests/test-map.sh                      # the map's exposure, the pack's init step, the map and live alerts
 ```
 

@@ -66,6 +66,19 @@ spec:
               value: {{ include "deployAnnounce.serverSpecHash" . | quote }}
             - name: EXPECTED_AGENT_HASH
               value: {{ include "deployAnnounce.agentSpecHash" . | quote }}
+            - name: EXPECTED_MAP_HASH
+              value: {{ include "deployAnnounce.mapSpecHash" . | quote }}
+            # Off is expressed here rather than by blanking the digest above,
+            # so the ConfigMap keeps recording the map's and switching the
+            # notice on later compares against the right previous state.
+            - name: MAP_ANNOUNCE
+              value: {{ .Values.deployAnnounce.map.enabled | quote }}
+            - name: MAP_MESSAGE
+              value: {{ .Values.deployAnnounce.map.message | quote }}
+            # Who counts as nobody: the agent and the AFK bots are always
+            # connected, so a count above zero is not by itself an audience.
+            - name: ACTOR_NAMES
+              value: {{ include "actors.kickable" . | quote }}
             - name: SPEC_HASH_CONFIGMAP
               value: {{ include "deployAnnounce.hashConfigMap" . }}
           command: ["/bin/bash", "-c"]
@@ -85,6 +98,48 @@ spec:
                 json="$(MSG="$text" python3 -c 'import json,os; print(json.dumps({"rawtext":[{"text":os.environ["MSG"]}]}))')"
                 timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
                   -- send-command tellraw @a "$json" >/dev/null 2>&1
+              }
+
+              # Ask the server who is on. `grep -a` because the console log
+              # carries binary bytes and grep otherwise refuses the whole
+              # stream -- the same defect that makes `tools/mc players` report
+              # zero while four people are playing. A window of time rather
+              # than of lines, because the map's live layer buries the reply
+              # under its own lines within seconds.
+              #
+              # Sets ONLINE (empty when unreadable) and NAMES, the line the
+              # server prints under the count.
+              read_players() {
+                local console
+                timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                  -- send-command list >/dev/null 2>&1
+                sleep 2
+                console="$(timeout 15s kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --since=20s 2>/dev/null | tr -d '\000')"
+                ONLINE="$(grep -a -oE 'There are [0-9]+/[0-9]+ players online' <<<"$console" | tail -1 \
+                  | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
+                NAMES="$(grep -a -A1 'players online' <<<"$console" | tail -1 | tr -d '\r')"
+              }
+
+              # True only when the count is positive, the names line was read,
+              # it lists exactly that many, and every one is an actor. Anything
+              # less certain is false: a missed announcement to a real player
+              # is the worse error, a spurious line to nobody costs nothing.
+              only_actors_online() {
+                local count=0 name actor known actors
+                [[ -n "$NAMES" && "$NAMES" != *"players online"* ]] || return 1
+                while IFS= read -r name; do
+                  name="${name#"${name%%[![:space:]]*}"}"
+                  name="${name%"${name##*[![:space:]]}"}"
+                  [[ -n "$name" ]] || continue
+                  known=false
+                  IFS=',' read -ra actors <<<"$ACTOR_NAMES"
+                  for actor in "${actors[@]}"; do
+                    [[ "${name,,}" == "${actor,,}" ]] && known=true
+                  done
+                  [[ "$known" == "true" ]] || return 1
+                  count=$((count + 1))
+                done < <(tr ',' '\n' <<<"$NAMES")
+                [[ "$count" -eq "$ONLINE" ]]
               }
 
               # Never block a sync. Every failure below reports and exits 0:
@@ -120,6 +175,8 @@ spec:
                 -o jsonpath='{.data.hash}' 2>/dev/null || echo "")"
               LIVE_AGENT_HASH="$(kubectl get configmap -n "$NS" "$SPEC_HASH_CONFIGMAP" \
                 -o jsonpath='{.data.agentHash}' 2>/dev/null || echo "")"
+              LIVE_MAP_HASH="$(kubectl get configmap -n "$NS" "$SPEC_HASH_CONFIGMAP" \
+                -o jsonpath='{.data.mapHash}' 2>/dev/null || echo "")"
               if [[ -z "$LIVE_HASH" ]]; then
                 # First sync after this was introduced, or someone deleted it.
                 # Warn: an unknown previous state is not evidence of no change,
@@ -138,10 +195,49 @@ spec:
                 # while an unannounced agent release costs a few seconds of
                 # confusion. On the first sync after this shipped there is no
                 # agent digest to compare, and a notice then would be a guess.
+                AGENT_CHANGING=false
                 if [[ -n "$EXPECTED_AGENT_HASH" && -n "$LIVE_AGENT_HASH" \
                       && "$LIVE_AGENT_HASH" != "$EXPECTED_AGENT_HASH" ]]; then
+                  AGENT_CHANGING=true
+                fi
+
+                # The map pod gets the same treatment, and the same asymmetry:
+                # a missing previous digest is silent. The ConfigMap written by
+                # the release before this existed has none, and announcing a
+                # restart that is not happening is the one thing worse than
+                # missing one that is. This sync records it, so the next
+                # comparison is real. Renovate merges map image bumps
+                # unattended, which is the whole reason this line exists.
+                MAP_CHANGING=false
+                if [[ "$MAP_ANNOUNCE" == "true" && -n "$EXPECTED_MAP_HASH" && -n "$LIVE_MAP_HASH" \
+                      && "$LIVE_MAP_HASH" != "$EXPECTED_MAP_HASH" ]]; then
+                  MAP_CHANGING=true
+                fi
+
+                if [[ "$AGENT_CHANGING" == "true" ]]; then
                   emit agent "agent spec changing ($LIVE_AGENT_HASH -> $EXPECTED_AGENT_HASH); one notice, no countdown"
                   say "§b§lChat assistant updating.§r§7 It will drop out of chat for a few seconds and come straight back. The server is not restarting."
+                fi
+
+                if [[ "$MAP_CHANGING" == "true" ]]; then
+                  # The settle inside read_players is the only wait on this
+                  # path, and it is not a countdown: the map restarting
+                  # disconnects nobody, so nothing here holds the sync.
+                  read_players
+                  if [[ -z "$ONLINE" ]]; then
+                    emit map "map spec changing ($LIVE_MAP_HASH -> $EXPECTED_MAP_HASH); could not read the player count, announcing anyway"
+                    say "$MAP_MESSAGE"
+                  elif [[ "$ONLINE" -eq 0 ]]; then
+                    emit skipped "map spec changing ($LIVE_MAP_HASH -> $EXPECTED_MAP_HASH); not announced, nobody online"
+                  elif only_actors_online; then
+                    emit skipped "map spec changing ($LIVE_MAP_HASH -> $EXPECTED_MAP_HASH); not announced, only the server's own actors are online ($ONLINE)"
+                  else
+                    emit map "map spec changing ($LIVE_MAP_HASH -> $EXPECTED_MAP_HASH); one notice, no countdown"
+                    say "$MAP_MESSAGE"
+                  fi
+                fi
+
+                if [[ "$AGENT_CHANGING" == "true" || "$MAP_CHANGING" == "true" ]]; then
                   exit 0
                 fi
                 emit skipped "server spec unchanged ($EXPECTED_SPEC_HASH); this sync does not restart the server"
@@ -150,18 +246,7 @@ spec:
                 emit warning "server spec changing ($LIVE_HASH -> $EXPECTED_SPEC_HASH)"
               fi
 
-              # Ask the server who is on. `grep -a` because the console log
-              # carries binary bytes and grep otherwise refuses the whole
-              # stream -- the same defect that makes `tools/mc players` report
-              # zero while four people are playing. A window of time rather
-              # than of lines, because the map's live layer buries the reply
-              # under its own lines within seconds.
-              timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
-                -- send-command list >/dev/null 2>&1
-              sleep 2
-              ONLINE="$(timeout 15s kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --since=20s 2>/dev/null \
-                | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 \
-                | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
+              read_players
 
               if [[ -z "$ONLINE" ]]; then
                 emit unknown "could not read the player count; warning anyway"

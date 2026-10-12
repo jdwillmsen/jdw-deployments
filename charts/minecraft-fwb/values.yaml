@@ -698,6 +698,22 @@ deployAnnounce:
   # number here worth arguing about.
   leadSeconds: 120
 
+  # The web map restarts on its own pod, so it disconnects nobody and earns a
+  # single line in chat rather than a countdown. Renovate merges map image
+  # bumps unattended, several a week, which is what makes the line worth
+  # having: without it the page just goes away and players take that for a
+  # fault.
+  #
+  # Skipped when the server reports only its own actors online (the agent and
+  # the AFK bots, from global.actors), since nobody is there to read it. A
+  # player count the hook cannot read announces anyway.
+  map:
+    # Takes effect only while map.enabled is also true; with no map pod there
+    # is nothing to announce.
+    enabled: true
+    # Sent verbatim through tellraw, so section-sign colour codes work.
+    message: "§b§lWeb map updating.§r§7 It will be back in about two minutes. The game is not affected."
+
   # Same image as the other in-cluster actors: it needs kubectl and python3,
   # both of which this one already carries.
   image: alpine/k8s:1.37.1

@@ -1,6 +1,6 @@
 {{- if .Values.deployAnnounce.enabled }}
-# Carries the server's and the chat agent's values digests from one sync to the
-# next.
+# Carries the server's, the chat agent's and the web map's values digests from
+# one sync to the next.
 #
 # This is what lets the PreSync hook tell "the server is about to restart" from
 # "only the chat agent is restarting" from "a bot is being scaled". Argo applies
@@ -24,4 +24,9 @@ data:
   # players watching it leave chat deserve to know it was a release rather
   # than a crash. Empty while no agent is in chat -- see the helper.
   agentHash: {{ include "deployAnnounce.agentSpecHash" . | quote }}
+  # The map's, for the same reason. A map-only change restarts the map pod and
+  # nobody else, which earns a one-line notice and no countdown. Absent from
+  # the object written by the release before this existed, which the hook reads
+  # as "unknown, stay quiet" rather than as a change.
+  mapHash: {{ include "deployAnnounce.mapSpecHash" . | quote }}
 {{- end }}
