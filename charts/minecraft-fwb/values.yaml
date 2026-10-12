@@ -2325,11 +2325,26 @@ map:
     # without image.digest.
     enabled: false
 
+    # Whether the platform enforces network policy in this namespace. It
+    # does not today: the tenant's namespace is not enforced, so the platform
+    # gives it allow-all policies, and the checks' own NetworkPolicy would
+    # change nothing. The checks run a browser without its own sandbox and
+    # that policy is what stands in for it, so the chart refuses to render
+    # them enabled until this is true. Set it only once the platform's
+    # tenant definition enforces this namespace; setting it sooner is saying
+    # something untrue to get past a guard.
+    networkPolicyEnforced: false
+
     secret:
       # Step one, on its own: generates the Secret and nothing else, so that
       # it can be seen Synced before anything is wired to it. The map does
       # not read it, and serves no exchange, until `enabled`.
       create: false
+      # Raise by one to rotate. The number is in the Secret's name, so a new
+      # one is generated, the map is restarted onto it, the job presents it,
+      # and the old one is pruned. Every session issued under the old secret
+      # stops working as the map comes back.
+      generation: 1
 
     image:
       repository: ghcr.io/jdwillmsen/minecraft-map-checks
@@ -2375,28 +2390,29 @@ map:
     # The browser's profile and scratch, on the node's disk for one run.
     tmpSizeLimit: 512Mi
 
-    # Where the last run's results and the evidence of failed checks are
-    # kept. File storage that the job and the exporter can both mount, from
-    # different nodes.
-    results:
-      storageClass: truenas-nfs
-      accessMode: ReadWriteMany
-      size: 1Gi
-
-    # A screenshot and a trace of each failed check. They show the live map,
-    # so they are kept on the volume above and nowhere else, and not for
-    # long: the newest keepRuns failed runs, none older than keepDays. Off,
-    # a failure is its log line and its metrics only.
+    # A screenshot of each failed check, kept on a volume. Off: a failure is
+    # then its log line, which says which check, why, and what it measured.
+    #
+    # A screenshot shows the live map, with real coordinates and gamertags.
+    # On, the newest keepRuns failed runs are kept and none older than
+    # keepDays, each run capped at maxMegabytesPerRun, on a volume that only
+    # the job writes and only the reader below reads.
     evidence:
-      enabled: true
+      enabled: false
+      # Also the page's HTML and the text of what went wrong. More of the map
+      # than a picture.
+      pages: false
       keepRuns: 5
       keepDays: 7
+      maxMegabytesPerRun: 20
+      storageClass: truenas-iscsi
+      size: 1Gi
+      reader:
+        # A pod that holds the volume read-only so that evidence can be
+        # copied out of it. Pinned by digest, like the checks' own image.
+        image: busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
 
     networkPolicy:
-      # Limits the job's pod to the name server, the map's internal port and
-      # the gateway. Enforced only by a network plugin that enforces
-      # NetworkPolicy at all.
-      enabled: true
       # Where the gateway that serves map.host runs; the namespace the
       # map's HTTPRoute attaches to.
       gatewayNamespace: nginx-gateway
@@ -2405,19 +2421,12 @@ map:
       # nothing.
       publicCIDRs: []
 
-    exporter:
-      image: busybox:1.38
-      # 9101 and 9102 are the backup's and the census's.
-      port: 9103
-      refreshSeconds: 60
-
     alert:
-      # How long the last run may stand as failed before it is told. Only
-      # there to ride out the exporter restarting.
-      failingFor: 10m
-      # Longer than the longest gap the schedule leaves on purpose: 02:20 to
-      # 07:20 is five hours.
-      staleAfter: 6h
+      # Longer than the longest gap the schedule leaves on purpose, 02:20 to
+      # 07:20, with one skipped run beside it: seven hours with no run
+      # started, and still none half an hour later.
+      staleAfter: 7h
+      staleFor: 30m
       # The schedule asks for one an hour. A run by hand on top of that is
       # two; more than this is something else holding the secret.
       maxExchangesPerHour: 3

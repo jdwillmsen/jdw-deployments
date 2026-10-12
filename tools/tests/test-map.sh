@@ -490,7 +490,7 @@ PY
 #
 # A made-up digest stands in for the image's: this renders the chart and
 # pulls nothing.
-checks_on=(--set map.checks.secret.create=true --set map.checks.enabled=true
+checks_on=(--set map.checks.secret.create=true --set map.checks.enabled=true --set map.checks.networkPolicyEnforced=true
   --set map.checks.image.tag=1.0.0 --set "map.checks.image.digest=sha256:$(printf 'a%.0s' $(seq 64))")
 render() {
   helm template minecraft-fwb "$chart" \
@@ -501,6 +501,8 @@ render() {
 }
 render --set map.checks.secret.create=true > "$work/checks-secret.yaml"
 render "${checks_on[@]}" > "$work/checks-on.yaml"
+render "${checks_on[@]}" --set map.checks.secret.generation=2 > "$work/checks-rotated.yaml"
+render "${checks_on[@]}" --set map.checks.evidence.enabled=true > "$work/checks-evidence.yaml"
 
 # Wiring a workload to a Secret in the step that first creates it is how this
 # chart got its 40-hour outage, so the order is enforced and not only
@@ -509,18 +511,36 @@ render "${checks_on[@]}" > "$work/checks-on.yaml"
 if render --set map.checks.enabled=true >/dev/null 2>&1; then
   fail "the browser checks can be enabled without their Secret being generated first"
 fi
-if render --set map.checks.secret.create=true --set map.checks.enabled=true --set map.checks.image.tag=1.0.0 >/dev/null 2>&1; then
+if render --set map.checks.secret.create=true --set map.checks.enabled=true --set map.checks.networkPolicyEnforced=true --set map.checks.image.tag=1.0.0 >/dev/null 2>&1; then
   fail "the browser checks can be enabled with an image that is not pinned by digest"
 fi
+# The checks' browser has no sandbox of its own, and the network policy that
+# stands in for one does nothing in a namespace the platform does not
+# enforce. Production's is not enforced today, so as production's values
+# stand, the checks cannot be rendered on at all.
+unacknowledged=("${checks_on[@]}")
+unset 'unacknowledged[4]' 'unacknowledged[5]'
+if render "${unacknowledged[@]}" >/dev/null 2>&1; then
+  fail "the browser checks can be enabled without anyone saying the namespace enforces network policy"
+fi
+refusal="$(render "${unacknowledged[@]}" 2>&1 || true)"
+if [[ "$refusal" != *networkPolicyEnforced* ]]; then
+  fail "the refusal to render the checks unenforced does not name the value that has to be set"
+fi
+python3 - "$chart/values.yaml" <<'PY' || fail "values.yaml claims the namespace enforces network policy; that is for the platform to make true first"
+import sys, yaml
+checks = yaml.safe_load(open(sys.argv[1]))["map"]["checks"]
+sys.exit(0 if checks["networkPolicyEnforced"] is False and checks["enabled"] is False and checks["secret"]["create"] is False and checks["evidence"]["enabled"] is False else 1)
+PY
 
-python3 - "$work/rendered.yaml" "$work/checks-secret.yaml" "$work/checks-on.yaml" <<'PY' || fail "the browser checks are not as contained as they were made"
+python3 - "$work/rendered.yaml" "$work/checks-secret.yaml" "$work/checks-on.yaml" "$work/checks-rotated.yaml" "$work/checks-evidence.yaml" <<'PY' || fail "the browser checks are not as contained as they were made"
 import re, sys, yaml
 
 load = lambda path: [d for d in yaml.safe_load_all(open(path)) if d]
-off, staged, on = (load(p) for p in sys.argv[1:4])
+off, staged, on, rotated, kept = (load(p) for p in sys.argv[1:6])
 text = {"off": open(sys.argv[1]).read(), "on": open(sys.argv[3]).read()}
 named = lambda docs: {(d["kind"], d["metadata"]["name"]) for d in docs}
-by = lambda docs, kind, suffix: next(d for d in docs if d["kind"] == kind and d["metadata"]["name"].endswith(suffix))
+by = lambda docs, kind, suffix: next(d for d in docs if d["kind"] == kind and (d["metadata"]["name"].endswith(suffix) or suffix + "-g" in d["metadata"]["name"]))
 map_env = lambda docs: {e["name"]: e for e in by(docs, "Deployment", "-map")["spec"]["template"]["spec"]["containers"][0]["env"]}
 bad = []
 
@@ -532,10 +552,12 @@ if "SERVICE_SESSION" in text["off"]:
 
 # Step one adds the generator and nothing that reads it.
 added = named(staged) - named(off)
-if added != {("Password", "minecraft-fwb-map-checks-secret"), ("ExternalSecret", "minecraft-fwb-map-checks-secret")}:
+if added != {("Password", "minecraft-fwb-map-checks-secret-g1"), ("ExternalSecret", "minecraft-fwb-map-checks-secret-g1")}:
     bad.append(f"map.checks.secret.create alone adds {sorted(added)}; it should add the generator and its ExternalSecret only")
 if "SERVICE_SESSION_SECRET" in map_env(staged):
     bad.append("the map reads the checks' Secret as soon as it is generated; that is step two")
+if by(staged, "Deployment", "-map")["spec"]["template"] != by(off, "Deployment", "-map")["spec"]["template"]:
+    bad.append("generating the checks' Secret restarts the map; nothing reads it until step two")
 
 # The secret is generated in the cluster, once, and is a literal nowhere.
 password = by(on, "Password", "-map-checks-secret")
@@ -567,11 +589,41 @@ for route in (d for d in on if d["kind"] == "HTTPRoute"):
         for backend in rule["backendRefs"]:
             if "map-checks" in backend["name"] or (backend["name"] == service["metadata"]["name"] and backend["port"] != ports["http"]):
                 bad.append(f"HTTPRoute {route['metadata']['name']} publishes {backend['name']}:{backend['port']}; the exchange must stay unreachable from outside")
-if named(on) - named(staged) != {
-        ("PersistentVolumeClaim", "minecraft-fwb-map-checks"), ("CronJob", "minecraft-fwb-map-checks"), ("NetworkPolicy", "minecraft-fwb-map-checks"),
-        ("PrometheusRule", "minecraft-fwb-map-checks"), ("Deployment", "minecraft-fwb-map-checks-exporter"),
-        ("Service", "minecraft-fwb-map-checks-exporter"), ("ServiceMonitor", "minecraft-fwb-map-checks-exporter")}:
+if named(on) - named(staged) != {("CronJob", "minecraft-fwb-map-checks"), ("NetworkPolicy", "minecraft-fwb-map-checks"), ("PrometheusRule", "minecraft-fwb-map-checks")}:
     bad.append(f"map.checks.enabled adds {sorted(named(on) - named(staged))}; anything new here needs a reason and a line in this test")
+
+# The Secret is made a sync wave ahead of the map that reads it once at
+# start, and the map's pods name it, so that a new Secret restarts the map
+# onto it and never the other way about.
+for doc in (password, external):
+    if (doc["metadata"].get("annotations") or {}).get("argocd.argoproj.io/sync-wave") != "-1":
+        bad.append(f"the checks' {doc['kind']} is not synced ahead of the map; a map that starts before its Secret exists never reads it")
+if "argocd.argoproj.io/sync-wave" in (by(on, "Deployment", "-map")["metadata"].get("annotations") or {}):
+    bad.append("the map has a sync wave of its own; the checks' Secret has to stay ahead of it")
+names_secret = lambda docs: (by(docs, "Deployment", "-map")["spec"]["template"]["metadata"].get("annotations") or {}).get("minecraft-fwb/map-checks-secret")
+if names_secret(on) != external["spec"]["target"]["name"]:
+    bad.append("the map's pods do not name the checks' Secret, so a new Secret would not restart the map onto it")
+if names_secret(off) is not None or names_secret(staged) is not None:
+    bad.append("the map's pods name the checks' Secret before the checks are on")
+
+# Rotation is one number in git. Raising it changes the generated Secret,
+# the map and the job, and nothing else: the old Secret's objects go, which
+# is ArgoCD pruning them, and no command is run against the cluster.
+index = lambda docs: {(d["kind"], d["metadata"]["name"]): d for d in docs}
+before, after = index(on), index(rotated)
+changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
+want = {("Password", "minecraft-fwb-map-checks-secret-g1"), ("ExternalSecret", "minecraft-fwb-map-checks-secret-g1"),
+        ("Password", "minecraft-fwb-map-checks-secret-g2"), ("ExternalSecret", "minecraft-fwb-map-checks-secret-g2"),
+        ("Deployment", "minecraft-fwb-map"), ("CronJob", "minecraft-fwb-map-checks")}
+if changed != want:
+    bad.append(f"raising map.checks.secret.generation changes {sorted(changed ^ want)} differently from the Secret, the map and the job")
+if map_env(rotated)["SERVICE_SESSION_SECRET"]["valueFrom"]["secretKeyRef"]["name"] != "minecraft-fwb-map-checks-secret-g2" or names_secret(rotated) != "minecraft-fwb-map-checks-secret-g2":
+    bad.append("after a rotation the map does not read, or is not restarted onto, the new Secret")
+rotated_job = by(rotated, "CronJob", "-map-checks")["spec"]["jobTemplate"]["spec"]["template"]
+if [v["secret"]["secretName"] for v in rotated_job["spec"]["volumes"] if "secret" in v] != ["minecraft-fwb-map-checks-secret-g2"]:
+    bad.append("after a rotation the job does not present the new Secret")
+if re.search(r"kubectl\s+(delete|rollout)|rollout\s+restart", yaml.safe_dump(by(on, "PrometheusRule", "-map-checks"))):
+    bad.append("an alert tells its reader to rotate the Secret by hand")
 
 # The job: a browser, beside the game server, holding a session.
 job = by(on, "CronJob", "-map-checks")
@@ -583,6 +635,8 @@ c = pod["containers"][0]
 ctx, pctx = c.get("securityContext") or {}, pod.get("securityContext") or {}
 if pod.get("automountServiceAccountToken") is not False or pod.get("serviceAccountName"):
     bad.append("the checks' pod holds a service account token; it asks nothing of the cluster and runs a browser")
+if pctx.get("runAsUser") != 1001:
+    bad.append(f"the checks run as uid {pctx.get('runAsUser')}; the image's unprivileged user is 1001, and 1000 in it is another account")
 if pctx.get("runAsNonRoot") is not True or pctx.get("runAsUser", 0) == 0 or (pctx.get("seccompProfile") or {}).get("type") != "RuntimeDefault":
     bad.append("the checks' pod is not held to a non-root user under the default seccomp profile")
 if ctx.get("readOnlyRootFilesystem") is not True or ctx.get("allowPrivilegeEscalation") is not False or (ctx.get("capabilities") or {}).get("drop") != ["ALL"] or ctx.get("privileged"):
@@ -689,16 +743,54 @@ else:
                 if any(start <= minute % 1440 < end or start <= minute % 1440 + 1440 < end for minute in run):
                     bad.append(f"a run of the checks at {h:02d}:{m:02d} UTC can overlap {what}")
 
-# The exporter reads the results and can change nothing.
-exporter = by(on, "Deployment", "-map-checks-exporter")["spec"]["template"]["spec"]
-e = exporter["containers"][0]
-claim = next(v for v in exporter["volumes"] if "persistentVolumeClaim" in v)
-if exporter.get("automountServiceAccountToken") is not False or (e["securityContext"]).get("readOnlyRootFilesystem") is not True:
-    bad.append("the checks' exporter holds a token or a writable root")
-if claim["persistentVolumeClaim"].get("readOnly") is not True or not all(m.get("readOnly") for m in e["volumeMounts"] if m["name"] == claim["name"]):
-    bad.append("the checks' exporter can write to the volume the evidence is on")
-if any("secret" in v for v in exporter["volumes"]):
-    bad.append("the checks' exporter mounts a Secret")
+# Evidence is off unless asked for: no volume, nowhere to write, nothing
+# kept. The job's only writable places are its scratch directory.
+if any(d["kind"] == "PersistentVolumeClaim" and "map-checks" in d["metadata"]["name"] for d in on):
+    bad.append("the checks have a volume with evidence off")
+if any(flag.startswith("--evidence") or flag == "--metrics-file" for flag in c["args"]):
+    bad.append("the checks are told to keep evidence, or to write somewhere, with evidence off")
+if [v["name"] for v in pod["volumes"] if "persistentVolumeClaim" in v] or sorted(m["name"] for m in c["volumeMounts"] if not m.get("readOnly")) != ["tmp"]:
+    bad.append("the checks' pod can write somewhere other than its scratch directory")
+if any(d["kind"] in ("Deployment", "Service", "ServiceMonitor") and "map-checks" in d["metadata"]["name"] for d in on):
+    bad.append("the checks run something besides the job with evidence off")
+
+# On, it is a picture on a volume one node holds, read through a pod that
+# can only read, in an image that cannot be moved under it.
+if named(kept) - named(on) != {("PersistentVolumeClaim", "minecraft-fwb-map-checks-evidence"), ("Deployment", "minecraft-fwb-map-checks-evidence")}:
+    bad.append(f"map.checks.evidence.enabled adds {sorted(named(kept) - named(on))}")
+else:
+    claim = by(kept, "PersistentVolumeClaim", "-map-checks-evidence")
+    if claim["spec"]["accessModes"] != ["ReadWriteOnce"]:
+        bad.append(f"the evidence volume asks for {claim['spec']['accessModes']}; nothing needs it from two nodes")
+    kept_job = by(kept, "CronJob", "-map-checks")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    kept_args = kept_job["containers"][0]["args"]
+    if "--evidence-dir" not in kept_args or "--evidence-max-mb" not in kept_args or "--evidence-keep" not in kept_args or "--evidence-days" not in kept_args:
+        bad.append("with evidence on the job is not told where to keep it, or how much, or for how long")
+    if "--evidence-pages" in kept_args:
+        bad.append("evidence keeps the page's HTML without that being asked for as well")
+    reader = by(kept, "Deployment", "-map-checks-evidence")["spec"]["template"]
+    together = ((kept_job.get("affinity") or {}).get("podAffinity") or {}).get("requiredDuringSchedulingIgnoredDuringExecution") or []
+    if [t["labelSelector"]["matchLabels"] for t in together] != [reader["metadata"]["labels"]]:
+        bad.append("the job is not made to run on the node that holds the evidence volume, which attaches to one")
+    r = reader["spec"]["containers"][0]
+    held = next(v for v in reader["spec"]["volumes"] if "persistentVolumeClaim" in v)
+    if not re.fullmatch(r"[\w./-]+(:[\w.-]+)?@sha256:[0-9a-f]{64}", r["image"]):
+        bad.append(f"the evidence reader's image {r['image']} is not pinned by digest")
+    if reader["spec"].get("automountServiceAccountToken") is not False or r["securityContext"].get("readOnlyRootFilesystem") is not True or (r["securityContext"].get("capabilities") or {}).get("drop") != ["ALL"]:
+        bad.append("the evidence reader holds a token, a writable root or a capability")
+    if not all(m.get("readOnly") for m in r["volumeMounts"]) or any("secret" in v for v in reader["spec"]["volumes"]) or held["persistentVolumeClaim"]["claimName"] != claim["metadata"]["name"]:
+        bad.append("the evidence reader can write to the evidence, or mounts a Secret")
+    if r.get("ports") or any(d["kind"] == "Service" and "evidence" in d["metadata"]["name"] for d in kept):
+        bad.append("the evidence reader listens on something; evidence is copied out by whoever may, and served to nobody")
+
+# Every image the checks bring is pinned by what it is, not by a name.
+for doc in kept:
+    if "map-checks" not in doc["metadata"]["name"] or doc["kind"] not in ("CronJob", "Deployment"):
+        continue
+    spec_of = doc["spec"]["jobTemplate"]["spec"]["template"]["spec"] if doc["kind"] == "CronJob" else doc["spec"]["template"]["spec"]
+    for container in spec_of["containers"] + (spec_of.get("initContainers") or []):
+        if not re.search(r"@sha256:[0-9a-f]{64}$", container["image"]):
+            bad.append(f"{doc['kind']} {doc['metadata']['name']} runs {container['image']}, which is not pinned by digest")
 
 for line in dict.fromkeys(bad):
     print(line)
@@ -1111,9 +1203,10 @@ if ! out="$(cd "$work" && promtool test rules tests.yaml 2>&1)"; then
   fail "the map alert rules do not behave as specified"
 fi
 
-# The browser checks' rules. promtool's clock starts at unix 0, so a run
-# timestamp counting 60 a minute is a run that has just finished, and one
-# held still is the last run there was.
+# The browser checks' rules. promtool's clock starts at unix 0. A run's
+# verdict is its Job's, so the series here are kube-state-metrics' own: when
+# the CronJob last started a run and last had one succeed, and each Job's
+# start, failure and owner.
 python3 - "$work/checks-on.yaml" > "$work/check-rules.yaml" <<'PY'
 import sys, yaml
 for doc in yaml.safe_load_all(open(sys.argv[1])):
@@ -1128,59 +1221,79 @@ rule_files:
   - check-rules.yaml
 evaluation_interval: 1m
 tests:
-  # Running and passing, with the job's own exchange once an hour: nothing
-  # to say. The exchange counters are at zero from the map's start, which is
-  # what lets a first refusal show as an increase at all.
+  # Running and passing, hourly, with the five hours the schedule leaves
+  # each night in the middle: nothing to say, during the gap or after it.
+  # A quiet world is this case too: checks that had nothing to look at are
+  # skipped, the run passes, and its Job succeeds. A Job of another CronJob
+  # that failed is nobody's business here.
   - interval: 1m
     input_series:
-      - series: 'mcmap_e2e_run_success{namespace="jdwillmsen-prd", pod="exporter-a"}'
-        values: '1x600'
-      - series: 'mcmap_e2e_run_timestamp_seconds{namespace="jdwillmsen-prd", pod="exporter-a"}'
-        values: '0+60x600'
+      - series: 'kube_cronjob_spec_suspend{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '0x900'
+      - series: 'kube_cronjob_status_last_schedule_time{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '0x59 3600x59 7200x299 25200x59 28800x59 32400x59 36000x300'
+      - series: 'kube_cronjob_status_last_successful_time{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '_x2 150x59 3750x59 7350x299 25350x59 28950x59 32550x59 36150x300'
+      - series: 'kube_job_status_start_time{namespace="jdwillmsen-prd", job_name="minecraft-fwb-backup-1"}'
+        values: '9000x900'
+      - series: 'kube_job_status_failed{namespace="jdwillmsen-prd", job_name="minecraft-fwb-backup-1"}'
+        values: '1x900'
+      - series: 'kube_job_owner{namespace="jdwillmsen-prd", job_name="minecraft-fwb-backup-1", owner_kind="CronJob", owner_name="minecraft-fwb-backup"}'
+        values: '1x900'
       - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="private"}'
-        values: '0+0x20 1+0x59 2+0x59 3+0x59 4+0x59 5+0x59 6+0x59 7+0x59 8+0x59 9+0x59 10+0x59'
+        values: '0+0x20 1+0x59 2+0x59 3+0x299 4+0x59 5+0x59 6+0x59 7+0x300'
       - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="denied", source="private"}'
-        values: '0x600'
+        values: '0x900'
       - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="loopback"}'
-        values: '0x600'
+        values: '0x900'
     alert_rule_test:
-      - eval_time: 9h
-        alertname: JdwillmsenMinecraftMapChecksFailing
-        exp_alerts: []
-      - eval_time: 9h
+      - eval_time: 6h59m
         alertname: JdwillmsenMinecraftMapChecksStale
         exp_alerts: []
-      - eval_time: 9h
+      - eval_time: 6h59m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+      - eval_time: 12h
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+      - eval_time: 12h
+        alertname: JdwillmsenMinecraftMapChecksStale
+        exp_alerts: []
+      - eval_time: 12h
         alertname: JdwillmsenMinecraftMapChecksNeverRan
         exp_alerts: []
-      - eval_time: 9h
+      - eval_time: 12h
         alertname: JdwillmsenMinecraftMapServiceExchangeRefused
         exp_alerts: []
-      - eval_time: 9h
+      - eval_time: 12h
         alertname: JdwillmsenMinecraftMapServiceExchangeFromOutside
         exp_alerts: []
-      - eval_time: 9h
+      - eval_time: 12h
         alertname: JdwillmsenMinecraftMapServiceExchangeRate
         exp_alerts: []
 
-  # A run fails. Told once it has stood ten minutes, and still told when the
-  # exporter that reports it is replaced by another pod, as one alert.
+  # The run at 02:00 fails: a check did. Told as soon as its Job is failed,
+  # and for as long as that was the last run. The next run passes and that
+  # is the end of it, though the failed Job is kept for a day.
   - interval: 1m
     input_series:
-      - series: 'mcmap_e2e_run_success{namespace="jdwillmsen-prd", pod="exporter-a"}'
-        values: '1x30 0x30 _x200'
-      - series: 'mcmap_e2e_run_success{namespace="jdwillmsen-prd", pod="exporter-b"}'
-        values: '_x60 0x60 1x100'
-      - series: 'mcmap_e2e_run_timestamp_seconds{namespace="jdwillmsen-prd", pod="exporter-a"}'
-        values: '0+60x300'
+      - series: 'kube_cronjob_spec_suspend{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '0x400'
+      - series: 'kube_cronjob_status_last_schedule_time{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '0x59 3600x59 7200x59 10800x200'
+      - series: 'kube_cronjob_status_last_successful_time{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '_x2 150x59 3750x119 10950x200'
+      - series: 'kube_job_status_start_time{namespace="jdwillmsen-prd", job_name="minecraft-fwb-map-checks-3"}'
+        values: '_x119 7200x280'
+      - series: 'kube_job_status_failed{namespace="jdwillmsen-prd", job_name="minecraft-fwb-map-checks-3"}'
+        values: '_x119 0x2 1x277'
+      - series: 'kube_job_owner{namespace="jdwillmsen-prd", owner_kind="CronJob", owner_name="minecraft-fwb-map-checks", job_name="minecraft-fwb-map-checks-3"}'
+        values: '_x119 1x280'
     alert_rule_test:
-      - eval_time: 30m
+      - eval_time: 2h1m
         alertname: JdwillmsenMinecraftMapChecksFailing
         exp_alerts: []
-      - eval_time: 36m
-        alertname: JdwillmsenMinecraftMapChecksFailing
-        exp_alerts: []
-      - eval_time: 45m
+      - eval_time: 2h4m
         alertname: JdwillmsenMinecraftMapChecksFailing
         exp_alerts:
           - exp_labels:
@@ -1189,14 +1302,14 @@ tests:
             exp_annotations:
               summary: The Minecraft FWB map failed its browser checks
               description: >-
-                The last run of the map's browser checks had a failing check.
-                mcmap_e2e_check_status says which (0 is failed, -1 skipped) and
-                mcmap_e2e_measure what it measured. The job's log has one line a
-                check with its own words for what went wrong; a screenshot and a
-                trace of the failure are on the checks' volume.
-                charts/minecraft-fwb/README.md, "Browser checks".
+                The last run of the map's browser checks failed: a check did, or the
+                run was killed or did not finish by its deadline. The Job's log has
+                one line of JSON a check, with a verdict, a reason from the suite's
+                own list and what it measured; a run that was killed has no last
+                line saying how it ended. charts/minecraft-fwb/README.md, "Browser
+                checks".
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
-      - eval_time: 90m
+      - eval_time: 2h59m
         alertname: JdwillmsenMinecraftMapChecksFailing
         exp_alerts:
           - exp_labels:
@@ -1205,35 +1318,78 @@ tests:
             exp_annotations:
               summary: The Minecraft FWB map failed its browser checks
               description: >-
-                The last run of the map's browser checks had a failing check.
-                mcmap_e2e_check_status says which (0 is failed, -1 skipped) and
-                mcmap_e2e_measure what it measured. The job's log has one line a
-                check with its own words for what went wrong; a screenshot and a
-                trace of the failure are on the checks' volume.
-                charts/minecraft-fwb/README.md, "Browser checks".
+                The last run of the map's browser checks failed: a check did, or the
+                run was killed or did not finish by its deadline. The Job's log has
+                one line of JSON a check, with a verdict, a reason from the suite's
+                own list and what it measured; a run that was killed has no last
+                line saying how it ended. charts/minecraft-fwb/README.md, "Browser
+                checks".
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
-      # The next run passed.
-      - eval_time: 130m
+      - eval_time: 3h5m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+      - eval_time: 5h
         alertname: JdwillmsenMinecraftMapChecksFailing
         exp_alerts: []
 
-  # The checks stop running, still passing as far as the last run knows.
-  # Quiet through the five hours the schedule leaves each night, told past
-  # six.
+  # The very first run never finishes: it is still going at its deadline,
+  # fifteen minutes in, and is killed. It wrote nothing, and there has never
+  # been a success to compare with. Its Job is failed, and that is told.
   - interval: 1m
     input_series:
-      - series: 'mcmap_e2e_run_success{namespace="jdwillmsen-prd", pod="exporter-a"}'
-        values: '1x600'
-      - series: 'mcmap_e2e_run_timestamp_seconds{namespace="jdwillmsen-prd", pod="exporter-a"}'
-        values: '0+60x60 3600x540'
+      - series: 'kube_cronjob_spec_suspend{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '0x200'
+      - series: 'kube_cronjob_status_last_schedule_time{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '_x59 3600x140'
+      - series: 'kube_job_status_start_time{namespace="jdwillmsen-prd", job_name="minecraft-fwb-map-checks-1"}'
+        values: '_x59 3600x140'
+      - series: 'kube_job_status_failed{namespace="jdwillmsen-prd", job_name="minecraft-fwb-map-checks-1"}'
+        values: '_x59 0x15 1x125'
+      - series: 'kube_job_owner{namespace="jdwillmsen-prd", owner_kind="CronJob", owner_name="minecraft-fwb-map-checks", job_name="minecraft-fwb-map-checks-1"}'
+        values: '_x59 1x140'
     alert_rule_test:
-      - eval_time: 6h30m
-        alertname: JdwillmsenMinecraftMapChecksStale
-        exp_alerts: []
-      - eval_time: 6h30m
+      - eval_time: 1h10m
         alertname: JdwillmsenMinecraftMapChecksFailing
         exp_alerts: []
-      - eval_time: 7h5m
+      - eval_time: 1h17m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: The Minecraft FWB map failed its browser checks
+              description: >-
+                The last run of the map's browser checks failed: a check did, or the
+                run was killed or did not finish by its deadline. The Job's log has
+                one line of JSON a check, with a verdict, a reason from the suite's
+                own list and what it measured; a run that was killed has no last
+                line saying how it ended. charts/minecraft-fwb/README.md, "Browser
+                checks".
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+
+  # Runs stop being started, the last one having passed. Quiet through
+  # seven hours, which covers the night and a run skipped beside it, and
+  # told half an hour past that.
+  - interval: 1m
+    input_series:
+      - series: 'kube_cronjob_spec_suspend{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '0x59 1x600'
+      - series: 'kube_cronjob_status_last_schedule_time{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '0x59 3600x600'
+      - series: 'kube_cronjob_status_last_successful_time{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '_x2 150x59 3750x600'
+    alert_rule_test:
+      - eval_time: 7h59m
+        alertname: JdwillmsenMinecraftMapChecksStale
+        exp_alerts: []
+      - eval_time: 8h25m
+        alertname: JdwillmsenMinecraftMapChecksStale
+        exp_alerts: []
+      - eval_time: 8h25m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+      - eval_time: 8h32m
         alertname: JdwillmsenMinecraftMapChecksStale
         exp_alerts:
           - exp_labels:
@@ -1242,40 +1398,42 @@ tests:
             exp_annotations:
               summary: The Minecraft FWB map's browser checks have stopped running
               description: >-
-                No run of the map's browser checks has finished for
-                6h 5m 0s. Nothing is watching the page
-                meanwhile. Check the minecraft-fwb-map-checks CronJob and its
-                last Job: a run that could not exchange its secret ends at once and
-                says so in its log.
+                No run of the map's browser checks has been started for
+                7h 32m 0s, which is longer than the
+                schedule ever leaves. Nothing is watching the page meanwhile. Check
+                that the minecraft-fwb-map-checks CronJob is not suspended
+                and that its pods can be scheduled.
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
 
-  # Switched on and never reported at all: the staleness rule has nothing to
+  # Switched on and never once started: the staleness rule has nothing to
   # subtract and says nothing, so this one has to.
   - interval: 1m
     input_series:
-      - series: 'up{namespace="jdwillmsen-prd"}'
-        values: '1x600'
+      - series: 'kube_cronjob_spec_suspend{namespace="jdwillmsen-prd", cronjob="minecraft-fwb-map-checks"}'
+        values: '0x600'
     alert_rule_test:
-      - eval_time: 5h
+      - eval_time: 6h
         alertname: JdwillmsenMinecraftMapChecksNeverRan
         exp_alerts: []
-      - eval_time: 7h
+      - eval_time: 7h2m
         alertname: JdwillmsenMinecraftMapChecksStale
         exp_alerts: []
-      - eval_time: 7h
+      - eval_time: 7h2m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+      - eval_time: 7h2m
         alertname: JdwillmsenMinecraftMapChecksNeverRan
         exp_alerts:
           - exp_labels:
               severity: warning
               namespace: jdwillmsen-prd
+              cronjob: minecraft-fwb-map-checks
             exp_annotations:
-              summary: The Minecraft FWB map's browser checks have never reported
+              summary: The Minecraft FWB map's browser checks have never run
               description: >-
-                The checks are switched on and no run has ever published a result,
-                or the exporter is not being scraped. Check the
-                minecraft-fwb-map-checks CronJob, the
-                minecraft-fwb-map-checks-exporter Deployment and its
-                ServiceMonitor.
+                The checks are switched on and the
+                minecraft-fwb-map-checks CronJob has never started a run,
+                or kube-state-metrics is not reporting it.
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
 
   # One wrong secret, from inside the cluster: told, and done with a quarter
@@ -1301,11 +1459,10 @@ tests:
               description: >-
                 The map's internal port was asked for a service session and said no.
                 mcmap_service_exchanges_total by result says how: denied is a wrong
-                secret, locked is the five minutes after five wrong ones, limited is
-                more exchanges than one a minute, malformed is a secret put in an
-                address. The map logs each as "map service session refused" with the
-                caller's address. If the checks are failing too, the Secret was
-                changed without the map being restarted.
+                secret, limited is a wrong one past the few judged each minute,
+                malformed is a secret put in an address. The map logs each as "map
+                service session refused" with the caller's address. If the checks are failing too, the map and the job
+                are not reading the same Secret.
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
       - eval_time: 33m
         alertname: JdwillmsenMinecraftMapServiceExchangeFromOutside
@@ -1365,8 +1522,7 @@ tests:
                 sessions were issued in an hour, and the schedule asks for fewer. Each
                 is a "map service session issued" line in the map's log with the
                 caller's address. If the callers are not the checks' own pods, rotate
-                the Secret: delete minecraft-fwb-map-checks-secret and restart
-                the map.
+                the Secret by raising map.checks.secret.generation.
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
       - eval_time: 150m
         alertname: JdwillmsenMinecraftMapServiceExchangeRate
@@ -1417,4 +1573,4 @@ for line in bad:
 sys.exit(1 if bad else 0)
 PY
 
-echo "PASS: map quiet windows cover the backup and census, the internal token is generated once, only the public port is published and only behind the login, the pack's init step cannot hold the server, the map and live alerts fire when they should, and the browser checks are off, contained when on, and tell when they fail or stop"
+echo "PASS: map quiet windows cover the backup and census, the internal token is generated once, only the public port is published and only behind the login, the pack's init step cannot hold the server, the map and live alerts fire when they should, and the browser checks are off, cannot be turned on in a namespace that is not enforced, are contained when on, rotate their secret from git, and tell when a run fails, never finishes or stops being started"
