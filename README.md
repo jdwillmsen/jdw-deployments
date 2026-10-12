@@ -621,9 +621,20 @@ tiles have stopped updating; the page itself keeps serving what it has.
 means the bridge paused saving for a snapshot and the server has not
 confirmed the resume for ten minutes. Run `save resume` from the console.
 
-To rebuild the map from nothing, scale `<release>-map` to zero, delete its
-claim, and let ArgoCD recreate both. The first render at the pod's CPU limit
-takes several minutes.
+**History.** With `map.history.enabled` the map (1.24.0 and later) also keeps
+the tiles as they were on each day, on a second claim, `<release>-map-history`.
+Unlike the volume above, none of that can be rebuilt, and a day that was
+missed cannot be kept later: `JdwillmsenMinecraftMapHistoryMissed` is the
+warning that a day has gone by without one. Switching history off stops the
+chart rendering that claim but leaves it and its days on the cluster, because
+it is marked not to be pruned; removing it is a deliberate `kubectl delete`.
+The settings, and what a day costs, are under `map.history` in `values.yaml`.
+
+To rebuild the map from nothing, scale `<release>-map` to zero, delete the
+`<release>-map` claim, and let ArgoCD recreate both. Leave
+`<release>-map-history` alone: it is the one claim of the map's that a rebuild
+cannot give back. The first render at the pod's CPU limit takes several
+minutes.
 
 ### The nightly restart, and the tick rate alert
 
