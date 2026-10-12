@@ -422,6 +422,55 @@ for line in bad:
 sys.exit(1 if bad else 0)
 PY
 
+# History switched off. The map must still be told so, because its own
+# default is what would decide otherwise, and nothing of history may be left
+# behind: a mount whose claim is gone is a map that never starts, and an
+# alert on a gauge the map no longer sets fires for good.
+helm template minecraft-fwb "$chart" \
+  --namespace jdwillmsen-prd \
+  -f "$chart/values.yaml" \
+  -f "$chart/values-prd.yaml" \
+  -f "$chart/values-console-bridge.yaml" -f "$chart/values-map-pack.yaml" \
+  --set map.history.enabled=false > "$work/rendered-history-off.yaml"
+
+python3 - "$work/rendered-history-off.yaml" <<'PY' || fail "switching the map's history off does not take all of it away"
+import sys, yaml
+
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+named = lambda kind, suffix: [d for d in docs if d["kind"] == kind and d["metadata"]["name"].endswith(suffix)]
+map_pod = named("Deployment", "-map")[0]["spec"]["template"]["spec"]
+map_container = map_pod["containers"][0]
+env = {e["name"]: e.get("value") for e in map_container["env"]}
+
+bad = []
+if env.get("HISTORY_ENABLED") != "false":
+    bad.append(f"HISTORY_ENABLED is {env.get('HISTORY_ENABLED')!r} with history off; the chart must set it to false")
+if "HISTORY_DIR" in env:
+    bad.append(f"HISTORY_DIR is still set, to {env['HISTORY_DIR']!r}")
+if named("PersistentVolumeClaim", "-map-history"):
+    bad.append("the chart still makes the history claim")
+made = {d["metadata"]["name"] for d in docs if d["kind"] == "PersistentVolumeClaim"}
+volumes = {v["name"]: v for v in map_pod.get("volumes") or []}
+for volume in volumes.values():
+    claim = (volume.get("persistentVolumeClaim") or {}).get("claimName")
+    if claim and claim not in made:
+        bad.append(f"the map pod still names the claim {claim}, which the chart no longer makes")
+for mount in map_container.get("volumeMounts") or []:
+    if mount["name"] not in volumes:
+        bad.append(f"the map still mounts {mount['name']} at {mount['mountPath']}, which is no volume of its pod")
+    elif mount["mountPath"] == "/history":
+        bad.append("the map still has a mount at /history")
+alerts = [r.get("alert") for d in named("PrometheusRule", "-map") for g in d["spec"]["groups"] for r in g["rules"]]
+if not alerts:
+    bad.append("the map's rules did not render")
+if "JdwillmsenMinecraftMapHistoryMissed" in alerts:
+    bad.append("JdwillmsenMinecraftMapHistoryMissed is still there, on a gauge the map no longer sets")
+
+for line in bad:
+    print(line)
+sys.exit(1 if bad else 0)
+PY
+
 if ! command -v promtool >/dev/null 2>&1; then
   # Loud rather than silent: a skipped alert test is an untested alert. CI
   # installs promtool, so this branch is never taken there.

@@ -2266,9 +2266,6 @@ map:
     maxAge: 168h
     maxPoints: 20000
 
-  # Pictures for the live markers: each mob's spawn-egg icon and each
-  # player's own head.
-  #
   # The map as it was on each day, so a place can be looked at over time.
   # Once a day, at the first refresh after 00:00 UTC, the map keeps every
   # tile it has drawn, each distinct tile once: a day costs the tiles that
@@ -2289,6 +2286,9 @@ map:
       # mcmap_history_capture_bytes, and mcmap_history_bytes is the total.
       size: 20Gi
 
+  # Pictures for the live markers: each mob's spawn-egg icon and each
+  # player's own head.
+  #
   # The mob icons are Mojang's, and the game server ships no textures of its
   # own, so the map fetches them from Mojang's public bedrock-samples
   # repository when it starts and keeps them on its volume. Nothing of
