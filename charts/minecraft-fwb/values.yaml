@@ -2274,7 +2274,8 @@ map:
   # deleted, and a day that was not kept cannot be kept later.
   history:
     # false keeps no days and serves none, and leaves the claim and what is
-    # on it where they are. Restarts the map only.
+    # on it where they are: the claim is marked so that it is not pruned
+    # when the chart stops rendering it. Restarts the map only.
     enabled: true
     persistence:
       # The file tier, as the backup archives are: whole files written once
