@@ -472,10 +472,16 @@ spec:
               user agent, which names who said they were allowed.
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
         - alert: JdwillmsenMinecraftMapServiceExchangeRate
-          # The schedule is the only caller there should be. More sessions
-          # than it accounts for means something else has the secret.
+          # The schedule is the only caller inside the cluster there should
+          # be. More sessions than it accounts for means something else has
+          # the secret.
+          #
+          # From inside only. A run from outside is told by the rule above,
+          # each one, and is the owner's to have allowed; counted here as
+          # well, an allowed run before and after a rollout would end in
+          # advice to rotate a secret nobody has stolen.
           expr: |
-            sum by (namespace) (increase(mcmap_service_exchanges_total{namespace="{{ .Release.Namespace }}", result="ok"}[1h])) > {{ .Values.map.checks.alert.maxExchangesPerHour }}
+            sum by (namespace) (increase(mcmap_service_exchanges_total{namespace="{{ .Release.Namespace }}", result="ok", source="private"}[1h])) > {{ .Values.map.checks.alert.maxExchangesPerHour }}
           labels:
             severity: warning
             namespace: {{ .Release.Namespace }}
