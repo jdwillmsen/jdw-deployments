@@ -51,10 +51,12 @@ found="$(grep -c '^ *sleep 2$' "$work/hook.sh" || true)"
 [ "$found" = "1" ] || fail "expected one 2s player-count settle to shorten, found $found"
 sed -i 's/^\( *\)sleep 2$/\1sleep 0.1/' "$work/hook.sh"
 
-# shellcheck disable=SC1091
-set -a; . "$work/base.env"; set +a
+set -a
+# shellcheck source=/dev/null
+. "$work/base.env"
+set +a
 live_server="$EXPECTED_SPEC_HASH" live_agent="$EXPECTED_AGENT_HASH" live_map="$EXPECTED_MAP_HASH"
-[ -n "$live_server" ] && [ -n "$live_agent" ] && [ -n "$live_map" ] \
+[[ -n "$live_server" && -n "$live_agent" && -n "$live_map" ]] \
   || fail "the shipped values must render all three digests, got '$live_server' '$live_agent' '$live_map'"
 agent_actor="${ACTOR_NAMES%%,*}"
 [ -n "$agent_actor" ] || fail "the hook is not given the actors' gamertags"
@@ -88,6 +90,8 @@ chmod +x "$work/bin/kubectl"
 run() {
   rm -rf "$work/state"; mkdir -p "$work/state"
   local out rc=0 start=$SECONDS
+  # Single quotes are deliberate: the variables expand in the inner shell.
+  # shellcheck disable=SC2016
   out="$(timeout 60 bash -c '
       set -a; . "$1"; set +a; shift
       for kv in "$@"; do export "$kv"; done
@@ -219,7 +223,7 @@ read -r base_server base_agent base_map < <(digests "$work/default.yaml")
 render --set map.image.tag=0.0.0-test > "$work/map-image.yaml"
 read -r s a m < <(digests "$work/map-image.yaml")
 [ "$m" != "$base_map" ] || fail "a map image change must move the map digest"
-[ "$s" = "$base_server" ] && [ "$a" = "$base_agent" ] || fail "a map image change moved the server or agent digest"
+[[ "$s" = "$base_server" && "$a" = "$base_agent" ]] || fail "a map image change moved the server or agent digest"
 
 render --set map.resources.limits.memory=7Gi > "$work/map-res.yaml"
 read -r s a m < <(digests "$work/map-res.yaml")
@@ -236,7 +240,7 @@ read -r s a m < <(digests "$work/map-norestart.yaml")
 
 render --set minecraft-bedrock.image.tag=0.0.0 > "$work/server-change.yaml"
 read -r s a m < <(digests "$work/server-change.yaml")
-[ "$s" != "$base_server" ] && [ "$m" = "$base_map" ] || fail "a server image change must move only the server digest"
+[[ "$s" != "$base_server" && "$m" = "$base_map" ]] || fail "a server image change must move only the server digest"
 
 render --set deployAnnounce.map.enabled=false > "$work/map-off.yaml"
 read -r s a m < <(digests "$work/map-off.yaml")
