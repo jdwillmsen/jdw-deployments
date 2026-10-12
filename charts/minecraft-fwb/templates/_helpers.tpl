@@ -263,7 +263,7 @@ It earns one line in chat and no countdown, and Renovate merges map image bumps
 unattended, so this is the digest that moves most often.
 
 Everything the map's pod template reads is in it, and nothing else. map.host,
-map.persistence and the alert thresholds are left out because they reach the
+map.persistence, the alert thresholds and the browser checks are left out because they reach the
 HTTPRoute, the PVC and the alert rules, never the pod: a changed alert
 threshold announced as a restart is the false warning this hook exists to stop
 sending. The level name, bridge port, bridge secret name and the agent address
@@ -277,13 +277,17 @@ moving this digest, and that sync stays quiet.
 {{- define "deployAnnounce.mapSpecHash" -}}
 {{- if and .Values.map.enabled .Values.global.consoleBridge.enabled -}}
 {{- /* A copy, because omit and set write into the map they are given, and the original is the live map values every later template reads. */ -}}
-{{- $map := omit (deepCopy .Values.map) "host" "persistence" "alert" -}}
+{{- $map := omit (deepCopy .Values.map) "host" "persistence" "alert" "checks" -}}
 {{- $_ := set $map "live" (omit (get $map "live") "alert") -}}
 {{- $inputs := dict "map" $map
       "levelName" (index .Values "minecraft-bedrock" "minecraftServer" "levelName")
       "bridgePort" .Values.consoleBridge.service.port
       "bridgeSecret" .Values.global.consoleBridge.secret.name
       "agentUrl" (and .Values.map.markers.waypoints .Values.agent.enabled (printf "%s:%v" (include "agent.name" .) .Values.agent.metrics.port)) -}}
+{{- /* Of the browser checks' values only these reach the map's pod, and only once the checks are on: the Secret it is restarted onto and how long a session lasts. Their schedule, limits and alerts move the job and never the map. Absent while the checks are off, so that their being there to switch on changes no digest. */ -}}
+{{- if include "map.checks.on" . -}}
+{{- $_ := set $inputs "checks" (dict "secret" (include "map.checks.secret.name" .) "sessionTTL" .Values.map.checks.sessionTTL) -}}
+{{- end -}}
 {{ $inputs | toYaml | sha256sum | trunc 16 }}
 {{- end -}}
 {{- end -}}
