@@ -502,7 +502,7 @@ render() {
 render --set map.checks.secret.create=true > "$work/checks-secret.yaml"
 render "${checks_on[@]}" > "$work/checks-on.yaml"
 render "${checks_on[@]}" --set map.checks.secret.generation=2 > "$work/checks-rotated.yaml"
-render "${checks_on[@]}" --set map.checks.evidence.enabled=true > "$work/checks-evidence.yaml"
+render "${checks_on[@]}" --set map.checks.evidence.enabled=true --set map.checks.evidence.acknowledgePrivateData=true > "$work/checks-evidence.yaml"
 render "${checks_on[@]}" --set "map.checks.schedule=5 1 * * *" --set map.checks.resources.limits.memory=2Gi > "$work/checks-moved.yaml"
 
 # Wiring a workload to a Secret in the step that first creates it is how this
@@ -528,10 +528,33 @@ refusal="$(render "${unacknowledged[@]}" 2>&1 || true)"
 if [[ "$refusal" != *networkPolicyEnforced* ]]; then
   fail "the refusal to render the checks unenforced does not name the value that has to be set"
 fi
-python3 - "$chart/values.yaml" <<'PY' || fail "values.yaml claims the namespace enforces network policy; that is for the platform to make true first"
+# The map reads the session's length at start and will not start on one it
+# does not accept. A value like that has to fail here, at render, and never
+# reach a map that then cannot come back up.
+for ttl in 31m 0m 45s 1h 90s 10 soon ""; do
+  if render "${checks_on[@]}" --set-string "map.checks.sessionTTL=$ttl" >/dev/null 2>&1; then
+    fail "map.checks.sessionTTL=$ttl renders; the map refuses it and would crash-loop"
+  fi
+done
+for ttl in 1m 10m 30m; do
+  render "${checks_on[@]}" --set-string "map.checks.sessionTTL=$ttl" | grep -A1 'name: SERVICE_SESSION_TTL' | grep -q "value: \"$ttl\"" \
+    || fail "map.checks.sessionTTL=$ttl, which the map accepts, does not reach the map"
+done
+
+# Evidence is pictures of the live map on a disk. Nobody turns it on without
+# saying they know that.
+if render "${checks_on[@]}" --set map.checks.evidence.enabled=true >/dev/null 2>&1; then
+  fail "evidence can be kept without anyone acknowledging what it holds"
+fi
+refusal="$(render "${checks_on[@]}" --set map.checks.evidence.enabled=true 2>&1 || true)"
+if [[ "$refusal" != *acknowledgePrivateData* ]]; then
+  fail "the refusal to keep evidence unacknowledged does not name the value that has to be set"
+fi
+
+python3 - "$chart/values.yaml" <<'PY' || fail "values.yaml claims the namespace enforces network policy, or has evidence on or acknowledged; none of that is a default"
 import sys, yaml
 checks = yaml.safe_load(open(sys.argv[1]))["map"]["checks"]
-sys.exit(0 if checks["networkPolicyEnforced"] is False and checks["enabled"] is False and checks["secret"]["create"] is False and checks["evidence"]["enabled"] is False else 1)
+sys.exit(0 if checks["networkPolicyEnforced"] is False and checks["enabled"] is False and checks["secret"]["create"] is False and checks["evidence"]["enabled"] is False and checks["evidence"]["acknowledgePrivateData"] is False else 1)
 PY
 
 python3 - "$work/rendered.yaml" "$work/checks-secret.yaml" "$work/checks-on.yaml" "$work/checks-rotated.yaml" "$work/checks-evidence.yaml" "$work/checks-moved.yaml" <<'PY' || fail "the browser checks are not as contained as they were made"
@@ -769,7 +792,8 @@ if any(d["kind"] in ("Deployment", "Service", "ServiceMonitor") and "map-checks"
 
 # On, it is a picture on a volume one node holds, read through a pod that
 # can only read, in an image that cannot be moved under it.
-if named(kept) - named(on) != {("PersistentVolumeClaim", "minecraft-fwb-map-checks-evidence"), ("Deployment", "minecraft-fwb-map-checks-evidence")}:
+if named(kept) - named(on) != {("PersistentVolumeClaim", "minecraft-fwb-map-checks-evidence"), ("Deployment", "minecraft-fwb-map-checks-evidence"),
+                               ("NetworkPolicy", "minecraft-fwb-map-checks-evidence")}:
     bad.append(f"map.checks.evidence.enabled adds {sorted(named(kept) - named(on))}")
 else:
     claim = by(kept, "PersistentVolumeClaim", "-map-checks-evidence")
@@ -793,6 +817,9 @@ else:
         bad.append("the evidence reader holds a token, a writable root or a capability")
     if not all(m.get("readOnly") for m in r["volumeMounts"]) or any("secret" in v for v in reader["spec"]["volumes"]) or held["persistentVolumeClaim"]["claimName"] != claim["metadata"]["name"]:
         bad.append("the evidence reader can write to the evidence, or mounts a Secret")
+    fence = by(kept, "NetworkPolicy", "-map-checks-evidence")["spec"]
+    if fence["podSelector"].get("matchLabels") != reader["metadata"]["labels"] or set(fence.get("policyTypes") or []) != {"Ingress", "Egress"} or fence.get("ingress") or fence.get("egress"):
+        bad.append("the evidence reader may be reached, or may reach something; it holds pictures of the live map and needs neither")
     if r.get("ports") or any(d["kind"] == "Service" and "evidence" in d["metadata"]["name"] for d in kept):
         bad.append("the evidence reader listens on something; evidence is copied out by whoever may, and served to nobody")
 

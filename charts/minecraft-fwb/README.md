@@ -612,7 +612,7 @@ checks").
 | `CronJob` `<release>-map-checks` | One run: an exchange on the internal port, then about two and a half minutes of browser against `map.host` |
 | `NetworkPolicy` `<release>-map-checks` | Limits the job's pod to the name server, the map's internal port and the gateway |
 | `PrometheusRule` `<release>-map-checks` | The alerts below |
-| With `evidence.enabled`: a `PersistentVolumeClaim` and a `Deployment` `<release>-map-checks-evidence` | Screenshots of failed checks, and a pod to read them through |
+| With `evidence.enabled`: a `PersistentVolumeClaim`, a `Deployment` and a `NetworkPolicy` `<release>-map-checks-evidence` | Screenshots of failed checks, a pod to read them through, and nothing in or out of that pod |
 
 The route is not touched. The exchange is on the map's internal port, which
 the route has never published, and `tools/tests/test-map.sh` fails if
@@ -794,14 +794,31 @@ on the real page is there too, as `gauge` lines.
 
 ### Evidence
 
-Off. A failure is then its log line.
+Off. A failure is then its log line, and that is how this is meant to run.
 
 `map.checks.evidence.enabled: true` keeps a screenshot of the page for each
-failed check, on a volume. **A screenshot is a picture of the live map: real
-coordinates, real gamertags.** Nothing else is kept: no browser trace, no
-request or response, and never the session cookie.
-`map.checks.evidence.pages: true` adds the page's HTML and the text of what
-went wrong, which is more of the map than a picture. So, with it on:
+failed check, on a volume, and the chart will not render it without
+`map.checks.evidence.acknowledgePrivateData: true` beside it. That second
+value is whoever turns evidence on saying they have read this.
+
+**What lands on disk.** Pictures of the live map as a logged-in player
+sees it: where every online player is at that moment, by gamertag, with
+their heads; trails of where they have been; named mobs and their name
+tags; beds, containers and structures at their real coordinates; and
+whatever card or sheet was open, with exact x, y and z. With
+`map.checks.evidence.pages: true`, also the page's HTML, which holds the
+same as text, and the text of what went wrong. Never a browser trace, a
+request or a response, and never the session cookie.
+
+**Who can read it.** Anyone who can exec into, or copy from, pods in this
+namespace, since the reader pod has the volume mounted; anyone who can
+create a pod in the namespace that mounts the claim; and anyone with
+access to the storage behind the `storageClass`, which is not encrypted by
+anything here. Nobody through the network: the reader has a policy of its
+own that allows nothing in and nothing out, to the extent the namespace
+enforces policy at all.
+
+With it on:
 
 - It stays on the volume. The newest `keepRuns` failed runs are kept, five,
   and none older than `keepDays`, seven; a run's evidence is capped at
@@ -821,7 +838,8 @@ went wrong, which is more of the map than a picture. So, with it on:
 
 - It is never committed, attached to a pull request, an issue or a ticket,
   or pasted into a chat. What goes in those is the log line.
-- Delete the copy when the failure is understood.
+- Delete the copy when the failure is understood, and turn evidence off
+  again: switching it off removes the volume and what is on it.
 
 ### Alerts
 
