@@ -402,7 +402,9 @@ if not (re.fullmatch(r"[0-9]+", points) and 10 <= int(points) <= 50000):
 # History is off in the map unless it is told otherwise, and what it keeps
 # cannot be rebuilt. On, it must be on a claim of its own: left to its
 # default it would sit on the data claim, which is not kept and which it
-# would fill.
+# would fill. That claim stops being rendered when history is switched off,
+# and the Application prunes what is not rendered, so it must be marked to
+# be left alone or the days go with the switch.
 if env.get("HISTORY_ENABLED") not in ("true", "false"):
     bad.append(f"HISTORY_ENABLED is {env.get('HISTORY_ENABLED')!r}; the chart must set it to true or false")
 if env.get("HISTORY_ENABLED") == "true":
@@ -414,8 +416,14 @@ if env.get("HISTORY_ENABLED") == "true":
         bad.append(f"HISTORY_DIR is {where!r}, which is not where a claim is mounted")
     elif mounted[where] == mounted.get("/data"):
         bad.append("the map's history is on the same claim as its data")
-    elif not [d for d in docs if d["kind"] == "PersistentVolumeClaim" and d["metadata"]["name"] == mounted[where]]:
-        bad.append(f"the map's history is on the claim {mounted[where]}, which the chart does not make")
+    else:
+        claims = [d for d in docs if d["kind"] == "PersistentVolumeClaim" and d["metadata"]["name"] == mounted[where]]
+        if not claims:
+            bad.append(f"the map's history is on the claim {mounted[where]}, which the chart does not make")
+        else:
+            options = (claims[0]["metadata"].get("annotations") or {}).get("argocd.argoproj.io/sync-options") or ""
+            if "Prune=false" not in [o.strip() for o in options.split(",")]:
+                bad.append(f"the claim {mounted[where]} is not marked Prune=false, so switching history off would have it pruned")
 
 for line in bad:
     print(line)
@@ -424,8 +432,9 @@ PY
 
 # History switched off. The map must still be told so, because its own
 # default is what would decide otherwise, and nothing of history may be left
-# behind: a mount whose claim is gone is a map that never starts, and an
-# alert on a gauge the map no longer sets fires for good.
+# behind: a mount whose claim is gone is a map that never starts, and the
+# map exports the history gauge whether history is on or not, as 0 when it
+# is off, which the alert takes as very old and so would fire for good.
 helm template minecraft-fwb "$chart" \
   --namespace jdwillmsen-prd \
   -f "$chart/values.yaml" \

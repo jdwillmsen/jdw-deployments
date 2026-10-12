@@ -24,6 +24,12 @@ kind: PersistentVolumeClaim
 metadata:
   name: {{ include "map.name" . }}-history
   namespace: {{ .Release.Namespace }}
+  annotations:
+    # Switching history off stops this claim being rendered, and the
+    # Application prunes what is no longer rendered. The days cannot be
+    # rebuilt, so this one is left on the cluster: removing it is a
+    # deliberate kubectl delete.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   # The map as it was on each day. Unlike the claim above nothing on this
   # one can be rebuilt, and it only grows, which is why it is a claim of its
