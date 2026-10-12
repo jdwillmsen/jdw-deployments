@@ -1485,13 +1485,18 @@ tests:
         exp_alerts: []
 
   # A session issued over a port-forward: let in, and told all the same.
+  # Several in an hour, as before and after a rollout, are each told by that
+  # rule and are not also taken for something inside holding the secret.
   - interval: 1m
     input_series:
       - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="private"}'
-        values: '0x120'
+        values: '0x20 1x100'
       - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="loopback"}'
-        values: '0x30 1x90'
+        values: '0x30 1x9 2x9 3x9 4x9 5x60'
     alert_rule_test:
+      - eval_time: 75m
+        alertname: JdwillmsenMinecraftMapServiceExchangeRate
+        exp_alerts: []
       - eval_time: 33m
         alertname: JdwillmsenMinecraftMapServiceExchangeRefused
         exp_alerts: []
