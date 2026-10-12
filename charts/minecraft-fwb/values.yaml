@@ -2320,8 +2320,7 @@ map:
   # in the chart README for what turning this on takes and in what order.
   checks:
     # Step two. Wires the Secret into the map, which switches the exchange on,
-    # and creates the CronJob, its volume, its exporter, its network policy
-    # and its alerts. Rendering fails with this on and secret.create off, or
+    # and creates the CronJob, its network policy and its alerts. Rendering fails with this on and secret.create off, or
     # without image.digest.
     enabled: false
 
@@ -2365,7 +2364,9 @@ map:
     ttlSecondsAfterFinished: 86400
 
     # How long the session the job is given lasts: longer than a run, and
-    # little longer. It cannot be renewed, and the map allows at most 30m.
+    # little longer. It cannot be renewed. Whole minutes, 1m to 30m, which is
+    # what the map accepts; the chart refuses anything else, since the map
+    # would refuse to start on it.
     sessionTTL: 10m
     # How long the live stream has to stay one unbroken connection. The
     # gateway cuts a connection idle for 30 s, so this is four of those.
@@ -2399,6 +2400,13 @@ map:
     # the job writes and only the reader below reads.
     evidence:
       enabled: false
+      # Has to be true as well, or the chart will not render with evidence
+      # on. It is whoever turns evidence on saying they know what it is:
+      # pictures of the live map, with players' real positions, gamertags
+      # and name tags, on a volume that anyone who can exec into or copy
+      # from pods in this namespace, or read the storage behind it, can
+      # read. Read "Evidence" in the chart README first.
+      acknowledgePrivateData: false
       # Also the page's HTML and the text of what went wrong. More of the map
       # than a picture.
       pages: false

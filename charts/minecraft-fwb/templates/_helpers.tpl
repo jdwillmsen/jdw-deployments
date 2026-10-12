@@ -89,8 +89,8 @@ token
 
 {{/*
 The browser checks of the live map: the CronJob, its Secret and where its
-results go. Defined once because the generator, the map, the job and the
-exporter must all name the same things.
+evidence goes. Defined once because the generator, the map and the job must
+all name the same things.
 */}}
 {{- define "map.checks.name" -}}
 {{ include "map.name" . }}-checks
@@ -127,6 +127,10 @@ arrives.
 {{- if not .Values.map.checks.secret.create -}}{{ fail "map.checks.enabled needs map.checks.secret.create: the map and the job both read a Secret that only the generator makes. Turn create on first, see the Secret Synced, then enable." }}{{- end -}}
 {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" (.Values.map.checks.image.digest | toString)) -}}{{ fail "map.checks.image.digest must be the sha256 digest of the minecraft-map-checks image: it holds a credential's worth of access to the map, and a tag can be moved" }}{{- end -}}
 {{- if not (eq (.Values.map.checks.networkPolicyEnforced | toString) "true") -}}{{ fail "map.checks.enabled needs map.checks.networkPolicyEnforced: true, and that is only true once the platform enforces network policy in this namespace. The checks run a browser without its own sandbox, and their NetworkPolicy is the thing that keeps it to the map; in a namespace that is not enforced the policy renders and does nothing. See \"Browser checks\" in the chart README for what has to change in the platform first." }}{{- end -}}
+{{- /* The map reads this as SERVICE_SESSION_TTL and refuses to start outside one to thirty minutes. A value it would refuse is refused here, at render, where it costs a failed check in CI and not a map that will not start. Whole minutes only, which is all anyone needs and all that can be judged without parsing a duration. */ -}}
+{{- $ttl := .Values.map.checks.sessionTTL | toString -}}
+{{- if not (regexMatch "^([1-9]|[12][0-9]|30)m$" $ttl) -}}{{ fail (printf "map.checks.sessionTTL must be whole minutes from 1m to 30m, which is what the map accepts; got %q. Anything else would stop the map starting." $ttl) }}{{- end -}}
+{{- if and .Values.map.checks.evidence.enabled (not (eq (.Values.map.checks.evidence.acknowledgePrivateData | toString) "true")) -}}{{ fail "map.checks.evidence.enabled needs map.checks.evidence.acknowledgePrivateData: true. Evidence is screenshots of the live map, with players' real positions, gamertags and name tags in them, written to a volume in the cluster. See \"Evidence\" under \"Browser checks\" in the chart README for what lands on disk and who can read it, and set the value only having read it." }}{{- end -}}
 true
 {{- end -}}
 {{- end -}}
