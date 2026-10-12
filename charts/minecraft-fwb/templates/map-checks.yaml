@@ -1,0 +1,520 @@
+{{- if include "map.checks.on" . }}
+# Looks at the live map the way a player does, in a real browser, and says
+# whether it works.
+#
+# Every feature of the page shipped having been checked only against a
+# made-up world, because the only way into the map is a player typing a code
+# in the game. Follow failed whenever a player's head was listed; pictures
+# changed size during a zoom; both were found by a player. This runs the
+# map's own browser checks against production on a schedule, with a session
+# that is nobody's and can only read.
+#
+# The session is had here in the cluster, on the map's internal port, which
+# the route does not publish. Everything after that is asked of the public
+# hostname, through the gateway, because the gateway is part of what has to
+# work: it cuts a connection idle for 30 s, and the live stream is a
+# connection that is often idle.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "map.checks.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Two things live here: the last run's results, a few KB, and what a failed
+  # check left as evidence. A volume and not an emptyDir, because the job's
+  # pod is gone minutes after it ran and a screenshot of a failure is only
+  # worth taking if someone can fetch it in the morning.
+  #
+  # File storage, shared: the exporter below reads what the job writes, from
+  # whichever node each lands on. A ReadWriteOnce block claim would pin both
+  # to one node, which is the trap recorded on the backup exporter.
+  storageClassName: {{ .Values.map.checks.results.storageClass }}
+  accessModes:
+    - {{ .Values.map.checks.results.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.map.checks.results.size }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "map.checks.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "map.checks.name" . }}
+spec:
+  # Kept off the hours when the map is not expected to be itself: the nightly
+  # backup and census, through which the map's own snapshots are paused
+  # (map.quietUTC), and the daily restart. tools/tests/test-map.sh fails if
+  # the schedule wanders into either.
+  schedule: {{ .Values.map.checks.schedule | quote }}
+  timeZone: Etc/UTC
+  # A run that has not finished is still holding a browser open on the same
+  # nodes as the game server; a second beside it buys nothing.
+  concurrencyPolicy: Forbid
+  # A run that could not start on time is skipped, not run late into a
+  # window the schedule was written to avoid.
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # No retry: a second attempt is a second exchange and a second two
+      # minutes of browser, and a check that fails once and passes on retry
+      # is a finding that would never be seen.
+      backoffLimit: 0
+      ttlSecondsAfterFinished: {{ .Values.map.checks.ttlSecondsAfterFinished }}
+      # A run is about two and a half minutes and its session ends at
+      # map.checks.sessionTTL whatever happens here; past this the run is
+      # wedged, and with Forbid a wedged run would block every one after it.
+      activeDeadlineSeconds: {{ .Values.map.checks.timeoutSeconds }}
+      template:
+        metadata:
+          labels:
+            app: {{ include "map.checks.name" . }}
+        spec:
+          restartPolicy: Never
+          # The job asks nothing of the cluster. Its secret is a file, the
+          # map is an address and its results are a file, so it carries no
+          # token: a browser that has just loaded a page from the internet
+          # is the last process that should hold one.
+          automountServiceAccountToken: false
+          # Nor the address of every Service in the namespace in its
+          # environment.
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 2000
+            seccompProfile:
+              type: RuntimeDefault
+          # Preferred, not required: on a cluster with one schedulable node
+          # the checks still run, inside the limits below. Where there is a
+          # choice the browser is put somewhere the game server is not.
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        app: {{ include "backup.serverStatefulSet" . }}
+          containers:
+            - name: checks
+              image: {{ include "map.checks.image" . | quote }}
+              imagePullPolicy: IfNotPresent
+              args:
+                # The hostname players use, so that the gateway, its
+                # certificate and its timeouts are all in the path.
+                - "--public-url"
+                - "https://{{ .Values.map.host }}"
+                # The exchange and nothing else goes here.
+                - "--internal-url"
+                - "http://{{ include "map.name" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.map.internalPort }}"
+                # Read by the runner from the file and held in its memory.
+                # Not an environment variable: those are printed by
+                # `kubectl describe`, by crash dumps and by anything that
+                # logs its environment.
+                - "--secret-file"
+                - "/var/run/mcmap-e2e/secret"
+                - "--metrics-file"
+                - "/var/lib/mcmap-e2e/metrics.prom"
+{{- if .Values.map.checks.evidence.enabled }}
+                # A failed check leaves a screenshot and a trace here. They
+                # are pictures of the live map, with real coordinates and
+                # gamertags, so they stay on this volume: see "Browser
+                # checks" in the chart README for how they are fetched and
+                # why they are never attached to anything.
+                - "--evidence-dir"
+                - "/var/lib/mcmap-e2e/evidence"
+                - "--evidence-keep"
+                - {{ .Values.map.checks.evidence.keepRuns | quote }}
+                - "--evidence-days"
+                - {{ .Values.map.checks.evidence.keepDays | quote }}
+{{- end }}
+                - "--stream-seconds"
+                - {{ .Values.map.checks.streamSeconds | quote }}
+                - "--api-budget-ms"
+                - {{ .Values.map.checks.apiBudgetMs | quote }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+{{- toYaml .Values.map.checks.resources | nindent 16 }}
+              volumeMounts:
+                - name: secret
+                  mountPath: /var/run/mcmap-e2e
+                  readOnly: true
+                - name: results
+                  mountPath: /var/lib/mcmap-e2e
+                # The browser's profile and scratch for one run, which the
+                # read-only root leaves nowhere else to put.
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: secret
+              secret:
+                secretName: {{ include "map.checks.secret.name" . }}
+                # Group-readable and no more: the volume is given to the
+                # pod's fsGroup, and the runner is not its owner.
+                defaultMode: 0440
+                items:
+                  - key: {{ include "map.checks.secret.key" . }}
+                    path: secret
+            - name: results
+              persistentVolumeClaim:
+                claimName: {{ include "map.checks.name" . }}
+            - name: tmp
+              emptyDir:
+                sizeLimit: {{ .Values.map.checks.tmpSizeLimit }}
+{{- if .Values.map.checks.networkPolicy.enabled }}
+---
+# What the job's pod may talk to: the name server, the map's internal port
+# for the exchange, and the gateway that serves the public hostname. Nothing
+# reaches it, and it reaches nothing else: not the game server, not the
+# console bridge, not the cluster's API, not the internet. A browser is the
+# largest thing this chart runs and the only one that executes whatever a
+# page hands it.
+#
+# The map's public port is deliberately not here. A run that could reach the
+# pod directly could pass while the gateway was down.
+#
+# This is only as good as the cluster's network plugin: one that does not
+# enforce NetworkPolicy leaves it a statement of intent.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "map.checks.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ include "map.checks.name" . }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ include "map.name" . }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.map.internalPort }}
+    # No port: a connection to the gateway's address is rewritten to one of
+    # its pods before the policy sees it, and the port it arrives on there
+    # is the gateway's own business.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.map.checks.networkPolicy.gatewayNamespace }}
+{{- with .Values.map.checks.networkPolicy.publicCIDRs }}
+    # For a network plugin that judges the address the browser dialled and
+    # not the pod behind it.
+    - to:
+{{- range . }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+{{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}
+{{- end }}
+---
+# Serves the last run's results, which were written by a job that is gone.
+#
+# Same shape as the census and backup exporters: a shell loop copies one file
+# and busybox serves it. It is also where evidence is fetched from, since it
+# is the one pod that always has the volume mounted, and it has it read-only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "map.checks.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "map.checks.exporter.name" . }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: {{ include "map.checks.exporter.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "map.checks.exporter.name" . }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: {{ .Values.map.checks.exporter.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 10m
+            limits:
+              memory: 64Mi
+              cpu: 100m
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.map.checks.exporter.port }}
+          env:
+            - name: REFRESH_SECONDS
+              value: {{ .Values.map.checks.exporter.refreshSeconds | quote }}
+            - name: PORT
+              value: {{ .Values.map.checks.exporter.port | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              OUT=/run/metrics
+              SRC=/var/lib/mcmap-e2e/metrics.prom
+              mkdir -p "$OUT"
+              # Before the first run there is nothing to serve, and nothing
+              # is what is served: the series are absent, which is what the
+              # never-ran rule reads.
+              : > "$OUT/metrics.txt"
+
+              # Copied, not served from the volume: only the results are
+              # published, and the evidence beside them is not.
+              #
+              # The runner writes the file whole and renames it into place,
+              # so a copy is either the last run or the one before. The last
+              # line it writes is checked for all the same: Prometheus drops
+              # a whole scrape on one malformed line.
+              #
+              # The loop runs beside httpd, and takes PID 1 with it if it
+              # ends, so that a frozen file is never served by a pod that
+              # looks healthy.
+              (
+                trap 'kill 1' EXIT
+                while true; do
+                  if [ -s "$SRC" ] && cp "$SRC" "$OUT/.metrics.tmp" 2>/dev/null \
+                    && grep -q '^mcmap_e2e_run_timestamp_seconds [0-9]' "$OUT/.metrics.tmp"; then
+                    mv "$OUT/.metrics.tmp" "$OUT/metrics.txt"
+                  fi
+                  sleep "$REFRESH_SECONDS"
+                done
+              ) &
+
+              # The .txt suffix is what makes busybox httpd answer
+              # text/plain with no MIME configuration to get wrong.
+              exec httpd -f -v -p "$PORT" -h "$OUT"
+          readinessProbe:
+            httpGet:
+              path: /metrics.txt
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: results
+              mountPath: /var/lib/mcmap-e2e
+              readOnly: true
+            - name: metrics
+              mountPath: /run/metrics
+      volumes:
+        - name: results
+          persistentVolumeClaim:
+            claimName: {{ include "map.checks.name" . }}
+            readOnly: true
+        - name: metrics
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "map.checks.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "map.checks.exporter.name" . }}
+spec:
+  selector:
+    app: {{ include "map.checks.exporter.name" . }}
+  ports:
+    - name: metrics
+      port: {{ .Values.map.checks.exporter.port }}
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "map.checks.exporter.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "map.checks.exporter.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "map.checks.exporter.name" . }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics.txt
+      interval: 60s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "map.checks.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-map-checks
+      rules:
+        - alert: JdwillmsenMinecraftMapChecksFailing
+          # The exporter serves the last run's verdict until the next run
+          # replaces it, so this is "the last run failed" and stays so for
+          # as long as it is true. The `for` is only there to ride out the
+          # exporter restarting; one failed run is worth being told about,
+          # since a check that skips for a quiet world is not a failure.
+          #
+          # max by (namespace), so that the alert does not carry the
+          # exporter pod's name and resolve and fire again when it moves.
+          expr: |
+            max by (namespace) (mcmap_e2e_run_success{namespace="{{ .Release.Namespace }}"}) == 0
+          for: {{ .Values.map.checks.alert.failingFor }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map failed its browser checks
+            description: >-
+              The last run of the map's browser checks had a failing check.
+              mcmap_e2e_check_status says which (0 is failed, -1 skipped) and
+              mcmap_e2e_measure what it measured. The job's log has one line a
+              check with its own words for what went wrong; a screenshot and a
+              trace of the failure are on the checks' volume.
+              charts/minecraft-fwb/README.md, "Browser checks".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+        - alert: JdwillmsenMinecraftMapChecksStale
+          # The other way to have no failing checks: no checks. The limit
+          # has to be longer than the longest gap the schedule leaves on
+          # purpose, which is the night's quiet hours.
+          expr: |
+            (time() - max by (namespace) (mcmap_e2e_run_timestamp_seconds{namespace="{{ .Release.Namespace }}"}))
+              > {{ include "map.checks.staleSeconds" . }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map's browser checks have stopped running
+            description: >-
+              No run of the map's browser checks has finished for
+              {{ "{{ $value | humanizeDuration }}" }}. Nothing is watching the page
+              meanwhile. Check the {{ include "map.checks.name" . }} CronJob and its
+              last Job: a run that could not exchange its secret ends at once and
+              says so in its log.
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+        - alert: JdwillmsenMinecraftMapChecksNeverRan
+          # A series that was never written is absent, not old, and the
+          # rule above has nothing to subtract.
+          expr: |
+            absent(mcmap_e2e_run_timestamp_seconds{namespace="{{ .Release.Namespace }}"})
+          for: {{ .Values.map.checks.alert.staleAfter }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map's browser checks have never reported
+            description: >-
+              The checks are switched on and no run has ever published a result,
+              or the exporter is not being scraped. Check the
+              {{ include "map.checks.name" . }} CronJob, the
+              {{ include "map.checks.exporter.name" . }} Deployment and its
+              ServiceMonitor.
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+        - alert: JdwillmsenMinecraftMapServiceExchangeRefused
+          # Nothing that holds the secret ever presents a wrong one, and the
+          # job presents it once a run. So any refusal is one of two things:
+          # the job and the map disagree about the secret, which is a broken
+          # rotation, or something in the cluster is guessing.
+          expr: |
+            sum by (namespace) (increase(mcmap_service_exchanges_total{namespace="{{ .Release.Namespace }}", result!="ok"}[15m])) > 0
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map refused an exchange for a service session
+            description: >-
+              The map's internal port was asked for a service session and said no.
+              mcmap_service_exchanges_total by result says how: denied is a wrong
+              secret, locked is the five minutes after five wrong ones, limited is
+              more exchanges than one a minute, malformed is a secret put in an
+              address. The map logs each as "map service session refused" with the
+              caller's address. If the checks are failing too, the Secret was
+              changed without the map being restarted.
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+        - alert: JdwillmsenMinecraftMapServiceExchangeFromOutside
+          # The job's exchange comes from a pod address and is counted as
+          # private. loopback is a port-forward: a person or an agent
+          # running the checks from outside the cluster, which needs the
+          # owner's say-so each time. other is an address that should not be
+          # able to reach the internal port at all. Either is told, whether
+          # it was let in or not.
+          expr: |
+            sum by (namespace, source) (increase(mcmap_service_exchanges_total{namespace="{{ .Release.Namespace }}", source!="private"}[15m])) > 0
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: A service session for the Minecraft FWB map was asked for from outside the cluster
+            description: >-
+              An exchange reached the map's internal port from {{ "{{ $labels.source }}" }}:
+              loopback is a kubectl port-forward, other is an address with no
+              business there. A run of the checks from a developer's or an agent's
+              machine looks like this, and is meant to: it is expected only when the
+              owner allowed that run. The map's log line for it carries the caller's
+              user agent, which names who said they were allowed.
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+        - alert: JdwillmsenMinecraftMapServiceExchangeRate
+          # The schedule is the only caller there should be. More sessions
+          # than it accounts for means something else has the secret.
+          expr: |
+            sum by (namespace) (increase(mcmap_service_exchanges_total{namespace="{{ .Release.Namespace }}", result="ok"}[1h])) > {{ .Values.map.checks.alert.maxExchangesPerHour }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: More service sessions for the Minecraft FWB map are being issued than its checks ask for
+            description: >-
+              More than {{ .Values.map.checks.alert.maxExchangesPerHour }} service
+              sessions were issued in an hour, and the schedule asks for fewer. Each
+              is a "map service session issued" line in the map's log with the
+              caller's address. If the callers are not the checks' own pods, rotate
+              the Secret: delete {{ include "map.checks.secret.name" . }} and restart
+              the map.
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+{{- end }}

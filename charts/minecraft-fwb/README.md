@@ -588,13 +588,216 @@ path logs and exits 0.
 Tested by `tools/tests/test-deploy-announce.sh`, which runs the script as
 rendered against a stubbed `kubectl`.
 
+||||||| parent of d5e2cee (feat(minecraft-fwb): run browser checks against the live map, off by default)
+## Browser checks
+
+`map.checks` runs the map's own browser checks against this map on a
+schedule: a real browser, loading the page from the public hostname, with a
+session that belongs to no player and can only read. It is **off**, and
+nothing in production's values turns it on.
+
+It exists because the map can only be entered by a player typing a code in
+the game, so nothing automated had ever seen the page with a session. Faults
+that only show with real players on it were found by the players. What the
+checks are, and the design of the session, is in the map's README in
+`gameops` (`minecraft/mcmap/README.md`, "Service sessions" and "Browser
+checks").
+
+### What it adds
+
+| Resource | What it is for |
+|---|---|
+| `Password` and `ExternalSecret` `<release>-map-checks-secret` | The secret the checks exchange for a session, generated in the cluster and never seen by anyone |
+| `SERVICE_SESSION_SECRET` on the map | Switches the map's exchange on, on its internal port only |
+| `CronJob` `<release>-map-checks` | One run: an exchange on the internal port, then about two and a half minutes of browser against `map.host` |
+| `NetworkPolicy` `<release>-map-checks` | Limits the job's pod to the name server, the map's internal port and the gateway |
+| `PersistentVolumeClaim` `<release>-map-checks` | The last run's results, and evidence of failed checks |
+| `Deployment`, `Service`, `ServiceMonitor` `<release>-map-checks-exporter` | Serves the last run's results to Prometheus; where evidence is fetched from |
+| `PrometheusRule` `<release>-map-checks` | The alerts below |
+
+The route is not touched. The exchange is on the map's internal port, which
+the route has never published, and `tools/tests/test-map.sh` fails if
+turning the checks on changes that.
+
+### Turning it on
+
+Two releases have to be out first, both from `gameops`: a map image that has
+service sessions, and the first `minecraft-map-checks` image. Then two
+changes here, in two pull requests, in this order.
+
+1. **Generate the Secret.** Set `map.checks.secret.create: true` and
+   nothing else. This renders the generator and its `ExternalSecret` only;
+   the map does not read the Secret and serves no exchange. Merge, let
+   ArgoCD sync, and confirm the `ExternalSecret` is `SecretSynced`:
+
+   ```bash
+   kubectl get externalsecret -n jdwillmsen-prd minecraft-fwb-map-checks-secret
+   ```
+
+   The order is not a nicety. A workload wired to a secret in the commit
+   that first asks for it is how this chart got its 40-hour outage
+   (`docs/incidents/2026-09-06-fwb-console-bridge-secret.md`). The chart
+   refuses to render step two without step one.
+
+2. **Switch the checks on.** Set `map.checks.enabled: true`, and
+   `map.checks.image.tag` and `map.checks.image.digest` to the released
+   image's; the chart refuses a tag without a digest. Set `map.image.tag` to
+   a map that has service sessions if it is not there already. This restarts
+   the map, which is a few seconds of the page being away and costs the game
+   nothing.
+
+Before step two, three things about this cluster want an answer, because
+nothing in this repository can give one:
+
+- **Does `truenas-nfs` give out `ReadWriteMany` claims?** The job and the
+  exporter mount the same volume from whichever nodes they land on. If it
+  does not, set `map.checks.results.accessMode: ReadWriteOnce` and expect
+  the job to wait for the exporter's node.
+- **Does the network plugin enforce `NetworkPolicy`?** If not, the policy
+  is a statement of intent and the job's pod can reach what any pod can.
+- **Does the public hostname resolve, from a pod, to something the policy
+  lets through?** The policy allows the gateway's namespace. A plugin that
+  judges the address the browser dialled, and not the gateway pod behind it,
+  needs that address in `map.checks.networkPolicy.publicCIDRs`. The first
+  run says: with the policy in the way, `login-screen` and `map-loads`
+  fail and nothing after them runs.
+
+The first scheduled run is at twenty past the next hour that is not one of
+the hours left out. To see one sooner, wait: creating a Job by hand is a
+change to the cluster made outside git.
+
+### Turning it off, and taking the session back
+
+Set `map.checks.enabled: false`. The job, its policy, its volume and its
+alerts go, and the map restarts without the secret, which switches the
+exchange off and ends any session still alive. Leave `secret.create` on if
+the checks are coming back; turn it off too to remove the Secret.
+
+To revoke without turning the checks off, rotate: delete the Secret, let the
+generator make another, and restart the map.
+
+```bash
+kubectl delete secret -n jdwillmsen-prd minecraft-fwb-map-checks-secret
+kubectl rollout restart -n jdwillmsen-prd deployment/minecraft-fwb-map
+```
+
+Sessions are signed with a key derived from the secret, so every session
+issued under the old one stops working as the map comes back. Both commands
+change the cluster by hand, which is otherwise not done here; they are
+written down because revoking a credential is the case that cannot wait for
+a pull request.
+
+### What it may see and do
+
+The session reads what every logged-in player is shown alike and nothing
+that is one player's own: no waypoints, no standing with a village, no
+"me". It can send nothing but a `GET`. It lasts `map.checks.sessionTTL`,
+ten minutes, and cannot be renewed. The runner itself aborts every request
+that is not a read before it leaves the browser, and never touches the
+game.
+
+### When it runs
+
+`map.checks.schedule`, hourly at twenty past, UTC, leaving out 03:00 to
+06:59 (the backup, the census and the map's quiet windows) and 16:00 to
+16:59 (the daily restart). `tools/tests/test-map.sh` reads those jobs'
+schedules and deadlines out of the rendered chart and fails if a run could
+overlap one.
+
+The pod is a browser on the nodes the game server runs on, so it is held
+to one CPU and 1 GiB, which a run fits in with room; it requests a quarter
+of a CPU and 512 MiB; and the scheduler is asked to put it on a node the
+server is not on, where there is one. It runs as a user that is not root,
+on a read-only root filesystem, with no capabilities and no service account
+token: it asks nothing of the cluster's API.
+
+### Results
+
+The job's log is one line of JSON a check: its name, `pass`, `fail` or
+`skip`, how long it took and what it measured. A check that needs a player
+online or a mob loaded skips on a quiet world, and a skip is not a failure.
+The log never holds a coordinate, a gamertag or a name: that is the
+runner's rule, tested in `gameops`, and it is what makes the log safe to
+paste.
+
+The same results are served to Prometheus by the exporter:
+
+| Metric | Meaning |
+|---|---|
+| `mcmap_e2e_run_success` | 1 if no check of the last run failed |
+| `mcmap_e2e_run_timestamp_seconds`, `mcmap_e2e_run_duration_seconds` | When the last run finished, and how long it took |
+| `mcmap_e2e_checks{status}` | Checks of the last run that ended `pass`, `fail`, `skip` |
+| `mcmap_e2e_check_status{check}` | Each check: 1 passed, 0 failed, -1 skipped |
+| `mcmap_e2e_check_duration_seconds{check}` | How long each took |
+| `mcmap_e2e_measure{check,measure}` | What each measured: the stream's longest gap, how far off the middle Follow was, and so on |
+| `mcmap_e2e_api_seconds{endpoint}` | How long each answer the page is built from took through the gateway |
+| `mcmap_e2e_face_offset_pixels{face}`, `mcmap_e2e_face_offset_x_pixels{face}` | How far each mob's face sits from the middle of its plate, on the real page with the real pictures |
+
+### Evidence
+
+A failed check leaves a screenshot, a browser trace and the full text of
+what went wrong under `evidence/` on the checks' volume, one directory a
+run. **These are pictures of the live map: real coordinates, real
+gamertags.** So:
+
+- They stay on the volume. The newest `map.checks.evidence.keepRuns` failed
+  runs are kept, five, and none older than `keepDays`, seven; the runner
+  deletes the rest at the start of each run.
+- They are fetched by whoever is looking into the failure, to their own
+  machine, from the exporter's pod, which has the volume mounted read-only:
+
+  ```bash
+  kubectl cp -n jdwillmsen-prd \
+    "$(kubectl get pod -n jdwillmsen-prd -l app=minecraft-fwb-map-checks-exporter -o name | cut -d/ -f2)":/var/lib/mcmap-e2e/evidence ./evidence
+  ```
+
+- They are never committed, attached to a pull request, an issue or a
+  ticket, or pasted into a chat. What goes in those is the log line.
+- Delete the copy when the failure is understood.
+
+`map.checks.evidence.enabled: false` keeps none at all.
+
+### Alerts
+
+| Alert | Fires when |
+|---|---|
+| `JdwillmsenMinecraftMapChecksFailing` | The last run had a failing check, for `alert.failingFor` |
+| `JdwillmsenMinecraftMapChecksStale` | No run has finished for `alert.staleAfter`, six hours, which is longer than the night's gap |
+| `JdwillmsenMinecraftMapChecksNeverRan` | Switched on, and no run has ever reported |
+| `JdwillmsenMinecraftMapServiceExchangeRefused` | The map refused an exchange: a wrong secret, a lock, a rate limit. Nothing that holds the secret presents a wrong one |
+| `JdwillmsenMinecraftMapServiceExchangeFromOutside` | An exchange came over a port-forward or from an address with no business at the internal port, whether or not it was let in |
+| `JdwillmsenMinecraftMapServiceExchangeRate` | More sessions were issued in an hour than `alert.maxExchangesPerHour` |
+
+When `ChecksFailing` fires: read the job's log for the failing check's line
+(`kubectl logs -n jdwillmsen-prd job/<the last job>`), then
+`mcmap_e2e_measure` for its numbers. `page-errors` names the script and
+line that threw. `exchange` failing means the job and the map disagree
+about the secret, and `ServiceExchangeRefused` will be firing beside it.
+
+### Running the checks from outside the cluster
+
+The runner can also be run from a developer's or an agent's machine, before
+and after a rollout: it reads the Secret through `kubectl` into its own
+memory, exchanges it over a port-forward to the internal port, and drives a
+browser against the public hostname. The secret is printed nowhere and
+passes through no shell.
+
+**This needs the owner's explicit approval before it is first used against
+production, and each time after.** It reads a credential from the cluster
+and looks at the live map from outside it. It is not a step of any routine
+here, and an agent does not start one on its own judgment. When it is run
+it shows: `JdwillmsenMinecraftMapServiceExchangeFromOutside` fires, and the
+map's log line for the exchange carries who was named as approving it. The
+procedure is in the map's README; it has been exercised against the
+suite's harness only.
+
 ## Tests
 
 ```bash
 tools/tests/test-world-integrity-alerts.sh   # promtool unit tests for the rules above
 tools/tests/test-tick-rate-alerts.sh
 tools/tests/test-deploy-announce.sh          # the deploy-announce hook's decisions and digests
-tools/tests/test-map.sh                      # the map's exposure, the pack's init step, the map and live alerts
+tools/tests/test-map.sh                      # the map's exposure, the pack's init step, the map and live alerts, the browser checks
 ```
 
 Every `tools/tests/test-*.sh` is discovered and run by CI. The alert suites skip

@@ -22,6 +22,11 @@
 # Fifth, the live layer's two alerts, whose gauge reads zero rather than
 # absent on a map that has just started.
 #
+# Sixth, the browser checks of the live map, which bring three things this
+# chart did not have: a second way into the map, a credential for it, and a
+# browser running beside the game server. Each has to stay exactly as small
+# as it was made: see the browser checks below.
+#
 # Read from the rendered chart with the value files production applies, so an
 # override from any layer is what gets checked.
 set -euo pipefail
@@ -480,6 +485,226 @@ for line in bad:
 sys.exit(1 if bad else 0)
 PY
 
+# The browser checks. They are off as production runs today, and what they
+# add when on is held to here.
+#
+# A made-up digest stands in for the image's: this renders the chart and
+# pulls nothing.
+checks_on=(--set map.checks.secret.create=true --set map.checks.enabled=true
+  --set map.checks.image.tag=1.0.0 --set "map.checks.image.digest=sha256:$(printf 'a%.0s' $(seq 64))")
+render() {
+  helm template minecraft-fwb "$chart" \
+    --namespace jdwillmsen-prd \
+    -f "$chart/values.yaml" \
+    -f "$chart/values-prd.yaml" \
+    -f "$chart/values-console-bridge.yaml" -f "$chart/values-map-pack.yaml" "$@"
+}
+render --set map.checks.secret.create=true > "$work/checks-secret.yaml"
+render "${checks_on[@]}" > "$work/checks-on.yaml"
+
+# Wiring a workload to a Secret in the step that first creates it is how this
+# chart got its 40-hour outage, so the order is enforced and not only
+# written down. And the image holds a session on the live map: a tag alone,
+# which can be moved, is refused.
+if render --set map.checks.enabled=true >/dev/null 2>&1; then
+  fail "the browser checks can be enabled without their Secret being generated first"
+fi
+if render --set map.checks.secret.create=true --set map.checks.enabled=true --set map.checks.image.tag=1.0.0 >/dev/null 2>&1; then
+  fail "the browser checks can be enabled with an image that is not pinned by digest"
+fi
+
+python3 - "$work/rendered.yaml" "$work/checks-secret.yaml" "$work/checks-on.yaml" <<'PY' || fail "the browser checks are not as contained as they were made"
+import re, sys, yaml
+
+load = lambda path: [d for d in yaml.safe_load_all(open(path)) if d]
+off, staged, on = (load(p) for p in sys.argv[1:4])
+text = {"off": open(sys.argv[1]).read(), "on": open(sys.argv[3]).read()}
+named = lambda docs: {(d["kind"], d["metadata"]["name"]) for d in docs}
+by = lambda docs, kind, suffix: next(d for d in docs if d["kind"] == kind and d["metadata"]["name"].endswith(suffix))
+map_env = lambda docs: {e["name"]: e for e in by(docs, "Deployment", "-map")["spec"]["template"]["spec"]["containers"][0]["env"]}
+bad = []
+
+# Off, as production is: nothing of it anywhere.
+if any("map-checks" in name for _, name in named(off)):
+    bad.append("production's values render a browser-checks resource; they are meant to be off until the owner turns them on")
+if "SERVICE_SESSION" in text["off"]:
+    bad.append("production's values give the map a service-session setting; the exchange is meant to be off")
+
+# Step one adds the generator and nothing that reads it.
+added = named(staged) - named(off)
+if added != {("Password", "minecraft-fwb-map-checks-secret"), ("ExternalSecret", "minecraft-fwb-map-checks-secret")}:
+    bad.append(f"map.checks.secret.create alone adds {sorted(added)}; it should add the generator and its ExternalSecret only")
+if "SERVICE_SESSION_SECRET" in map_env(staged):
+    bad.append("the map reads the checks' Secret as soon as it is generated; that is step two")
+
+# The secret is generated in the cluster, once, and is a literal nowhere.
+password = by(on, "Password", "-map-checks-secret")
+external = by(on, "ExternalSecret", "-map-checks-secret")
+if password["spec"]["length"] < 32:
+    bad.append(f"the checks' secret is {password['spec']['length']} characters; the map refuses one under 32")
+if external["spec"].get("refreshPolicy") != "CreatedOnce":
+    bad.append("the checks' Secret would be regenerated under a running map, which reads it once at startup")
+sources = external["spec"].get("dataFrom") or []
+if external["spec"].get("data") or len(sources) != 1 or (sources[0].get("sourceRef") or {}).get("generatorRef", {}).get("kind") != "Password":
+    bad.append("the checks' Secret is not made by the in-cluster generator alone")
+if any(d["kind"] == "Secret" for d in on if "map-checks" in d["metadata"]["name"]):
+    bad.append("the chart renders the checks' Secret itself, which puts its value in git")
+secret_env = map_env(on).get("SERVICE_SESSION_SECRET") or {}
+ref = (secret_env.get("valueFrom") or {}).get("secretKeyRef") or {}
+if "value" in secret_env or ref.get("name") != external["spec"]["target"]["name"] or ref.get("key") not in password["spec"]["secretKeys"]:
+    bad.append("the map's SERVICE_SESSION_SECRET is not read from the generated Secret")
+if ref.get("optional") is not True:
+    bad.append("the map waits on the checks' Secret; a Secret that is late would keep the map from starting")
+if ref.get("name") == (map_env(on)["INTERNAL_TOKEN"]["valueFrom"]["secretKeyRef"]["name"]):
+    bad.append("the checks share the agent's token, which can log in as any player")
+
+# The exchange is on the map's internal port, and the route still publishes
+# only the public one: turning the checks on moves nothing into reach.
+service = by(on, "Service", "-map")
+ports = {p["name"]: p["port"] for p in service["spec"]["ports"]}
+for route in (d for d in on if d["kind"] == "HTTPRoute"):
+    for rule in route["spec"]["rules"]:
+        for backend in rule["backendRefs"]:
+            if "map-checks" in backend["name"] or (backend["name"] == service["metadata"]["name"] and backend["port"] != ports["http"]):
+                bad.append(f"HTTPRoute {route['metadata']['name']} publishes {backend['name']}:{backend['port']}; the exchange must stay unreachable from outside")
+if named(on) - named(staged) != {
+        ("PersistentVolumeClaim", "minecraft-fwb-map-checks"), ("CronJob", "minecraft-fwb-map-checks"), ("NetworkPolicy", "minecraft-fwb-map-checks"),
+        ("PrometheusRule", "minecraft-fwb-map-checks"), ("Deployment", "minecraft-fwb-map-checks-exporter"),
+        ("Service", "minecraft-fwb-map-checks-exporter"), ("ServiceMonitor", "minecraft-fwb-map-checks-exporter")}:
+    bad.append(f"map.checks.enabled adds {sorted(named(on) - named(staged))}; anything new here needs a reason and a line in this test")
+
+# The job: a browser, beside the game server, holding a session.
+job = by(on, "CronJob", "-map-checks")
+spec = job["spec"]["jobTemplate"]["spec"]
+pod = spec["template"]["spec"]
+if len(pod["containers"]) != 1 or pod.get("initContainers"):
+    bad.append("the checks' pod runs more than the one container")
+c = pod["containers"][0]
+ctx, pctx = c.get("securityContext") or {}, pod.get("securityContext") or {}
+if pod.get("automountServiceAccountToken") is not False or pod.get("serviceAccountName"):
+    bad.append("the checks' pod holds a service account token; it asks nothing of the cluster and runs a browser")
+if pctx.get("runAsNonRoot") is not True or pctx.get("runAsUser", 0) == 0 or (pctx.get("seccompProfile") or {}).get("type") != "RuntimeDefault":
+    bad.append("the checks' pod is not held to a non-root user under the default seccomp profile")
+if ctx.get("readOnlyRootFilesystem") is not True or ctx.get("allowPrivilegeEscalation") is not False or (ctx.get("capabilities") or {}).get("drop") != ["ALL"] or ctx.get("privileged"):
+    bad.append("the checks' container is not read-only, unprivileged and without capabilities")
+if pod.get("hostNetwork") or pod.get("hostPID") or pod.get("hostIPC") or any("hostPath" in v for v in pod["volumes"]):
+    bad.append("the checks' pod reaches into its node")
+if not re.fullmatch(r"ghcr\.io/jdwillmsen/minecraft-map-checks(:[\w.-]+)?@sha256:[0-9a-f]{64}", c["image"]):
+    bad.append(f"the checks' image {c['image']} is not pinned by digest")
+
+def quantity(v):
+    v = str(v)
+    for suffix, scale in (("Gi", 2**30), ("Mi", 2**20), ("m", 0.001)):
+        if v.endswith(suffix):
+            return float(v[:-len(suffix)]) * scale
+    return float(v)
+limits, requests = (c.get("resources") or {}).get("limits") or {}, (c.get("resources") or {}).get("requests") or {}
+if "cpu" not in limits or "memory" not in limits or "cpu" not in requests or "memory" not in requests:
+    bad.append("the checks have no limit on CPU or memory, on the nodes the game server runs on")
+elif quantity(limits["cpu"]) > 2 or quantity(limits["memory"]) > 2 * 2**30:
+    bad.append(f"the checks may take {limits['cpu']} CPU and {limits['memory']}; past 2 and 2Gi is more than a browser needs and enough to be felt by the game server")
+tmp = next((v for v in pod["volumes"] if v["name"] == "tmp"), {})
+if "sizeLimit" not in (tmp.get("emptyDir") or {}):
+    bad.append("the checks' scratch directory has no size limit on the node's disk")
+if job["spec"].get("concurrencyPolicy") != "Forbid" or spec.get("backoffLimit") != 0 or not 0 < spec.get("activeDeadlineSeconds", 0) <= 1800:
+    bad.append("the checks may run twice at once, retry, or run without end")
+
+# The secret reaches the runner as a file and as nothing else.
+if any("valueFrom" in e or "SECRET" in e["name"].upper() for e in c.get("env") or []) or c.get("envFrom"):
+    bad.append("the checks' secret is in the container's environment, which `kubectl describe` prints")
+volume = next((v for v in pod["volumes"] if "secret" in v), None)
+if not volume or volume["secret"]["secretName"] != external["spec"]["target"]["name"] or len(volume["secret"].get("items") or []) != 1:
+    bad.append("the checks' pod does not mount exactly the one key of the generated Secret")
+elif not any(m["name"] == volume["name"] and m.get("readOnly") is True for m in c["volumeMounts"]):
+    bad.append("the checks' secret is not mounted read-only")
+if len([v for v in pod["volumes"] if "secret" in v]) != 1:
+    bad.append("the checks' pod mounts a Secret that is not its own")
+
+# The browser goes the way a player's does; only the exchange goes inside.
+args = dict(zip(c["args"][::2], c["args"][1::2]))
+hosts = [h for d in on if d["kind"] == "HTTPRoute" for h in d["spec"]["hostnames"]]
+if args.get("--public-url") not in [f"https://{h}" for h in hosts]:
+    bad.append(f"the checks drive the browser at {args.get('--public-url')}, which is not the hostname the route publishes over https")
+if args.get("--internal-url") != f"http://{service['metadata']['name']}.jdwillmsen-prd.svc.cluster.local:{ports['internal']}":
+    bad.append(f"the checks exchange their secret at {args.get('--internal-url')}, not the map's internal port")
+if any(flag in args for flag in ("--secret-from-kube", "--port-forward", "--insecure-local-tls")):
+    bad.append("the scheduled checks are given an option that is for a run from outside the cluster or against a harness")
+
+# What the pod may reach.
+policy = by(on, "NetworkPolicy", "-map-checks")["spec"]
+if policy["podSelector"].get("matchLabels") != spec["template"]["metadata"]["labels"]:
+    bad.append("the network policy does not select the checks' pods")
+if set(policy.get("policyTypes") or []) != {"Ingress", "Egress"} or policy.get("ingress"):
+    bad.append("something may connect to the checks' pod")
+peers = []
+for rule in policy.get("egress") or []:
+    for to in rule.get("to") or [{}]:
+        peers.append((to, rule.get("ports") or []))
+map_label = by(on, "Deployment", "-map")["spec"]["template"]["metadata"]["labels"]
+for to, rule_ports in peers:
+    if not to or "ipBlock" in to and to["ipBlock"]["cidr"].endswith("/0"):
+        bad.append("the checks' pod may reach anywhere")
+    elif (to.get("podSelector") or {}).get("matchLabels") == map_label and "namespaceSelector" not in to:
+        if [p.get("port") for p in rule_ports] != [ports["internal"]]:
+            bad.append("the checks' pod may reach the map on something other than its internal port; the page has to be reached through the gateway")
+    elif "namespaceSelector" in to:
+        where = to["namespaceSelector"].get("matchLabels", {}).get("kubernetes.io/metadata.name")
+        if where not in ("kube-system", "nginx-gateway") or (where == "kube-system" and "podSelector" not in to):
+            bad.append(f"the checks' pod may reach namespace {where}")
+    elif "ipBlock" not in to:
+        bad.append(f"the checks' pod may reach {to}")
+if not any((to.get("podSelector") or {}).get("matchLabels") == map_label for to, _ in peers):
+    bad.append("the checks' pod cannot reach the map's internal port for the exchange")
+
+# The schedule keeps off the hours the map is not expected to be itself.
+minutes, hours, *rest = job["spec"]["schedule"].split()
+def expand(field, top):
+    out = set()
+    for part in field.split(","):
+        if part == "*":
+            out |= set(range(top))
+        elif "-" in part:
+            lo, hi = part.split("-")
+            out |= set(range(int(lo), int(hi) + 1))
+        else:
+            out.add(int(part))
+    return out
+if rest != ["*", "*", "*"] or job["spec"].get("timeZone") != "Etc/UTC" or not re.fullmatch(r"[0-9,*-]+ [0-9,*-]+", f"{minutes} {hours}"):
+    bad.append(f"the checks' schedule {job['spec']['schedule']!r} is not a daily list of times in UTC; this check needs extending")
+else:
+    busy = []
+    for part in map_env(on)["QUIET_UTC"]["value"].split(","):
+        start, end = (int(t[:2]) * 60 + int(t[3:]) for t in part.strip().split("-"))
+        busy.append(("the map's quiet window", start, end))
+    for suffix, what, before in (("-backup", "the backup", 10), ("-census", "the census", 10), ("-scheduled-restart", "the daily restart", 15)):
+        other = by(on, "CronJob", suffix)
+        m, h, *_ = other["spec"]["schedule"].split()
+        start = int(h) * 60 + int(m)
+        busy.append((what, start - before, start + -(-other["spec"]["jobTemplate"]["spec"]["activeDeadlineSeconds"] // 60)))
+    length = -(-spec["activeDeadlineSeconds"] // 60)
+    for h in sorted(expand(hours, 24)):
+        for m in sorted(expand(minutes, 60)):
+            run = range(h * 60 + m, h * 60 + m + length + 1)
+            for what, start, end in busy:
+                if any(start <= minute % 1440 < end or start <= minute % 1440 + 1440 < end for minute in run):
+                    bad.append(f"a run of the checks at {h:02d}:{m:02d} UTC can overlap {what}")
+
+# The exporter reads the results and can change nothing.
+exporter = by(on, "Deployment", "-map-checks-exporter")["spec"]["template"]["spec"]
+e = exporter["containers"][0]
+claim = next(v for v in exporter["volumes"] if "persistentVolumeClaim" in v)
+if exporter.get("automountServiceAccountToken") is not False or (e["securityContext"]).get("readOnlyRootFilesystem") is not True:
+    bad.append("the checks' exporter holds a token or a writable root")
+if claim["persistentVolumeClaim"].get("readOnly") is not True or not all(m.get("readOnly") for m in e["volumeMounts"] if m["name"] == claim["name"]):
+    bad.append("the checks' exporter can write to the volume the evidence is on")
+if any("secret" in v for v in exporter["volumes"]):
+    bad.append("the checks' exporter mounts a Secret")
+
+for line in dict.fromkeys(bad):
+    print(line)
+sys.exit(1 if bad else 0)
+PY
+
 if ! command -v promtool >/dev/null 2>&1; then
   # Loud rather than silent: a skipped alert test is an untested alert. CI
   # installs promtool, so this branch is never taken there.
@@ -886,6 +1111,273 @@ if ! out="$(cd "$work" && promtool test rules tests.yaml 2>&1)"; then
   fail "the map alert rules do not behave as specified"
 fi
 
+# The browser checks' rules. promtool's clock starts at unix 0, so a run
+# timestamp counting 60 a minute is a run that has just finished, and one
+# held still is the last run there was.
+python3 - "$work/checks-on.yaml" > "$work/check-rules.yaml" <<'PY'
+import sys, yaml
+for doc in yaml.safe_load_all(open(sys.argv[1])):
+    if doc and doc.get("kind") == "PrometheusRule" and doc["metadata"]["name"].endswith("-map-checks"):
+        print(yaml.safe_dump({"groups": doc["spec"]["groups"]}, sort_keys=False))
+PY
+[ -s "$work/check-rules.yaml" ] || fail "could not extract the browser checks' rules from the chart"
+promtool check rules "$work/check-rules.yaml" >/dev/null || fail "promtool rejected the rendered browser checks' rules"
+
+cat > "$work/check-tests.yaml" <<'TESTS'
+rule_files:
+  - check-rules.yaml
+evaluation_interval: 1m
+tests:
+  # Running and passing, with the job's own exchange once an hour: nothing
+  # to say. The exchange counters are at zero from the map's start, which is
+  # what lets a first refusal show as an increase at all.
+  - interval: 1m
+    input_series:
+      - series: 'mcmap_e2e_run_success{namespace="jdwillmsen-prd", pod="exporter-a"}'
+        values: '1x600'
+      - series: 'mcmap_e2e_run_timestamp_seconds{namespace="jdwillmsen-prd", pod="exporter-a"}'
+        values: '0+60x600'
+      - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="private"}'
+        values: '0+0x20 1+0x59 2+0x59 3+0x59 4+0x59 5+0x59 6+0x59 7+0x59 8+0x59 9+0x59 10+0x59'
+      - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="denied", source="private"}'
+        values: '0x600'
+      - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="loopback"}'
+        values: '0x600'
+    alert_rule_test:
+      - eval_time: 9h
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+      - eval_time: 9h
+        alertname: JdwillmsenMinecraftMapChecksStale
+        exp_alerts: []
+      - eval_time: 9h
+        alertname: JdwillmsenMinecraftMapChecksNeverRan
+        exp_alerts: []
+      - eval_time: 9h
+        alertname: JdwillmsenMinecraftMapServiceExchangeRefused
+        exp_alerts: []
+      - eval_time: 9h
+        alertname: JdwillmsenMinecraftMapServiceExchangeFromOutside
+        exp_alerts: []
+      - eval_time: 9h
+        alertname: JdwillmsenMinecraftMapServiceExchangeRate
+        exp_alerts: []
+
+  # A run fails. Told once it has stood ten minutes, and still told when the
+  # exporter that reports it is replaced by another pod, as one alert.
+  - interval: 1m
+    input_series:
+      - series: 'mcmap_e2e_run_success{namespace="jdwillmsen-prd", pod="exporter-a"}'
+        values: '1x30 0x30 _x200'
+      - series: 'mcmap_e2e_run_success{namespace="jdwillmsen-prd", pod="exporter-b"}'
+        values: '_x60 0x60 1x100'
+      - series: 'mcmap_e2e_run_timestamp_seconds{namespace="jdwillmsen-prd", pod="exporter-a"}'
+        values: '0+60x300'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+      - eval_time: 36m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: The Minecraft FWB map failed its browser checks
+              description: >-
+                The last run of the map's browser checks had a failing check.
+                mcmap_e2e_check_status says which (0 is failed, -1 skipped) and
+                mcmap_e2e_measure what it measured. The job's log has one line a
+                check with its own words for what went wrong; a screenshot and a
+                trace of the failure are on the checks' volume.
+                charts/minecraft-fwb/README.md, "Browser checks".
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+      - eval_time: 90m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: The Minecraft FWB map failed its browser checks
+              description: >-
+                The last run of the map's browser checks had a failing check.
+                mcmap_e2e_check_status says which (0 is failed, -1 skipped) and
+                mcmap_e2e_measure what it measured. The job's log has one line a
+                check with its own words for what went wrong; a screenshot and a
+                trace of the failure are on the checks' volume.
+                charts/minecraft-fwb/README.md, "Browser checks".
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+      # The next run passed.
+      - eval_time: 130m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+
+  # The checks stop running, still passing as far as the last run knows.
+  # Quiet through the five hours the schedule leaves each night, told past
+  # six.
+  - interval: 1m
+    input_series:
+      - series: 'mcmap_e2e_run_success{namespace="jdwillmsen-prd", pod="exporter-a"}'
+        values: '1x600'
+      - series: 'mcmap_e2e_run_timestamp_seconds{namespace="jdwillmsen-prd", pod="exporter-a"}'
+        values: '0+60x60 3600x540'
+    alert_rule_test:
+      - eval_time: 6h30m
+        alertname: JdwillmsenMinecraftMapChecksStale
+        exp_alerts: []
+      - eval_time: 6h30m
+        alertname: JdwillmsenMinecraftMapChecksFailing
+        exp_alerts: []
+      - eval_time: 7h5m
+        alertname: JdwillmsenMinecraftMapChecksStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: The Minecraft FWB map's browser checks have stopped running
+              description: >-
+                No run of the map's browser checks has finished for
+                6h 5m 0s. Nothing is watching the page
+                meanwhile. Check the minecraft-fwb-map-checks CronJob and its
+                last Job: a run that could not exchange its secret ends at once and
+                says so in its log.
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+
+  # Switched on and never reported at all: the staleness rule has nothing to
+  # subtract and says nothing, so this one has to.
+  - interval: 1m
+    input_series:
+      - series: 'up{namespace="jdwillmsen-prd"}'
+        values: '1x600'
+    alert_rule_test:
+      - eval_time: 5h
+        alertname: JdwillmsenMinecraftMapChecksNeverRan
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: JdwillmsenMinecraftMapChecksStale
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: JdwillmsenMinecraftMapChecksNeverRan
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: The Minecraft FWB map's browser checks have never reported
+              description: >-
+                The checks are switched on and no run has ever published a result,
+                or the exporter is not being scraped. Check the
+                minecraft-fwb-map-checks CronJob, the
+                minecraft-fwb-map-checks-exporter Deployment and its
+                ServiceMonitor.
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+
+  # One wrong secret, from inside the cluster: told, and done with a quarter
+  # of an hour after it.
+  - interval: 1m
+    input_series:
+      - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="private"}'
+        values: '0x120'
+      - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="denied", source="private"}'
+        values: '0x30 1x90'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: JdwillmsenMinecraftMapServiceExchangeRefused
+        exp_alerts: []
+      - eval_time: 33m
+        alertname: JdwillmsenMinecraftMapServiceExchangeRefused
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: The Minecraft FWB map refused an exchange for a service session
+              description: >-
+                The map's internal port was asked for a service session and said no.
+                mcmap_service_exchanges_total by result says how: denied is a wrong
+                secret, locked is the five minutes after five wrong ones, limited is
+                more exchanges than one a minute, malformed is a secret put in an
+                address. The map logs each as "map service session refused" with the
+                caller's address. If the checks are failing too, the Secret was
+                changed without the map being restarted.
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+      - eval_time: 33m
+        alertname: JdwillmsenMinecraftMapServiceExchangeFromOutside
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: JdwillmsenMinecraftMapServiceExchangeRefused
+        exp_alerts: []
+
+  # A session issued over a port-forward: let in, and told all the same.
+  - interval: 1m
+    input_series:
+      - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="private"}'
+        values: '0x120'
+      - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="loopback"}'
+        values: '0x30 1x90'
+    alert_rule_test:
+      - eval_time: 33m
+        alertname: JdwillmsenMinecraftMapServiceExchangeRefused
+        exp_alerts: []
+      - eval_time: 33m
+        alertname: JdwillmsenMinecraftMapServiceExchangeFromOutside
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+              source: loopback
+            exp_annotations:
+              summary: A service session for the Minecraft FWB map was asked for from outside the cluster
+              description: >-
+                An exchange reached the map's internal port from loopback:
+                loopback is a kubectl port-forward, other is an address with no
+                business there. A run of the checks from a developer's or an agent's
+                machine looks like this, and is meant to: it is expected only when the
+                owner allowed that run. The map's log line for it carries the caller's
+                user agent, which names who said they were allowed.
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+
+  # Five sessions in an hour where the schedule asks for one.
+  - interval: 1m
+    input_series:
+      - series: 'mcmap_service_exchanges_total{namespace="jdwillmsen-prd", result="ok", source="private"}'
+        values: '0x10 1x9 2x9 3x9 4x9 5x120'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: JdwillmsenMinecraftMapServiceExchangeRate
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: JdwillmsenMinecraftMapServiceExchangeRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: More service sessions for the Minecraft FWB map are being issued than its checks ask for
+              description: >-
+                More than 3 service
+                sessions were issued in an hour, and the schedule asks for fewer. Each
+                is a "map service session issued" line in the map's log with the
+                caller's address. If the callers are not the checks' own pods, rotate
+                the Secret: delete minecraft-fwb-map-checks-secret and restart
+                the map.
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#browser-checks"
+      - eval_time: 150m
+        alertname: JdwillmsenMinecraftMapServiceExchangeRate
+        exp_alerts: []
+TESTS
+
+if ! out="$(cd "$work" && promtool test rules check-tests.yaml 2>&1)"; then
+  echo "$out"
+  fail "the browser checks' alert rules do not behave as specified"
+fi
+
 # The pack's init step is on the game server's pod and carries the map's
 # image, which Renovate merges unattended. Three things together keep that
 # update off the game server, and each is easy to undo without noticing: the
@@ -925,4 +1417,4 @@ for line in bad:
 sys.exit(1 if bad else 0)
 PY
 
-echo "PASS: map quiet windows cover the backup and census, the internal token is generated once, only the public port is published and only behind the login, the pack's init step cannot hold the server, and the map and live alerts fire when they should"
+echo "PASS: map quiet windows cover the backup and census, the internal token is generated once, only the public port is published and only behind the login, the pack's init step cannot hold the server, the map and live alerts fire when they should, and the browser checks are off, contained when on, and tell when they fail or stop"
