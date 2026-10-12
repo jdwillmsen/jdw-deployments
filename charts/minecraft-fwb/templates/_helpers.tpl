@@ -188,6 +188,42 @@ keeps this digest unchanged until then.
 {{- end -}}
 {{- end -}}
 
+{{/*
+A digest of the values that determine the map Deployment's pod -- empty
+whenever this sync leaves no map pod, for the same reason as the agent's: the
+Deployment renders only with the map and the console bridge both on, and
+neither losing the page nor getting it back is a restart worth announcing.
+
+Kept apart from the server's digest because a map restart disconnects nobody.
+It earns one line in chat and no countdown, and Renovate merges map image bumps
+unattended, so this is the digest that moves most often.
+
+Everything the map's pod template reads is in it, and nothing else. map.host,
+map.persistence and the alert thresholds are left out because they reach the
+HTTPRoute, the PVC and the alert rules, never the pod: a changed alert
+threshold announced as a restart is the false warning this hook exists to stop
+sending. The level name, bridge port, bridge secret name and the agent address
+are in because the pod's env is built from them although they live outside
+.Values.map.
+
+Same approximation as the others, with the same gap: a change to the template
+rather than to these values -- a probe, the strategy -- moves the pod without
+moving this digest, and that sync stays quiet.
+*/}}
+{{- define "deployAnnounce.mapSpecHash" -}}
+{{- if and .Values.map.enabled .Values.global.consoleBridge.enabled -}}
+{{- /* A copy, because omit and set write into the map they are given, and the original is the live map values every later template reads. */ -}}
+{{- $map := omit (deepCopy .Values.map) "host" "persistence" "alert" -}}
+{{- $_ := set $map "live" (omit (get $map "live") "alert") -}}
+{{- $inputs := dict "map" $map
+      "levelName" (index .Values "minecraft-bedrock" "minecraftServer" "levelName")
+      "bridgePort" .Values.consoleBridge.service.port
+      "bridgeSecret" .Values.global.consoleBridge.secret.name
+      "agentUrl" (and .Values.map.markers.waypoints .Values.agent.enabled (printf "%s:%v" (include "agent.name" .) .Values.agent.metrics.port)) -}}
+{{ $inputs | toYaml | sha256sum | trunc 16 }}
+{{- end -}}
+{{- end -}}
+
 {{- define "deployAnnounce.hashConfigMap" -}}
 {{ .Release.Name }}-server-spec-hash
 {{- end -}}
