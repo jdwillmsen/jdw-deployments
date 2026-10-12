@@ -2034,7 +2034,11 @@ map:
     # list leaves mobs out for reasons that are not theirs. It also centres
     # a face by what is drawn when the map has not yet said where its head
     # is.
-    tag: "1.23.1"
+    #
+    # 1.24.0 can keep the map as it was on each day; see history below,
+    # which is what switches that on. It also brings 1.23.2, which keeps
+    # where structures are out of the log.
+    tag: "1.24.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2265,6 +2269,26 @@ map:
   # Pictures for the live markers: each mob's spawn-egg icon and each
   # player's own head.
   #
+  # The map as it was on each day, so a place can be looked at over time.
+  # Once a day, at the first refresh after 00:00 UTC, the map keeps every
+  # tile it has drawn, each distinct tile once: a day costs the tiles that
+  # changed since the day before. The page does not show it yet; the days
+  # are served at /api/history to logged-in players. Nothing is ever
+  # deleted, and a day that was not kept cannot be kept later.
+  history:
+    # false keeps no days and serves none, and leaves the claim and what is
+    # on it where they are. Restarts the map only.
+    enabled: true
+    persistence:
+      # The file tier, as the backup archives are: whole files written once
+      # and read back, with none of the random access that put the mirror on
+      # block storage.
+      storageClass: truenas-nfs
+      # Every tile of all three dimensions was under 200 MiB on 2026-10-12,
+      # and that is the most one day can cost. What a day really costs is
+      # mcmap_history_capture_bytes, and mcmap_history_bytes is the total.
+      size: 20Gi
+
   # The mob icons are Mojang's, and the game server ships no textures of its
   # own, so the map fetches them from Mojang's public bedrock-samples
   # repository when it starts and keeps them on its volume. Nothing of

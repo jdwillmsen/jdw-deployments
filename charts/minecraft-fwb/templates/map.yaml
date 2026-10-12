@@ -17,6 +17,25 @@ spec:
   resources:
     requests:
       storage: {{ .Values.map.persistence.size }}
+{{- if .Values.map.history.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "map.name" . }}-history
+  namespace: {{ .Release.Namespace }}
+spec:
+  # The map as it was on each day. Unlike the claim above nothing on this
+  # one can be rebuilt, and it only grows, which is why it is a claim of its
+  # own: filling it costs the days that did not fit, where filling the one
+  # above would cost the snapshots and the renders as well.
+  storageClassName: {{ .Values.map.history.persistence.storageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.map.history.persistence.size }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -115,6 +134,14 @@ spec:
               value: {{ .Values.map.trails.maxAge | quote }}
             - name: TRAILS_MAX_POINTS
               value: {{ .Values.map.trails.maxPoints | quote }}
+            # Always set, like the switches above. The directory is the
+            # mount below, never a path on the data claim.
+            - name: HISTORY_ENABLED
+              value: {{ .Values.map.history.enabled | quote }}
+            {{- if .Values.map.history.enabled }}
+            - name: HISTORY_DIR
+              value: /history
+            {{- end }}
             {{- with .Values.map.structures.seedSecret }}
             {{- if .name }}
             # optional: a Secret that is not there leaves the variable unset
@@ -156,10 +183,19 @@ spec:
             # The renderer unpacks itself here on every start.
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.map.history.enabled }}
+            - name: history
+              mountPath: /history
+            {{- end }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "map.name" . }}
+        {{- if .Values.map.history.enabled }}
+        - name: history
+          persistentVolumeClaim:
+            claimName: {{ include "map.name" . }}-history
+        {{- end }}
         - name: tmp
           emptyDir: {}
 ---
@@ -293,6 +329,29 @@ spec:
               server log for "Changes to the world are resumed"; if it is
               missing, run `save resume` from the console. The nightly backup
               also resumes saving when it finishes.
+{{- if .Values.map.history.enabled }}
+        - alert: JdwillmsenMinecraftMapHistoryMissed
+          # A day is kept at the first cycle after 00:00 UTC, so the newest
+          # one is at most a day and a cycle old. The gauge reads 0 on a map
+          # that has never kept a day, which this takes as very old and so
+          # covers too; the hour is what a first start needs to keep one.
+          expr: |
+            (time() - mcmap_history_last_success_timestamp_seconds{namespace="{{ .Release.Namespace }}"})
+              > 93600
+          for: 1h
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map is not keeping its daily history
+            description: >-
+              The map has kept no day of history for more than 26 hours. A day
+              that is missed cannot be kept later. The map's log says "map
+              history not kept" with the reason; a full history volume is the
+              likely one, and a render failing every cycle is the other,
+              since a day is only kept from a cycle that drew all three
+              dimensions.
+{{- end }}
 {{- if .Values.map.live.enabled }}
         - alert: JdwillmsenMinecraftMapLiveStale
           # No gate on players being online: the pack prints a heartbeat with

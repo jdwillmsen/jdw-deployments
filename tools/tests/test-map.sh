@@ -399,6 +399,24 @@ points = env.get("TRAILS_MAX_POINTS") or ""
 if not (re.fullmatch(r"[0-9]+", points) and 10 <= int(points) <= 50000):
     bad.append(f"TRAILS_MAX_POINTS is {points!r}; the map accepts 10 to 50000")
 
+# History is off in the map unless it is told otherwise, and what it keeps
+# cannot be rebuilt. On, it must be on a claim of its own: left to its
+# default it would sit on the data claim, which is not kept and which it
+# would fill.
+if env.get("HISTORY_ENABLED") not in ("true", "false"):
+    bad.append(f"HISTORY_ENABLED is {env.get('HISTORY_ENABLED')!r}; the chart must set it to true or false")
+if env.get("HISTORY_ENABLED") == "true":
+    map_pod = named("Deployment", "-map")[0]["spec"]["template"]["spec"]
+    claim_of = {v["name"]: (v.get("persistentVolumeClaim") or {}).get("claimName") for v in map_pod.get("volumes") or []}
+    mounted = {m["mountPath"]: claim_of.get(m["name"]) for m in map_container.get("volumeMounts") or []}
+    where = env.get("HISTORY_DIR")
+    if not mounted.get(where):
+        bad.append(f"HISTORY_DIR is {where!r}, which is not where a claim is mounted")
+    elif mounted[where] == mounted.get("/data"):
+        bad.append("the map's history is on the same claim as its data")
+    elif not [d for d in docs if d["kind"] == "PersistentVolumeClaim" and d["metadata"]["name"] == mounted[where]]:
+        bad.append(f"the map's history is on the claim {mounted[where]}, which the chart does not make")
+
 for line in bad:
     print(line)
 sys.exit(1 if bad else 0)
@@ -528,6 +546,40 @@ tests:
             exp_annotations:
               summary: "Minecraft FWB may have world saving paused"
               description: "The console bridge paused saving for a map snapshot and the server has not confirmed the resume for ten minutes. The bridge keeps retrying and refuses new snapshots meanwhile. Check the server log for \"Changes to the world are resumed\"; if it is missing, run `save resume` from the console. The nightly backup also resumes saving when it finishes."
+
+  # History. A map that keeps its days has a gauge no more than a day and a
+  # cycle behind the clock; one tracking the clock is the limit of that.
+  - interval: 1m
+    name: a map keeping its days says nothing
+    input_series:
+      - series: 'mcmap_history_last_success_timestamp_seconds{namespace="jdwillmsen-prd"}'
+        values: '0+60x2500'
+    alert_rule_test:
+      - eval_time: 40h
+        alertname: JdwillmsenMinecraftMapHistoryMissed
+        exp_alerts: []
+
+  # A gauge held at 0 is both cases at once: a day kept at the start and
+  # none since, and a map that has never kept one. Quiet through the day
+  # that is allowed and the hour after it, then firing.
+  - interval: 1m
+    name: a day that is missed is noticed within three hours
+    input_series:
+      - series: 'mcmap_history_last_success_timestamp_seconds{namespace="jdwillmsen-prd"}'
+        values: '0+0x1700'
+    alert_rule_test:
+      - eval_time: 26h50m
+        alertname: JdwillmsenMinecraftMapHistoryMissed
+        exp_alerts: []
+      - eval_time: 27h10m
+        alertname: JdwillmsenMinecraftMapHistoryMissed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: "The Minecraft FWB map is not keeping its daily history"
+              description: "The map has kept no day of history for more than 26 hours. A day that is missed cannot be kept later. The map's log says \"map history not kept\" with the reason; a full history volume is the likely one, and a render failing every cycle is the other, since a day is only kept from a cycle that drew all three dimensions."
 
   # The live layer. A record every second, heartbeats included, so the
   # timestamp tracks the clock whether or not anyone is online.
