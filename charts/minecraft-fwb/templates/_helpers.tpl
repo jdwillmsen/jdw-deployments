@@ -88,6 +88,61 @@ token
 {{- end -}}
 
 {{/*
+The browser checks of the live map: the CronJob, its Secret and where its
+results go. Defined once because the generator, the map, the job and the
+exporter must all name the same things.
+*/}}
+{{- define "map.checks.name" -}}
+{{ include "map.name" . }}-checks
+{{- end -}}
+
+{{- define "map.checks.secret.name" -}}
+{{ include "map.checks.name" . }}-secret
+{{- end -}}
+
+{{- define "map.checks.secret.key" -}}
+secret
+{{- end -}}
+
+{{- define "map.checks.exporter.name" -}}
+{{ include "map.checks.name" . }}-exporter
+{{- end -}}
+
+{{/*
+Whether the checks are wired up at all. One place, because five templates ask
+and they must agree: a job with no secret, or a map told to accept a secret
+nothing generates, is how a workload ends up waiting on something that never
+arrives.
+*/}}
+{{- define "map.checks.on" -}}
+{{- if and .Values.map.enabled .Values.global.consoleBridge.enabled .Values.map.checks.enabled -}}
+{{- if not .Values.map.checks.secret.create -}}{{ fail "map.checks.enabled needs map.checks.secret.create: the map and the job both read a Secret that only the generator makes. Turn create on first, see the Secret Synced, then enable." }}{{- end -}}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" (.Values.map.checks.image.digest | toString)) -}}{{ fail "map.checks.image.digest must be the sha256 digest of the minecraft-map-checks image: it holds a credential's worth of access to the map, and a tag can be moved" }}{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+The image by digest, with the tag kept beside it where one is given: the
+digest is what is pulled, the tag is what a person and Renovate read.
+*/}}
+{{- define "map.checks.image" -}}
+{{ .Values.map.checks.image.repository }}{{ with .Values.map.checks.image.tag }}:{{ . }}{{ end }}@{{ .Values.map.checks.image.digest }}
+{{- end -}}
+
+{{/*
+map.checks.alert.staleAfter as seconds, matched whole for the reason given
+below for the live layer's.
+*/}}
+{{- define "map.checks.staleSeconds" -}}
+{{- $v := .Values.map.checks.alert.staleAfter | toString -}}
+{{- if not (regexMatch "^[1-9][0-9]*[hm]$" $v) -}}{{ fail (printf "map.checks.alert.staleAfter must be whole hours or minutes like 6h or 90m, got %q" $v) }}
+{{- else if hasSuffix "h" $v -}}{{ mul (trimSuffix "h" $v | atoi) 3600 }}
+{{- else -}}{{ mul (trimSuffix "m" $v | atoi) 60 }}
+{{- end -}}
+{{- end -}}
+
+{{/*
 map.alert.staleAfter as seconds. Written as a duration in values because that
 is how the description reads; the expression needs a number.
 */}}

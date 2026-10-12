@@ -92,6 +92,23 @@ spec:
                 secretKeyRef:
                   name: {{ include "map.token.name" . }}
                   key: {{ include "map.token.key" . }}
+            {{- if include "map.checks.on" . }}
+            # What the browser checks exchange for a session that can only
+            # look; see map-checks.yaml. Its presence is what switches the
+            # exchange on, so with the checks off the variable is not set
+            # and the map serves no such route.
+            #
+            # optional, so that a Secret that is not there yet leaves the
+            # map starting with the exchange off, and never waiting.
+            - name: SERVICE_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "map.checks.secret.name" . }}
+                  key: {{ include "map.checks.secret.key" . }}
+                  optional: true
+            - name: SERVICE_SESSION_TTL
+              value: {{ .Values.map.checks.sessionTTL | quote }}
+            {{- end }}
             - name: BRIDGE_URL
               value: "http://{{ include "consoleBridge.host" . }}:{{ .Values.consoleBridge.service.port }}"
             - name: BRIDGE_TOKEN

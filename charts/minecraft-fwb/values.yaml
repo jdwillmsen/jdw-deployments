@@ -2311,6 +2311,117 @@ map:
     ref: ""
 
 
+  # Runs the map's own browser checks against this map, as a CronJob, with a
+  # session that is nobody's and can only read. Off, and off in two steps.
+  #
+  # The map can only be entered by a player typing a code in the game, so no
+  # check of the page had ever seen it with a session; faults that only show
+  # with real players on it were found by the players. See "Browser checks"
+  # in the chart README for what turning this on takes and in what order.
+  checks:
+    # Step two. Wires the Secret into the map, which switches the exchange on,
+    # and creates the CronJob, its volume, its exporter, its network policy
+    # and its alerts. Rendering fails with this on and secret.create off, or
+    # without image.digest.
+    enabled: false
+
+    secret:
+      # Step one, on its own: generates the Secret and nothing else, so that
+      # it can be seen Synced before anything is wired to it. The map does
+      # not read it, and serves no exchange, until `enabled`.
+      create: false
+
+    image:
+      repository: ghcr.io/jdwillmsen/minecraft-map-checks
+      # Read by people and by Renovate. What is pulled is the digest.
+      tag: ""
+      # Required once enabled, as sha256:<64 hex>. The image runs a browser
+      # with a session on the live map; a tag can be moved under it.
+      digest: ""
+
+    # Hourly at twenty past, UTC, through the hours the map is itself. Left
+    # out: 03:00 to 06:59, which holds the backup (04:00), the census (05:40)
+    # and both of the map's quiet windows, and 16:00 to 16:59, which holds the
+    # daily restart (16:40) and the warning before it. A check that ran into
+    # either would report a map that is behaving as intended as broken.
+    schedule: "20 0-2,7-15,17-23 * * *"
+    # A run is about two and a half minutes. Past this it is wedged.
+    timeoutSeconds: 900
+    ttlSecondsAfterFinished: 86400
+
+    # How long the session the job is given lasts: longer than a run, and
+    # little longer. It cannot be renewed, and the map allows at most 30m.
+    sessionTTL: 10m
+    # How long the live stream has to stay one unbroken connection. The
+    # gateway cuts a connection idle for 30 s, so this is four of those.
+    streamSeconds: 125
+    # The longest any one answer the page is built from may take, through
+    # the gateway.
+    apiBudgetMs: 3000
+
+    # One browser, one run at a time. Measured on the suite's own harness:
+    # a run finishes inside one CPU and 1 GiB with room. The limit is what
+    # matters here, since these are the nodes the game server runs on: a
+    # browser that leaked could otherwise take memory from it. The request is
+    # low so that a run fits beside the server, and the scheduler is asked to
+    # put it on another node where there is one.
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    # The browser's profile and scratch, on the node's disk for one run.
+    tmpSizeLimit: 512Mi
+
+    # Where the last run's results and the evidence of failed checks are
+    # kept. File storage that the job and the exporter can both mount, from
+    # different nodes.
+    results:
+      storageClass: truenas-nfs
+      accessMode: ReadWriteMany
+      size: 1Gi
+
+    # A screenshot and a trace of each failed check. They show the live map,
+    # so they are kept on the volume above and nowhere else, and not for
+    # long: the newest keepRuns failed runs, none older than keepDays. Off,
+    # a failure is its log line and its metrics only.
+    evidence:
+      enabled: true
+      keepRuns: 5
+      keepDays: 7
+
+    networkPolicy:
+      # Limits the job's pod to the name server, the map's internal port and
+      # the gateway. Enforced only by a network plugin that enforces
+      # NetworkPolicy at all.
+      enabled: true
+      # Where the gateway that serves map.host runs; the namespace the
+      # map's HTTPRoute attaches to.
+      gatewayNamespace: nginx-gateway
+      # The gateway's own address, as CIDRs, for a network plugin that
+      # judges the address dialled and not the pod behind it. Empty adds
+      # nothing.
+      publicCIDRs: []
+
+    exporter:
+      image: busybox:1.38
+      # 9101 and 9102 are the backup's and the census's.
+      port: 9103
+      refreshSeconds: 60
+
+    alert:
+      # How long the last run may stand as failed before it is told. Only
+      # there to ride out the exporter restarting.
+      failingFor: 10m
+      # Longer than the longest gap the schedule leaves on purpose: 02:20 to
+      # 07:20 is five hours.
+      staleAfter: 6h
+      # The schedule asks for one an hour. A run by hand on top of that is
+      # two; more than this is something else holding the secret.
+      maxExchangesPerHour: 3
+
 # Notices the world losing chunks, and the server saying its database is
 # corrupt, instead of waiting for the nightly backup to come out small.
 #
