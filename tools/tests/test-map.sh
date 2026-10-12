@@ -509,12 +509,24 @@ render "${checks_on[@]}" --set "map.checks.schedule=5 1 * * *" --set map.checks.
 # chart got its 40-hour outage, so the order is enforced and not only
 # written down. And the image holds a session on the live map: a tag alone,
 # which can be moved, is refused.
-if render --set map.checks.enabled=true >/dev/null 2>&1; then
-  fail "the browser checks can be enabled without their Secret being generated first"
-fi
-if render --set map.checks.secret.create=true --set map.checks.enabled=true --set map.checks.networkPolicyEnforced=true --set map.checks.image.tag=1.0.0 >/dev/null 2>&1; then
-  fail "the browser checks can be enabled with an image that is not pinned by digest"
-fi
+#
+# Each guard is tried with everything else as it should be, and has to be
+# the one that speaks: a render that fails for another reason proves nothing
+# about this one.
+refused_for() {
+  local out
+  if out="$(render "${@:2}" 2>&1)"; then
+    return 1
+  fi
+  [[ "$out" == *"$1"* ]]
+}
+digest="sha256:$(printf 'a%.0s' $(seq 64))"
+refused_for "map.checks.secret.create" --set map.checks.enabled=true --set map.checks.networkPolicyEnforced=true \
+  --set map.checks.image.tag=1.0.0 --set "map.checks.image.digest=$digest" \
+  || fail "the browser checks can be enabled without their Secret being generated first"
+refused_for "map.checks.image.digest" --set map.checks.secret.create=true --set map.checks.enabled=true --set map.checks.networkPolicyEnforced=true \
+  --set map.checks.image.tag=1.0.0 \
+  || fail "the browser checks can be enabled with an image that is not pinned by digest"
 # The checks' browser has no sandbox of its own, and the network policy that
 # stands in for one does nothing in a namespace the platform does not
 # enforce. Production's is not enforced today, so as production's values
