@@ -2048,7 +2048,13 @@ map:
     # 1.28.0 is the page for history: a History button on the map that
     # steps back through the days kept, drawing each day's terrain where
     # today's is.
-    tag: "1.28.0"
+    #
+    # 1.29.0 puts the day shown in the page's address, so a copied link
+    # opens on that day.
+    #
+    # 1.30.0 can make days of history out of the nightly archives; see
+    # history.backfill below, which is how that is run.
+    tag: "1.30.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2296,6 +2302,42 @@ map:
       # and that is the most one day can cost. What a day really costs is
       # mcmap_history_capture_bytes, and mcmap_history_bytes is the total.
       size: 20Gi
+
+    # The days from before history was switched on, made out of the nightly
+    # archives: each archive the history has no day for is unpacked, drawn
+    # in full by the map's own renderer and kept as the day it was taken
+    # on. Nothing runs by itself. It is started by hand,
+    #   kubectl create job --from=cronjob/<release>-map-history-backfill <name>
+    # and may be started again: a day already held is left alone.
+    #
+    # Start it at least timeoutSeconds before the nightly backup at 04:00
+    # UTC, and not within a few minutes of 00:00 UTC, when the map keeps
+    # its own day. Do not restart the map while it runs, and restart it
+    # once after: the map reads the days it holds when it starts.
+    backfill:
+      # false removes the CronJob it is started from. It holds no state.
+      enabled: true
+      # Four hours. Fourteen archives, each drawn in full on one CPU, were
+      # expected to take about two. Past this the run is stopped, and the
+      # days it had kept are kept.
+      timeoutSeconds: 14400
+      # Room for one world unpacked and its tiles, on the node's own disk:
+      # 819 MiB of world and 73 MiB of tiles on 2026-10-12.
+      workSize: 3Gi
+      resources:
+        requests:
+          cpu: 500m
+          memory: 512Mi
+        limits:
+          # The namespace's limits.cpu is 8 and 5400m is committed to
+          # long-lived pods. One more leaves room for the hourly
+          # version-check and the five-minute volume-recovery (500m each)
+          # but not for the backup (1000m) on top of them, which is what
+          # timeoutSeconds is there for.
+          cpu: "1"
+          # As the map's own: the renderer peaked at 1.39 GB drawing the
+          # whole overworld with eight chunk processors.
+          memory: 2Gi
 
   # Pictures for the live markers: each mob's spawn-egg icon and each
   # player's own head.

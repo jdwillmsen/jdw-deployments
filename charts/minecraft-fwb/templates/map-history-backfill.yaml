@@ -1,0 +1,109 @@
+{{- if and .Values.map.enabled .Values.global.consoleBridge.enabled .Values.map.history.enabled .Values.map.history.backfill.enabled }}
+# Makes a day of map history out of each nightly archive that has none: the
+# days from before history was switched on, which the archives hold for as
+# long as backup.keep nights and then lose one a night.
+#
+# Run by hand, with
+# `kubectl create job --from=cronjob/{{ include "map.name" . }}-history-backfill`,
+# and shaped as a CronJob only so that is the way to run it. `suspend: true`
+# is hardcoded and is the guarantee that nothing in values.yaml can put it
+# on a timer. It can be run again: a day the history holds is left alone.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "map.name" . }}-history-backfill
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Inert; the field is required.
+  schedule: "0 0 1 1 *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      # No retries: a second pod would unpack and draw every archive the
+      # first did not finish, and the run can simply be started again.
+      backoffLimit: 0
+      # Its CPU limit and the nightly backup's do not both fit under the
+      # namespace quota with everything else that runs then, and a backup
+      # pod the quota refuses is a night with no backup. This is what keeps
+      # a run started in the day from still being there at 04:00.
+      activeDeadlineSeconds: {{ .Values.map.history.backfill.timeoutSeconds }}
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 2000
+            seccompProfile:
+              type: RuntimeDefault
+          # Beside the map, on its node: the map's data claim is block
+          # storage that one node at a time can hold, and it is where the
+          # renderer the map installed is read from.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app: {{ include "map.name" . }}
+          containers:
+            - name: backfill
+              image: "{{ .Values.map.image.repository }}:{{ .Values.map.image.tag }}"
+              imagePullPolicy: {{ .Values.map.image.pullPolicy }}
+              args: ["backfill"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: HISTORY_DIR
+                  value: /history
+                - name: BACKFILL_ARCHIVES
+                  value: /backup
+                - name: BACKFILL_WORK
+                  value: /work
+                - name: LEVEL_NAME
+                  value: {{ index .Values "minecraft-bedrock" "minecraftServer" "levelName" | quote }}
+                # The map's own, so that a day put in is not marked as drawn
+                # differently from the days the map kept itself.
+                - name: RENDER_CHUNK_PROCESSORS
+                  value: {{ .Values.map.chunkProcessors | quote }}
+              resources:
+                {{- toYaml .Values.map.history.backfill.resources | nindent 16 }}
+              volumeMounts:
+                - name: history
+                  mountPath: /history
+                - name: backup
+                  mountPath: /backup
+                  readOnly: true
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: work
+                  mountPath: /work
+                # The renderer unpacks itself here on every start.
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: history
+              persistentVolumeClaim:
+                claimName: {{ include "map.name" . }}-history
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ include "backup.name" . }}
+                readOnly: true
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ include "map.name" . }}
+                readOnly: true
+            # One world unpacked and its tiles, cleared between archives.
+            - name: work
+              emptyDir:
+                sizeLimit: {{ .Values.map.history.backfill.workSize }}
+            - name: tmp
+              emptyDir: {}
+{{- end }}
