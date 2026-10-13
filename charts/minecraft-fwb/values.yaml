@@ -2042,7 +2042,9 @@ map:
     # session, unused until map.checks is switched on.
     # 1.26.0 zooms in to block detail, shows the zoom in the footer and
     # adds the debug and diagnostics views.
-    tag: "1.26.0"
+    # 1.27.0 can group markers that crowd each other when zoomed out, and
+    # marks more structures with the game's own pictures.
+    tag: "1.27.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
