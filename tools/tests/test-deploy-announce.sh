@@ -40,6 +40,12 @@ with open(sys.argv[2] + "/base.env", "w") as f:
 PY
 [ -s "$work/hook.sh" ] || fail "could not extract the hook script from the chart"
 
+# The container's filesystem is read-only and bash backs a here-string or a
+# here-document with a temp file, so either one fails there and nowhere else.
+if grep -nE '<<' "$work/hook.sh" | grep -vE '< <\(' >/dev/null; then
+  fail "the hook uses a here-string or here-document, which needs a writable temp directory"
+fi
+
 mkdir -p "$work/sa"
 echo -n "test-ns" > "$work/sa/namespace"
 sed -i "s|/var/run/secrets/kubernetes.io/serviceaccount/namespace|$work/sa/namespace|" "$work/hook.sh"
