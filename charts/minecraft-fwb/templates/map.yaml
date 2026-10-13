@@ -77,6 +77,11 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 2000
+        # Without this every start walks every file on both claims to set
+        # its group before the map may run. The history claim only grows:
+        # at two days and six thousand files that walk was two and a half
+        # minutes of a map that is not there, on the file tier.
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:

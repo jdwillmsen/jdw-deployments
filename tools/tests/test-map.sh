@@ -492,6 +492,11 @@ if env.get("HISTORY_ENABLED") == "true":
         beside = lambda t: (t.get("labelSelector") or {}).get("matchLabels") or {}
         if not any(t.get("topologyKey") == "kubernetes.io/hostname" and beside(t) and all(labels.get(k) == v for k, v in beside(t).items()) for t in terms):
             bad.append("the backfill is not held to the map pod's node, where the map's block volume is")
+        # History only grows, and a pod that sets the group of every file
+        # on it before it starts takes longer to start with every day kept.
+        for who, pod in (("map", map_pod), ("backfill", spec)):
+            if (pod.get("securityContext") or {}).get("fsGroupChangePolicy") != "OnRootMismatch":
+                bad.append(f"the {who} pod walks the whole history claim to set its group on every start")
 
 for line in bad:
     print(line)
