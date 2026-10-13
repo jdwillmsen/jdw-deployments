@@ -430,6 +430,45 @@ if env.get("HISTORY_ENABLED") == "true":
             if "Prune=false" not in [o.strip() for o in options.split(",")]:
                 bad.append(f"the claim {mounted[where]} is not marked Prune=false, so switching history off would have it pruned")
 
+    # The backfill is run by hand and writes into the history for good. It
+    # must never be on a timer, must only read the archives and the map's
+    # own volume, must write its days where the map keeps its own, and must
+    # be the map's image so that both draw a day the same way.
+    jobs = named("CronJob", "-map-history-backfill")
+    if len(jobs) != 1:
+        bad.append(f"expected one history backfill CronJob, found {len(jobs)}")
+    for job in jobs:
+        if job["spec"].get("suspend") is not True:
+            bad.append("the history backfill CronJob is not suspended, so it would run on its schedule")
+        spec = job["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        container = spec["containers"][0]
+        if container["image"] != map_container["image"]:
+            bad.append(f"the backfill runs {container['image']}, not the map's {map_container['image']}")
+        claim = {v["name"]: v.get("persistentVolumeClaim") or {} for v in spec.get("volumes") or []}
+        at = {m["mountPath"]: m for m in container.get("volumeMounts") or []}
+        want = {e["name"]: e.get("value") for e in container["env"]}
+        writes = at.get(want.get("HISTORY_DIR")) or {}
+        if claim.get(writes.get("name"), {}).get("claimName") != mounted.get(where) or writes.get("readOnly"):
+            bad.append("the backfill does not write to the claim the map keeps its history on")
+        for path, suffix in ((want.get("BACKFILL_ARCHIVES"), "-backup"), ("/data", "-map")):
+            mount = at.get(path) or {}
+            held = claim.get(mount.get("name"), {})
+            if not held.get("claimName", "").endswith(suffix):
+                bad.append(f"the backfill's {path} is not the {suffix[1:]} claim")
+            if not mount.get("readOnly") or not held.get("readOnly"):
+                bad.append(f"the backfill can write to {path}, which it only has reason to read")
+        work = at.get(want.get("BACKFILL_WORK")) or {}
+        if not work or claim.get(work.get("name")):
+            bad.append("the backfill's work directory is missing or on a claim, where an unpacked world would outlive the run")
+        for name in ("LEVEL_NAME", "RENDER_CHUNK_PROCESSORS"):
+            if want.get(name) != env.get(name):
+                bad.append(f"the backfill's {name} is {want.get(name)!r} and the map's is {env.get(name)!r}")
+        labels = named("Deployment", "-map")[0]["spec"]["template"]["metadata"]["labels"]
+        terms = ((spec.get("affinity") or {}).get("podAffinity") or {}).get("requiredDuringSchedulingIgnoredDuringExecution") or []
+        beside = lambda t: (t.get("labelSelector") or {}).get("matchLabels") or {}
+        if not any(t.get("topologyKey") == "kubernetes.io/hostname" and beside(t) and all(labels.get(k) == v for k, v in beside(t).items()) for t in terms):
+            bad.append("the backfill is not held to the map pod's node, where the map's block volume is")
+
 for line in bad:
     print(line)
 sys.exit(1 if bad else 0)
@@ -463,6 +502,8 @@ if "HISTORY_DIR" in env:
     bad.append(f"HISTORY_DIR is still set, to {env['HISTORY_DIR']!r}")
 if named("PersistentVolumeClaim", "-map-history"):
     bad.append("the chart still makes the history claim")
+if named("CronJob", "-map-history-backfill"):
+    bad.append("the chart still makes the history backfill, which mounts a claim it no longer makes")
 made = {d["metadata"]["name"] for d in docs if d["kind"] == "PersistentVolumeClaim"}
 volumes = {v["name"]: v for v in map_pod.get("volumes") or []}
 for volume in volumes.values():
