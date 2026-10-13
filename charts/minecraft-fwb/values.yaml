@@ -2333,7 +2333,11 @@ map:
           # long-lived pods. One more leaves room for the hourly
           # version-check and the five-minute volume-recovery (500m each)
           # but not for the backup (1000m) on top of them, which is what
-          # timeoutSeconds is there for.
+          # timeoutSeconds is there for. Nor is there room for the
+          # version-check's candidate pod (1000m, made only in an hour a
+          # new server version is found) and a volume-recovery pod at
+          # once: whichever comes second is refused, and both jobs run
+          # again on their own schedules.
           cpu: "1"
           # As the map's own: the renderer peaked at 1.39 GB drawing the
           # whole overworld with eight chunk processors.
