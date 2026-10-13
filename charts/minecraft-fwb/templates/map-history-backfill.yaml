@@ -37,6 +37,8 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000
             fsGroup: 2000
+            # As the map's, and for the same claim: see map.yaml.
+            fsGroupChangePolicy: OnRootMismatch
             seccompProfile:
               type: RuntimeDefault
           # Beside the map, on its node: the map's data claim is block
