@@ -2044,7 +2044,11 @@ map:
     # adds the debug and diagnostics views.
     # 1.27.0 can group markers that crowd each other when zoomed out, and
     # marks more structures with the game's own pictures.
-    tag: "1.27.0"
+    #
+    # 1.28.0 is the page for history: a History button on the map that
+    # steps back through the days kept, drawing each day's terrain where
+    # today's is.
+    tag: "1.28.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2275,9 +2279,9 @@ map:
   # The map as it was on each day, so a place can be looked at over time.
   # Once a day, at the first refresh after 00:00 UTC, the map keeps every
   # tile it has drawn, each distinct tile once: a day costs the tiles that
-  # changed since the day before. The page does not show it yet; the days
-  # are served at /api/history to logged-in players. Nothing is ever
-  # deleted, and a day that was not kept cannot be kept later.
+  # changed since the day before. The page's History button steps back
+  # through them, for logged-in players as the rest of the map is. Nothing
+  # is ever deleted, and a day that was not kept cannot be kept later.
   history:
     # false keeps no days and serves none, and leaves the claim and what is
     # on it where they are: the claim is marked so that it is not pruned
