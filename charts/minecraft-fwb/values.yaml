@@ -2038,7 +2038,11 @@ map:
     # 1.24.0 can keep the map as it was on each day; see history below,
     # which is what switches that on. It also brings 1.23.2, which keeps
     # where structures are out of the log.
-    tag: "1.24.0"
+    # 1.25.0 lets an automated browser check hold a short read-only
+    # session, unused until map.checks is switched on.
+    # 1.26.0 zooms in to block detail, shows the zoom in the footer and
+    # adds the debug and diagnostics views.
+    tag: "1.26.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
