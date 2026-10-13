@@ -440,10 +440,25 @@ if env.get("HISTORY_ENABLED") == "true":
     for job in jobs:
         if job["spec"].get("suspend") is not True:
             bad.append("the history backfill CronJob is not suspended, so it would run on its schedule")
-        spec = job["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        run = job["spec"]["jobTemplate"]["spec"]
+        spec = run["template"]["spec"]
         container = spec["containers"][0]
         if container["image"] != map_container["image"]:
             bad.append(f"the backfill runs {container['image']}, not the map's {map_container['image']}")
+        # The image starts the map server unless it is told to do this.
+        if container.get("command") or container.get("args") != ["backfill"]:
+            bad.append(f"the backfill is started with command {container.get('command')!r} and args {container.get('args')!r}, not the image's own entrypoint with backfill")
+        # The nightly backup's CPU limit and this one's do not both fit
+        # under the namespace quota, so a run is held to one CPU and to the
+        # four hours the operator is told to leave before 04:00 UTC, and is
+        # never started a second time by itself.
+        cpu = str(((container.get("resources") or {}).get("limits") or {}).get("cpu"))
+        if cpu not in ("1", "1000m"):
+            bad.append(f"the backfill's CPU limit is {cpu}, not 1")
+        if run.get("activeDeadlineSeconds") != 4 * 60 * 60:
+            bad.append(f"the backfill is stopped after {run.get('activeDeadlineSeconds')!r} seconds, not four hours")
+        if run.get("backoffLimit") != 0:
+            bad.append(f"the backfill's backoffLimit is {run.get('backoffLimit')!r}, so a failed run would be started again")
         claim = {v["name"]: v.get("persistentVolumeClaim") or {} for v in spec.get("volumes") or []}
         at = {m["mountPath"]: m for m in container.get("volumeMounts") or []}
         want = {e["name"]: e.get("value") for e in container["env"]}
@@ -460,6 +475,15 @@ if env.get("HISTORY_ENABLED") == "true":
         work = at.get(want.get("BACKFILL_WORK")) or {}
         if not work or claim.get(work.get("name")):
             bad.append("the backfill's work directory is missing or on a claim, where an unpacked world would outlive the run")
+        else:
+            scratch = {v["name"]: v.get("emptyDir") for v in spec.get("volumes") or []}.get(work["name"])
+            if scratch is None or not scratch.get("sizeLimit"):
+                bad.append("the backfill's work directory is not an emptyDir with a size limit, so an unpacked world could fill the node's disk")
+        # Left unset, the renderer's settings default in the backfill exactly
+        # as they do in the map.
+        for name in want:
+            if name.startswith("UNMINED_") or name == "NETHER_TOP_Y":
+                bad.append(f"the backfill sets {name}, which the map leaves to its default")
         for name in ("LEVEL_NAME", "RENDER_CHUNK_PROCESSORS"):
             if want.get(name) != env.get(name):
                 bad.append(f"the backfill's {name} is {want.get(name)!r} and the map's is {env.get(name)!r}")
@@ -520,6 +544,35 @@ if not alerts:
     bad.append("the map's rules did not render")
 if "JdwillmsenMinecraftMapHistoryMissed" in alerts:
     bad.append("JdwillmsenMinecraftMapHistoryMissed is still there, on a gauge the map no longer sets")
+
+for line in bad:
+    print(line)
+sys.exit(1 if bad else 0)
+PY
+
+# The backfill switched off by itself. Only the CronJob it is started from
+# goes: the map keeps its history and the claim it is on.
+helm template minecraft-fwb "$chart" \
+  --namespace jdwillmsen-prd \
+  -f "$chart/values.yaml" \
+  -f "$chart/values-prd.yaml" \
+  -f "$chart/values-console-bridge.yaml" -f "$chart/values-map-pack.yaml" \
+  --set map.history.backfill.enabled=false > "$work/rendered-backfill-off.yaml"
+
+python3 - "$work/rendered-backfill-off.yaml" <<'PY' || fail "switching the history backfill off does not take away it and only it"
+import sys, yaml
+
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+named = lambda kind, suffix: [d for d in docs if d["kind"] == kind and d["metadata"]["name"].endswith(suffix)]
+env = {e["name"]: e.get("value") for e in named("Deployment", "-map")[0]["spec"]["template"]["spec"]["containers"][0]["env"]}
+
+bad = []
+if named("CronJob", "-map-history-backfill"):
+    bad.append("the chart still makes the history backfill")
+if env.get("HISTORY_ENABLED") != "true":
+    bad.append(f"HISTORY_ENABLED is {env.get('HISTORY_ENABLED')!r} with only the backfill off")
+if not named("PersistentVolumeClaim", "-map-history"):
+    bad.append("the chart no longer makes the history claim")
 
 for line in bad:
     print(line)
