@@ -115,9 +115,11 @@ spec:
                   -- send-command list >/dev/null 2>&1
                 sleep 2
                 console="$(timeout 15s kubectl logs -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" --since=20s 2>/dev/null | tr -d '\000')"
-                ONLINE="$(grep -a -oE 'There are [0-9]+/[0-9]+ players online' <<<"$console" | tail -1 \
+                # Piped, never a here-string: bash backs those with a temp
+                # file, and this container's filesystem is read-only.
+                ONLINE="$(printf '%s\n' "$console" | grep -a -oE 'There are [0-9]+/[0-9]+ players online' | tail -1 \
                   | grep -oE '^There are [0-9]+' | grep -oE '[0-9]+')"
-                NAMES="$(grep -a -A1 'players online' <<<"$console" | tail -1 | tr -d '\r')"
+                NAMES="$(printf '%s\n' "$console" | grep -a -A1 'players online' | tail -1 | tr -d '\r')"
               }
 
               # True only when the count is positive, the names line was read,
@@ -132,13 +134,13 @@ spec:
                   name="${name%"${name##*[![:space:]]}"}"
                   [[ -n "$name" ]] || continue
                   known=false
-                  IFS=',' read -ra actors <<<"$ACTOR_NAMES"
+                  IFS=',' read -ra actors < <(printf '%s\n' "$ACTOR_NAMES")
                   for actor in "${actors[@]}"; do
                     [[ "${name,,}" == "${actor,,}" ]] && known=true
                   done
                   [[ "$known" == "true" ]] || return 1
                   count=$((count + 1))
-                done < <(tr ',' '\n' <<<"$NAMES")
+                done < <(printf '%s\n' "$NAMES" | tr ',' '\n')
                 [[ "$count" -eq "$ONLINE" ]]
               }
 
