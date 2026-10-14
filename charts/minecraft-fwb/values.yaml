@@ -2057,7 +2057,13 @@ map:
     #
     # 1.30.1 asks for the days kept only once the map has answered, so the
     # login screen no longer makes a request that is always refused.
-    tag: "1.30.1"
+    #
+    # 1.31.0 keeps the height of the surface of every column from the pass
+    # that reads the biomes, and says it in the footer beside the biome.
+    # With biomes.enabled below, as it is here, its first refresh reads the
+    # world once even though no chunk is new, to get them; with it off there
+    # are no heights and no pass.
+    tag: "1.31.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2261,8 +2267,9 @@ map:
   #
   # Reading them is one more pass over the snapshot, about ten seconds of a
   # CPU on this world, so the map skips it while no new chunk has been
-  # generated and reads again at least once an hour. It holds about 30 MB
-  # more in memory and keeps one file of about 11 MB on its volume. The map
+  # generated and reads again at least once an hour. It holds about 50 MB
+  # more in memory, biomes and surface heights together, and keeps two files
+  # of about 28 MB between them on its volume. The map
   # leaves this off unless it is asked for, so that an image update alone
   # never adds a pass.
   biomes:
