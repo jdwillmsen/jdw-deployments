@@ -142,6 +142,10 @@ spec:
               value: {{ .Values.map.quietUTC | quote }}
             - name: RENDER_CHUNK_PROCESSORS
               value: {{ .Values.map.chunkProcessors | quote }}
+            {{- with .Values.map.netherLevels }}
+            - name: NETHER_LEVELS
+              value: {{ . | quote }}
+            {{- end }}
             # The live layer. All five are always set, so that turning it off
             # is one value and what the pod runs with is never a default
             # nobody wrote down. None of them is an address: the stream is

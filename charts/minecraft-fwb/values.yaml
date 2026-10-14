@@ -2073,7 +2073,13 @@ map:
     # each day with the days not kept shown as gaps, a calendar, playback
     # at a chosen speed, two days side by side with a divider to drag, and
     # an outline of what changed since the day before.
-    tag: "1.33.0"
+    #
+    # 1.34.0 draws the shape of the land over the terrain (hillshade,
+    # contours and a height tint, each off until a viewer turns it on), can
+    # draw more than one cut of the nether (see netherLevels below), and
+    # makes a section's checkbox in the layer panel switch only the rows
+    # that can be pressed.
+    tag: "1.34.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2106,6 +2112,16 @@ map:
   # Chunks rendered at once. One, because the pod's CPU limit is the binding
   # constraint, not this; more only adds memory.
   chunkProcessors: 1
+
+  # Extra horizontal cuts of the nether, beside the one below its roof that
+  # every map has, offered to viewers by a picker shown only in the nether:
+  # "<top y>:<label>" pairs, at most three. Each is one more render of the
+  # nether into its own directory, after the rest of the refresh and within
+  # one ten-minute budget for all of them: on this world about half a
+  # minute and 6.5 MB each the first time, under a second after. 66 is the
+  # middle storey and 34 the floor just above the lava sea. History keeps
+  # only the cut below the roof. Empty draws none. Restarts the map only.
+  netherLevels: "66:Mid,34:Low"
 
   persistence:
     # The mirror is a LevelDB the renderer reads at random, the same access

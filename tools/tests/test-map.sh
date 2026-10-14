@@ -403,6 +403,22 @@ if not 1 <= minutes <= 168 * 60:
 points = env.get("TRAILS_MAX_POINTS") or ""
 if not (re.fullmatch(r"[0-9]+", points) and 10 <= int(points) <= 50000):
     bad.append(f"TRAILS_MAX_POINTS is {points!r}; the map accepts 10 to 50000")
+# The map refuses to start on a nether level it cannot draw, so a bad one
+# here is a map that never comes up: at most three, each a height of 1 to
+# 127 with a label of letters, digits, spaces or hyphens, no height twice,
+# none the roof cut's own and no label twice or "Top".
+levels = env.get("NETHER_LEVELS")
+if levels is not None:
+    pairs = [p.split(":", 1) for p in levels.split(",")]
+    heights_seen, labels_seen = set(), set()
+    if not 1 <= len(pairs) <= 3:
+        bad.append(f"NETHER_LEVELS is {levels!r}; the map takes one to three levels")
+    for pair in pairs:
+        ok = len(pair) == 2 and re.fullmatch(r"[0-9]+", pair[0]) and 1 <= int(pair[0]) <= 127 and re.fullmatch(r"[A-Za-z0-9 -]{1,12}", pair[1])
+        if not ok or int(pair[0]) in heights_seen or pair[1].lower() in labels_seen or pair[1].lower() == "top" or int(pair[0]) == int(env.get("NETHER_TOP_Y") or 100):
+            bad.append(f"NETHER_LEVELS has {':'.join(pair)!r}; each level is <1-127>:<label of up to 12 letters, digits, spaces or hyphens>, no height or label twice, not the roof cut and not Top")
+        else:
+            heights_seen.add(int(pair[0])); labels_seen.add(pair[1].lower())
 
 # History is off in the map unless it is told otherwise, and what it keeps
 # cannot be rebuilt. On, it must be on a claim of its own: left to its
