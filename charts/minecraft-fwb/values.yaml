@@ -2079,7 +2079,11 @@ map:
     # draw more than one cut of the nether (see netherLevels below), and
     # makes a section's checkbox in the layer panel switch only the rows
     # that can be pressed.
-    tag: "1.34.0"
+    #
+    # 1.35.0 can show only the markers in chosen height bands (sky,
+    # surface, underground, deepslate, or near the viewer's own height) and
+    # colour them by band; the surface under each marker is sent with it.
+    tag: "1.35.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
