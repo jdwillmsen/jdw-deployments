@@ -392,6 +392,80 @@ spec:
               likely one, and a render failing every cycle is the other,
               since a day is only kept from a cycle that drew all three
               dimensions.
+        - alert: JdwillmsenMinecraftMapHistoryCaptureFailing
+          # The map offers the day again every cycle until it is kept, so a
+          # failure that lasts shows as the count still rising. This is the
+          # early word; the alert above is the day actually lost.
+          expr: |
+            increase(mcmap_history_captures_total{namespace="{{ .Release.Namespace }}", result="failed"}[1h]) > 0
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map tried to keep today's history and could not
+            description: >-
+              A capture of the day's map has failed in the last hour, and the
+              map tries again every refresh. Until one succeeds today has no
+              day of history. The map's log says "map history not kept" with
+              the reason. If the history volume is full, expand the claim
+              {{ include "map.name" . }}-history: it grows online.
+        # History is never thinned, so its claim only fills. The namespace's
+        # own alert speaks at 80% of any claim; these speak sooner and say
+        # what to do, because the only remedy is a bigger claim and a full
+        # one costs a day for every day it stays full.
+        - alert: JdwillmsenMinecraftMapHistoryVolumeFilling
+          expr: |
+            max(kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim="{{ include "map.name" . }}-history"}
+              / kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim="{{ include "map.name" . }}-history"})
+              > {{ .Values.map.history.alert.fillingAt }}
+          for: 1h
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map's history volume is filling up
+            description: >-
+              The claim {{ include "map.name" . }}-history is at
+              {{ "{{ $value | humanizePercentage }}" }} of its size. Nothing on
+              it is ever deleted, so it will not recover by itself. Raise
+              map.history.persistence.size; the claim grows online.
+        - alert: JdwillmsenMinecraftMapHistoryVolumeFullSoon
+          # From how fast it has filled over the last week. Quiet on a claim
+          # that is not filling, however full it is: the alerts on how full
+          # it is are the ones above and below.
+          expr: |
+            max(predict_linear(kubelet_volume_stats_available_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim="{{ include "map.name" . }}-history"}[7d], {{ mul .Values.map.history.alert.fullWithinDays 86400 }}))
+              < 0
+          for: 6h
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map's history volume will be full within {{ .Values.map.history.alert.fullWithinDays }} days
+            description: >-
+              At the rate of the last week the claim
+              {{ include "map.name" . }}-history is full within
+              {{ .Values.map.history.alert.fullWithinDays }} days. Raise
+              map.history.persistence.size before then; the claim grows
+              online. A jump like this is also what a new renderer build
+              does, which stores every tile again once.
+        - alert: JdwillmsenMinecraftMapHistoryVolumeNearlyFull
+          expr: |
+            max(kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim="{{ include "map.name" . }}-history"}
+              / kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim="{{ include "map.name" . }}-history"})
+              > {{ .Values.map.history.alert.nearlyFullAt }}
+          for: 15m
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: The Minecraft FWB map's history volume is nearly full
+            description: >-
+              The claim {{ include "map.name" . }}-history is at
+              {{ "{{ $value | humanizePercentage }}" }} of its size. When it is
+              full the map keeps no more days, and a day not kept is lost
+              once its nightly archive is gone. Raise
+              map.history.persistence.size now; the claim grows online.
 {{- end }}
 {{- if .Values.map.live.enabled }}
         - alert: JdwillmsenMinecraftMapLiveStale

@@ -2313,6 +2313,20 @@ map:
       # mcmap_history_capture_bytes, and mcmap_history_bytes is the total.
       size: 20Gi
 
+    # When someone is told about the claim above. History is kept for good
+    # and never thinned, so the claim only fills and the remedy is always
+    # the same: raise persistence.size, which grows it online. Thirteen days
+    # were 136 MiB on 2026-10-13, a few MiB a day.
+    alert:
+      # A warning at this share of the claim, well ahead of the 80% the
+      # namespace's own volume alert speaks at.
+      fillingAt: 0.6
+      # Critical at this share: past it there are days, not months, left.
+      nearlyFullAt: 0.9
+      # A warning when the last week's rate would fill the claim within
+      # this many days, however full it is now.
+      fullWithinDays: 60
+
     # The days from before history was switched on, made out of the nightly
     # archives: each archive the history has no day for is unpacked, drawn
     # in full by the map's own renderer and kept as the day it was taken
