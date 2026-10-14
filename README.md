@@ -625,10 +625,18 @@ confirmed the resume for ten minutes. Run `save resume` from the console.
 the tiles as they were on each day, on a second claim, `<release>-map-history`.
 Unlike the volume above, none of that can be rebuilt, and a day that was
 missed cannot be kept later: `JdwillmsenMinecraftMapHistoryMissed` is the
-warning that a day has gone by without one. Switching history off stops the
-chart rendering that claim but leaves it and its days on the cluster, because
-it is marked not to be pruned; removing it is a deliberate `kubectl delete`.
-The settings, and what a day costs, are under `map.history` in `values.yaml`.
+warning that a day has gone by without one, and
+`...MapHistoryCaptureFailing` is the earlier word that today's capture is
+failing. Nothing on the claim is ever deleted, so it only fills:
+`...MapHistoryVolumeFilling` and `...MapHistoryVolumeFullSoon` warn while
+there is still room, and `...MapHistoryVolumeNearlyFull` is critical. The
+remedy for all three is to raise `map.history.persistence.size`; the claim
+grows online. They watch the claim's own size, not the free space of the
+storage pool behind it, which the cluster has no metrics for. Switching
+history off stops the chart rendering that claim but leaves it and its days
+on the cluster, because it is marked not to be pruned; removing it is a
+deliberate `kubectl delete`. The settings, the alert thresholds, and what a
+day costs, are under `map.history` in `values.yaml`.
 
 To rebuild the map from nothing, scale `<release>-map` to zero, delete the
 `<release>-map` claim, and let ArgoCD recreate both. Leave
