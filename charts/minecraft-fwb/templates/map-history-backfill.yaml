@@ -7,7 +7,8 @@
 # `kubectl create job --from=cronjob/{{ include "map.name" . }}-history-backfill`,
 # and shaped as a CronJob only so that is the way to run it. `suspend: true`
 # is hardcoded and is the guarantee that nothing in values.yaml can put it
-# on a timer. It can be run again: a day the history holds is left alone.
+# on a timer. It can be run again; what a second run does to a day already
+# held is under map.history.backfill in values.yaml.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
