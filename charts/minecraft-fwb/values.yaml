@@ -2306,10 +2306,10 @@ map:
   # Once a day, at the first refresh after 00:00 UTC, the map keeps every
   # tile it has drawn, each distinct tile once: a day costs the tiles that
   # changed since the day before. With markers.enabled it keeps that
-  # moment's beds, containers and named mobs too. The page's History button
-  # steps back through them, for logged-in players as the rest of the map
-  # is. Nothing is ever deleted, and a day that was not kept cannot be kept
-  # later.
+  # moment's beds, containers and named mobs too. The page's History dock
+  # under the map steps back through them, for logged-in players as the rest
+  # of the map is. Nothing is ever deleted, and a day that was not kept
+  # cannot be kept later.
   history:
     # false keeps no days and serves none, and leaves the claim and what is
     # on it where they are: the claim is marked so that it is not pruned
