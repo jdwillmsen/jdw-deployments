@@ -2068,7 +2068,12 @@ map:
     # terrain and draws them on that day, and its backfill gives the days
     # already kept theirs and finds the world in archives laid out in other
     # ways; see history.backfill below.
-    tag: "1.32.0"
+    #
+    # 1.33.0 turns the History row into a dock under the map: a tick for
+    # each day with the days not kept shown as gaps, a calendar, playback
+    # at a chosen speed, two days side by side with a divider to drag, and
+    # an outline of what changed since the day before.
+    tag: "1.33.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
