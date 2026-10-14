@@ -484,7 +484,7 @@ if env.get("HISTORY_ENABLED") == "true":
         for name in want:
             if name.startswith("UNMINED_") or name == "NETHER_TOP_Y":
                 bad.append(f"the backfill sets {name}, which the map leaves to its default")
-        for name in ("LEVEL_NAME", "RENDER_CHUNK_PROCESSORS"):
+        for name in ("LEVEL_NAME", "RENDER_CHUNK_PROCESSORS", "MARKERS_ENABLED"):
             if want.get(name) != env.get(name):
                 bad.append(f"the backfill's {name} is {want.get(name)!r} and the map's is {env.get(name)!r}")
         labels = named("Deployment", "-map")[0]["spec"]["template"]["metadata"]["labels"]
