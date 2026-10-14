@@ -2083,7 +2083,11 @@ map:
     # 1.35.0 can show only the markers in chosen height bands (sky,
     # surface, underground, deepslate, or near the viewer's own height) and
     # colour them by band; the surface under each marker is sent with it.
-    tag: "1.35.0"
+    #
+    # 1.36.0 is the page's new look: quieter dividers and clearer field
+    # edges in all three themes, buttons in three weights, ticked
+    # checkboxes, a focus colour of its own, and the bar on one row.
+    tag: "1.36.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
