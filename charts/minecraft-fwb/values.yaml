@@ -2063,7 +2063,12 @@ map:
     # With biomes.enabled below, as it is here, its first refresh reads the
     # world once even though no chunk is new, to get them; with it off there
     # are no heights and no pass.
-    tag: "1.31.0"
+    #
+    # 1.32.0 keeps each day's beds, containers and named mobs with its
+    # terrain and draws them on that day, and its backfill gives the days
+    # already kept theirs and finds the world in archives laid out in other
+    # ways; see history.backfill below.
+    tag: "1.32.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2295,7 +2300,8 @@ map:
   # The map as it was on each day, so a place can be looked at over time.
   # Once a day, at the first refresh after 00:00 UTC, the map keeps every
   # tile it has drawn, each distinct tile once: a day costs the tiles that
-  # changed since the day before. The page's History button steps back
+  # changed since the day before. With markers.enabled it keeps that
+  # moment's beds, containers and named mobs too. The page's History button steps back
   # through them, for logged-in players as the rest of the map is. Nothing
   # is ever deleted, and a day that was not kept cannot be kept later.
   history:
@@ -2332,7 +2338,9 @@ map:
     # in full by the map's own renderer and kept as the day it was taken
     # on. Nothing runs by itself. It is started by hand,
     #   kubectl create job --from=cronjob/<release>-map-history-backfill <name>
-    # and may be started again: a day already held is left alone.
+    # and may be started again: a day already held is left alone, except
+    # that one held without its markers is given them from its archive,
+    # which takes no drawing.
     #
     # Start it at least timeoutSeconds before the nightly backup at 04:00
     # UTC, and not within a few minutes of 00:00 UTC, when the map keeps

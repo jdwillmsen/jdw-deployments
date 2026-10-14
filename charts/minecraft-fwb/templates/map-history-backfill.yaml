@@ -68,6 +68,10 @@ spec:
                   value: /backup
                 - name: BACKFILL_WORK
                   value: /work
+                # The map's own switch: with markers off there the days it
+                # keeps have none, and the job gives none either.
+                - name: MARKERS_ENABLED
+                  value: {{ .Values.map.markers.enabled | quote }}
                 - name: LEVEL_NAME
                   value: {{ index .Values "minecraft-bedrock" "minecraftServer" "levelName" | quote }}
                 # The map's own, so that a day put in is not marked as drawn
