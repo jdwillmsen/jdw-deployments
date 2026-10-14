@@ -549,6 +549,8 @@ if not alerts:
     bad.append("the map's rules did not render")
 if "JdwillmsenMinecraftMapHistoryMissed" in alerts:
     bad.append("JdwillmsenMinecraftMapHistoryMissed is still there, on a gauge the map no longer sets")
+for left in sorted(a for a in alerts if a.startswith("JdwillmsenMinecraftMapHistory") and a != "JdwillmsenMinecraftMapHistoryMissed"):
+    bad.append(f"{left} is still there, watching a claim the chart no longer makes")
 
 for line in bad:
     print(line)
@@ -1106,6 +1108,139 @@ tests:
             exp_annotations:
               summary: "The Minecraft FWB map is not keeping its daily history"
               description: "The map has kept no day of history for more than 26 hours. A day that is missed cannot be kept later. The map's log says \"map history not kept\" with the reason; a full history volume is the likely one, and a render failing every cycle is the other, since a day is only kept from a cycle that drew all three dimensions."
+
+  # The history claim. Barely used and barely growing, as it is today: none
+  # of the three has anything to say, however long it stays so.
+  - interval: 2m
+    name: a history volume with years of room says nothing
+    input_series:
+      - series: 'kubelet_volume_stats_used_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '170000000+6667x10900'
+      - series: 'kubelet_volume_stats_available_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '21300000000-6667x10900'
+      - series: 'kubelet_volume_stats_capacity_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '21474836480+0x10900'
+      - series: 'mcmap_history_captures_total{namespace="jdwillmsen-prd", result="captured"}'
+        values: '1+0x10900'
+    alert_rule_test:
+      - eval_time: 15d
+        alertname: JdwillmsenMinecraftMapHistoryVolumeFilling
+        exp_alerts: []
+      - eval_time: 15d
+        alertname: JdwillmsenMinecraftMapHistoryVolumeFullSoon
+        exp_alerts: []
+      - eval_time: 15d
+        alertname: JdwillmsenMinecraftMapHistoryVolumeNearlyFull
+        exp_alerts: []
+      - eval_time: 15d
+        alertname: JdwillmsenMinecraftMapHistoryCaptureFailing
+        exp_alerts: []
+
+  # Two thirds full and holding still: a warning for how full it is, and
+  # nothing about when it will be full, since at this rate it never is.
+  - interval: 2m
+    name: a history volume past three fifths is a warning
+    input_series:
+      - series: 'kubelet_volume_stats_used_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '14000000000+0x7300'
+      - series: 'kubelet_volume_stats_available_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '7474836480+0x7300'
+      - series: 'kubelet_volume_stats_capacity_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '21474836480+0x10900'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: JdwillmsenMinecraftMapHistoryVolumeFilling
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: JdwillmsenMinecraftMapHistoryVolumeFilling
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: "The Minecraft FWB map's history volume is filling up"
+              description: "The claim minecraft-fwb-map-history is at 65.19% of its size. Nothing on it is ever deleted, so it will not recover by itself. Raise map.history.persistence.size; the claim grows online."
+      - eval_time: 10d
+        alertname: JdwillmsenMinecraftMapHistoryVolumeFullSoon
+        exp_alerts: []
+      - eval_time: 10d
+        alertname: JdwillmsenMinecraftMapHistoryVolumeNearlyFull
+        exp_alerts: []
+
+  # A fifth full and gaining a gigabyte a day, as after a renderer change
+  # that will not stop: seventeen days of room is inside the sixty asked for.
+  - interval: 1m
+    name: a history volume that will be full within two months is a warning long before it is full
+    input_series:
+      - series: 'kubelet_volume_stats_available_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '17000000000-694444x600'
+      - series: 'kubelet_volume_stats_used_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '4474836480+694444x600'
+      - series: 'kubelet_volume_stats_capacity_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '21474836480+0x600'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: JdwillmsenMinecraftMapHistoryVolumeFullSoon
+        exp_alerts: []
+      - eval_time: 8h
+        alertname: JdwillmsenMinecraftMapHistoryVolumeFullSoon
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: "The Minecraft FWB map's history volume will be full within 60 days"
+              description: "At the rate of the last week the claim minecraft-fwb-map-history is full within 60 days. Raise map.history.persistence.size before then; the claim grows online. A jump like this is also what a new renderer build does, which stores every tile again once."
+      - eval_time: 8h
+        alertname: JdwillmsenMinecraftMapHistoryVolumeFilling
+        exp_alerts: []
+
+  # Past nine tenths: critical, a quarter of an hour after it is so.
+  - interval: 1m
+    name: a history volume that is nearly full is critical
+    input_series:
+      - series: 'kubelet_volume_stats_used_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '20000000000+0x60'
+      - series: 'kubelet_volume_stats_capacity_bytes{namespace="jdwillmsen-prd", persistentvolumeclaim="minecraft-fwb-map-history"}'
+        values: '21474836480+0x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: JdwillmsenMinecraftMapHistoryVolumeNearlyFull
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: JdwillmsenMinecraftMapHistoryVolumeNearlyFull
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: jdwillmsen-prd
+            exp_annotations:
+              summary: "The Minecraft FWB map's history volume is nearly full"
+              description: "The claim minecraft-fwb-map-history is at 93.13% of its size. When it is full the map keeps no more days, and a day not kept is lost once its nightly archive is gone. Raise map.history.persistence.size now; the claim grows online."
+
+  # A capture that fails and is tried again each cycle: said within the
+  # hour, and quiet again an hour after the day is kept.
+  - interval: 15m
+    name: a day that cannot be kept is said while it is still today
+    input_series:
+      - series: 'mcmap_history_captures_total{namespace="jdwillmsen-prd", result="failed"}'
+        values: '0 0 1 2 3 4 4 4 4 4 4 4 4'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: JdwillmsenMinecraftMapHistoryCaptureFailing
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: JdwillmsenMinecraftMapHistoryCaptureFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: jdwillmsen-prd
+              result: failed
+            exp_annotations:
+              summary: "The Minecraft FWB map tried to keep today's history and could not"
+              description: "A capture of the day's map has failed in the last hour, and the map tries again every refresh. Until one succeeds today has no day of history. The map's log says \"map history not kept\" with the reason. If the history volume is full, expand the claim minecraft-fwb-map-history: it grows online."
+      - eval_time: 3h
+        alertname: JdwillmsenMinecraftMapHistoryCaptureFailing
+        exp_alerts: []
 
   # The live layer. A record every second, heartbeats included, so the
   # timestamp tracks the clock whether or not anyone is online.
