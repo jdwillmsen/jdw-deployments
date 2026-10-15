@@ -187,6 +187,20 @@ spec:
             - name: HISTORY_DIR
               value: /history
             {{- end }}
+            {{- if and .Values.map.admin.passkeys (not .Values.map.admin.enabled) }}
+            {{- fail "map.admin.passkeys needs map.admin.enabled: only an admin may add a passkey, and the map refuses to start with one on and not the other. To turn admin off, set both to false." }}
+            {{- end }}
+            - name: ADMIN_ENABLED
+              value: {{ .Values.map.admin.enabled | quote }}
+            - name: PASSKEYS_ENABLED
+              value: {{ .Values.map.admin.passkeys | quote }}
+            {{- if .Values.map.admin.enabled }}
+            # A passkey is bound to this exact origin. Set with admin so that
+            # turning passkeys on later is a one-line change; the map reads it
+            # only once passkeys are on.
+            - name: PUBLIC_ORIGIN
+              value: "https://{{ .Values.map.host }}"
+            {{- end }}
             {{- with .Values.map.structures.seedSecret }}
             {{- if .name }}
             # optional: a Secret that is not there leaves the variable unset
