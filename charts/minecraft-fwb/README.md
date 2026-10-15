@@ -588,6 +588,47 @@ path logs and exits 0.
 Tested by `tools/tests/test-deploy-announce.sh`, which runs the script as
 rendered against a stubbed `kubectl`.
 
+## Map admin access
+
+The map's admins are the game's own operators, read through the console bridge
+from the game's permissions file, which is not in git. Three values switch it:
+
+| Value | Default | Effect |
+|---|---|---|
+| `map.admin.enabled` | `true` | An operator who is logged in is an admin: the page shows them the server's status and, with passkeys on, lets them add a passkey. Sets `ADMIN_ENABLED`, and `PUBLIC_ORIGIN` to `https://` plus `map.host`. |
+| `map.admin.passkeys` | `false` | Passkey login, so an admin can log in without the game. Sets `PASSKEYS_ENABLED`. A passkey is bound to the origin above. |
+| `map.admin.loki.enabled` | `true` | Ship the Loki copy of the passkey-added alert (see below). |
+
+Turn them on in order: admin first, then wait until `mcmap_admin_operators`
+reads at least 1 in production, then passkeys in a change of their own. Passkeys
+on with admin off does not render, because the map refuses to start that way.
+
+To turn it off, switch passkeys off alone, or both off in one change (never
+admin alone). Argo syncs it and the map restarts; announce the restart as
+described under "Deploy announcements".
+
+Two alerts reach the owner directly, because they carry `tenant: jdwillmsen`:
+
+- `JdwillmsenMinecraftMapPasskeyAdded` fires when a passkey is confirmed. It is
+  two rules of one name: the confirmation counter, which sees every
+  confirmation including one made after revoking all the others, and the
+  persisted passkey gauge, which catches one confirmed before a new pod's first
+  scrape. When both see the same passkey the owner gets two alerts of that name.
+- `JdwillmsenMinecraftMapPasskeyLoginRefused` fires when a login whose signature
+  was good is still refused (a counter that went back, a replay, a holder who
+  is no longer an operator, a passkey never confirmed). Refusals before the
+  signature is checked are anyone's to make and do not page.
+
+The Loki copy of the passkey-added alert is inert for now, for the reason
+`world-integrity-loki-rule.yaml` gives: the platform's Loki ruler does not read
+this tenant's rules. It ships so that it works the day that is fixed; until then
+the PrometheusRule is what fires.
+
+`tools/tests/test-map.sh` pins the switches, their order and the origin.
+`tools/tests/test-map-admin.sh` pins the alerts, with promtool cases for a
+restart gap and for revoking every passkey and then adding one, and the Loki
+rule.
+
 ## Browser checks
 
 `map.checks` runs the map's own browser checks against this map on a
@@ -888,6 +929,7 @@ tools/tests/test-world-integrity-alerts.sh   # promtool unit tests for the rules
 tools/tests/test-tick-rate-alerts.sh
 tools/tests/test-deploy-announce.sh          # the deploy-announce hook's decisions and digests
 tools/tests/test-map.sh                      # the map's exposure, the pack's init step, the map and live alerts, the browser checks
+tools/tests/test-map-admin.sh                # the map's admin alerts and their Loki copy
 ```
 
 Every `tools/tests/test-*.sh` is discovered and run by CI. The alert suites skip

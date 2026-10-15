@@ -1,0 +1,35 @@
+{{- if and .Values.map.enabled .Values.map.admin.enabled .Values.map.admin.loki.enabled }}
+# The log's copy of the passkey-added alert. It does not evaluate yet, for
+# the reason world-integrity-loki-rule.yaml gives: the platform's Loki rules
+# sidecar is mounted for the platform org, and these logs are in this
+# tenant's. It ships so that it starts working the day that is fixed;
+# until then JdwillmsenMinecraftMapPasskeyAdded in map-admin-rules.yaml is
+# the alert that fires.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "map.name" . }}-admin-loki-rules
+  namespace: {{ .Release.Namespace }}
+  labels:
+    loki_rule: "true"
+data:
+  minecraft-fwb-map-admin.yaml: |
+    groups:
+      - name: minecraft-fwb-map-admin-logs
+        interval: 1m
+        rules:
+          - alert: JdwillmsenMinecraftMapPasskeyAddedLogged
+            # Selected by container, not pod: this cluster's log pipeline
+            # ships no pod stream label. The map's lines are JSON, and the
+            # message is matched as a field, so text a player chose cannot
+            # raise it.
+            expr: |
+              sum(count_over_time({namespace="{{ .Release.Namespace }}", container="map"} |= "map passkey registered" | json | msg="map passkey registered" [15m])) > 0
+            labels:
+              severity: warning
+              tenant: jdwillmsen
+              namespace: {{ .Release.Namespace }}
+            annotations:
+              summary: "A passkey was added to the FWB map (from the log)"
+              description: "The map logged a confirmed passkey in the last 15 minutes. If nobody you know added one, the player it belongs to should type !map logout in the game."
+{{- end }}
