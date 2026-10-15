@@ -2101,7 +2101,13 @@ map:
   # Tenant apps are <app>.<env>.jdwlabs.com.
   host: fwb.prd.jdwlabs.com
 
-  refreshInterval: 15m
+  # Counted from the end of a cycle, and a cycle takes about 2.5 minutes on
+  # the 500m CPU limit (snapshot 4-9 s with saving held, renders ~50 s,
+  # passes and Nether levels ~60 s), so the terrain is up to interval + 2.5
+  # minutes old. Lowered from 15m in steps, each held while the tick rate
+  # stays at its 15m baseline (p5 about 18, mean 19.5); below about 3m the
+  # CPU limit has to rise with it, since cycles are already throttled.
+  refreshInterval: 5m
 
   # Daily UTC windows in which the map leaves the save state alone.
   #
