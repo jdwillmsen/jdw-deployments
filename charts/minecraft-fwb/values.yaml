@@ -376,7 +376,11 @@ minecraft-bedrock:
       # map's live layer cannot work without. They stay out of the /events
       # ring on purpose: at one sample a second they would push every join
       # out of it within the hour, and the agent's roster is built from it.
-      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.7.0"
+      #
+      # 0.9.1 names a refused or failed tellraw by its rule only, in its log
+      # and its error body, so a passkey code the agent whispers never lands
+      # in the bridge's log. 0.8.0 and 0.9.0 were dependency updates.
+      image: "ghcr.io/jdwillmsen/mc-console-bridge:0.9.1"
       env:
         # CONSOLE_ADDR, not CONSOLE_ADDRESS: the bridge reads the former, and
         # the misspelling was inert -- it only ever worked because the value
