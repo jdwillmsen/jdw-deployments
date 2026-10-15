@@ -2087,7 +2087,12 @@ map:
     # 1.36.0 is the page's new look: quieter dividers and clearer field
     # edges in all three themes, buttons in three weights, ticked
     # checkboxes, a focus colour of its own, and the bar on one row.
-    tag: "1.36.0"
+    #
+    # 1.38.0 adds a Details action to the player card: a panel with what
+    # the world save holds of that player (health, hunger, level, armour,
+    # inventory, ender chest, last death, respawn point) and their time
+    # online and distance from the trails.
+    tag: "1.38.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
