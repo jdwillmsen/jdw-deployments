@@ -94,7 +94,7 @@ minecraft-bedrock:
     - name: install-map-pack
       # map.image.repository at a tag no newer than map.image.tag; see rule 3
       # above for when to move it.
-      image: "ghcr.io/jdwillmsen/minecraft-map:1.7.0"
+      image: "ghcr.io/jdwillmsen/minecraft-map:1.39.0"
       imagePullPolicy: IfNotPresent
       # The image's entrypoint is the mcmap binary, so this is the whole
       # command line. `uninstall-pack` is the only other value it may take.
