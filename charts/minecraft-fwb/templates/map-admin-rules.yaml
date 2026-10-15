@@ -1,0 +1,49 @@
+{{- if and .Values.map.enabled .Values.map.admin.enabled }}
+# Labelled with the tenant so that they reach the owner straight away: a
+# warning without that label goes only to the AI-SRE relay.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "map.name" . }}-admin
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-map-admin
+      rules:
+        # Two rules of one name, either of which fires it.
+        - alert: JdwillmsenMinecraftMapPasskeyAdded
+          # Every confirmation, including one that follows revoking every
+          # other passkey, which leaves the count lower than it was.
+          expr: |
+            sum without (pod, instance) (increase(mcmap_admin_passkeys_registered_total{namespace="{{ .Release.Namespace }}", result="confirmed"}[15m])) > 0
+          labels: &passkeyAddedLabels
+            severity: warning
+            tenant: jdwillmsen
+            namespace: {{ .Release.Namespace }}
+          annotations: &passkeyAddedAnnotations
+            summary: "A passkey was added to the FWB map"
+            description: "A passkey for logging in to the map as an admin was confirmed in the last 15 minutes. If nobody you know added one, the player it belongs to should type !map logout in the game, which logs out every browser and removes every passkey they hold."
+        - alert: JdwillmsenMinecraftMapPasskeyAdded
+          # The backstop: a confirmation made before a new pod's first
+          # scrape, which its counter never shows at zero. The gauge is read
+          # back from the volume at start, and the half-hour window still
+          # holds the old pod's samples across a restart's gap.
+          expr: |
+            max without (pod, instance) (mcmap_admin_passkeys{namespace="{{ .Release.Namespace }}", state="active"})
+              > max without (pod, instance) (max_over_time(mcmap_admin_passkeys{namespace="{{ .Release.Namespace }}", state="active"}[30m] offset 15m))
+          labels: *passkeyAddedLabels
+          annotations: *passkeyAddedAnnotations
+        - alert: JdwillmsenMinecraftMapPasskeyLoginRefused
+          # Only refusals made after the signature verified: someone held a
+          # real passkey and was still turned away. Those before it are
+          # anyone on the internet's to make, and stay on the dashboard.
+          expr: |
+            sum without (pod, instance) (increase(mcmap_admin_logins_total{namespace="{{ .Release.Namespace }}", result=~"counter|replayed|not_operator|pending"}[15m])) > 0
+          labels:
+            severity: warning
+            tenant: jdwillmsen
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: "A real passkey was turned away at the FWB map"
+            description: "In the last 15 minutes a passkey login whose signature was good was refused: a counter that went back (a copied key), a replay, a holder who is no longer an operator, or a passkey never confirmed. mcmap_admin_logins_total by result says which."
+{{- end }}
