@@ -2590,9 +2590,9 @@ map:
     enabled: true
     # Passkey login. Needs enabled: the chart refuses to render it alone,
     # because the map would refuse to start. To turn admin off, set both
-    # to false in one change. Turned on by its own change once
-    # mcmap_admin_operators has read at least 1.
-    passkeys: false
+    # to false in one change. Turned on once mcmap_admin_operators read 2
+    # in production on map 1.40.0.
+    passkeys: true
     loki:
       # The Loki copy of the passkey-added alert. It does not evaluate until
       # the platform's Loki ruler reads this tenant's org; the
