@@ -18,6 +18,16 @@ helm template minecraft-fwb "$chart" --namespace jdwillmsen-prd \
   -f "$chart/values-console-bridge.yaml" -f "$chart/values-map-pack.yaml" > "$work/prod.yaml" \
   || fail "the chart does not render with production values"
 
+python3 - "$work/prod.yaml" <<'PY' || fail "the Loki copy of the passkey alert is missing or wrong"
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+cms = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"].get("labels", {}).get("loki_rule") == "true" and "map-admin" in d["metadata"]["name"]]
+assert len(cms) == 1, f"{len(cms)} map admin Loki ConfigMaps"
+text = "".join(cms[0]["data"].values())
+for want in ("map passkey registered", "tenant: jdwillmsen", "JdwillmsenMinecraftMapPasskeyAddedLogged", 'container="map"'):
+    assert want in text, want
+PY
+
 if ! command -v promtool >/dev/null 2>&1; then
   # Loud rather than silent, as test-map.sh is: CI installs promtool.
   echo "SKIP: promtool not on PATH; map admin alerts not verified"
