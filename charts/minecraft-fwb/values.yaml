@@ -1359,7 +1359,9 @@ agent:
     # classic layout was reported with no head at all; the head is now found
     # from the skin's own model, and a player whose skin has none there gets
     # a badge drawn from their gamertag.
-    tag: "0.28.2"
+    #
+    # 0.31.0 whispers a map passkey code to the player who types !map passkey.
+    tag: "0.31.0"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -2096,7 +2098,13 @@ map:
     # 1.39.0 reads the pack's counts of each player's kills, deaths, blocks
     # broken and placed, joins and time online, keeps the totals on the
     # map's volume, and shows them with live health and level in the panel.
-    tag: "1.39.0"
+    #
+    # 1.40.0 lets the game's operators be the map's admins, shows them the
+    # server's status, and can let them add a passkey and log in with it
+    # without the game; see admin below, which is what switches each on.
+    # It also serves the map's own status on its internal port, with no
+    # name, place or path in it, for agents to read.
+    tag: "1.40.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
@@ -2571,6 +2579,25 @@ map:
       # The schedule asks for one an hour. A run by hand on top of that is
       # two; more than this is something else holding the secret.
       maxExchangesPerHour: 3
+
+  # The map's admins are the game's own operators, read through the console
+  # bridge from permissions.json, which is not in git and never will be. An
+  # admin sees the server's status in the page and may add a passkey, which
+  # logs them in without the game. See "Map admin access" in the chart
+  # README.
+  admin:
+    # Recognise operators as admins. Off, no admin route is served.
+    enabled: true
+    # Passkey login. Needs enabled: the chart refuses to render it alone,
+    # because the map would refuse to start. To turn admin off, set both
+    # to false in one change. Turned on by its own change once
+    # mcmap_admin_operators has read at least 1.
+    passkeys: false
+    loki:
+      # The Loki copy of the passkey-added alert. It does not evaluate until
+      # the platform's Loki ruler reads this tenant's org; the
+      # PrometheusRule is the one that fires meanwhile.
+      enabled: true
 
 # Notices the world losing chunks, and the server saying its database is
 # corrupt, instead of waiting for the nightly backup to come out small.

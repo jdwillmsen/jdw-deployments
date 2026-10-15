@@ -966,6 +966,37 @@ for line in dict.fromkeys(bad):
 sys.exit(1 if bad else 0)
 PY
 
+# Seventh, admin access: the two switches, the order they may be turned on
+# in, and the one origin a passkey is bound to.
+render_with() {
+  helm template minecraft-fwb "$chart" --namespace jdwillmsen-prd \
+    -f "$chart/values.yaml" -f "$chart/values-prd.yaml" \
+    -f "$chart/values-console-bridge.yaml" -f "$chart/values-map-pack.yaml" "$@"
+}
+map_env() {
+  python3 - "$1" <<'PY'
+import sys, yaml
+for d in yaml.safe_load_all(open(sys.argv[1])):
+    if d and d["kind"] == "Deployment" and d["metadata"]["name"].endswith("-map"):
+        for e in d["spec"]["template"]["spec"]["containers"][0]["env"]:
+            print(f'{e["name"]}={e.get("value", "<from secret>")}')
+PY
+}
+host="$(python3 -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["map"]["host"])' "$chart/values.yaml")"
+map_env "$work/rendered.yaml" > "$work/admin.env"
+grep -qx 'ADMIN_ENABLED=true' "$work/admin.env" || fail "production does not set ADMIN_ENABLED=true"
+grep -qx 'PASSKEYS_ENABLED=false' "$work/admin.env" || fail "production does not set PASSKEYS_ENABLED=false"
+grep -qx "PUBLIC_ORIGIN=https://$host" "$work/admin.env" || fail "PUBLIC_ORIGIN is not https:// plus map.host"
+render_with --set map.admin.passkeys=true > "$work/passkeys.yaml" || fail "the chart does not render with passkeys on"
+map_env "$work/passkeys.yaml" | grep -qx 'PASSKEYS_ENABLED=true' || fail "passkeys on does not set PASSKEYS_ENABLED=true"
+if render_with --set map.admin.enabled=false --set map.admin.passkeys=true > /dev/null 2>&1; then
+  fail "passkeys on with admin off rendered; the map would refuse to start"
+fi
+render_with --set map.admin.enabled=false --set map.admin.passkeys=false > "$work/admin-off.yaml" || fail "both off, which is how admin is turned off, does not render"
+map_env "$work/admin-off.yaml" > "$work/admin-off.env"
+grep -qx 'ADMIN_ENABLED=false' "$work/admin-off.env" || fail "with admin off, ADMIN_ENABLED is not false"
+! grep -q '^PUBLIC_ORIGIN=' "$work/admin-off.env" || fail "PUBLIC_ORIGIN is set with admin off"
+
 if ! command -v promtool >/dev/null 2>&1; then
   # Loud rather than silent: a skipped alert test is an untested alert. CI
   # installs promtool, so this branch is never taken there.
