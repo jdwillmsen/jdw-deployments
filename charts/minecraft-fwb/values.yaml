@@ -2092,7 +2092,11 @@ map:
     # the world save holds of that player (health, hunger, level, armour,
     # inventory, ender chest, last death, respawn point) and their time
     # online and distance from the trails.
-    tag: "1.38.0"
+    #
+    # 1.39.0 reads the pack's counts of each player's kills, deaths, blocks
+    # broken and placed, joins and time online, keeps the totals on the
+    # map's volume, and shows them with live health and level in the panel.
+    tag: "1.39.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
