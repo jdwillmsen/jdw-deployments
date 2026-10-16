@@ -173,6 +173,14 @@ spec:
               value: {{ .Values.map.structures.enabled | quote }}
             - name: BIOMES_ENABLED
               value: {{ .Values.map.biomes.enabled | quote }}
+            - name: LAYERS_ENABLED
+              value: {{ .Values.map.layers.enabled | quote }}
+            {{- if .Values.map.layers.enabled }}
+            - name: LAYERS_CACHE_MB
+              value: {{ .Values.map.layers.cacheMB | quote }}
+            - name: LAYERS_MAX_RENDERS
+              value: {{ .Values.map.layers.maxRenders | quote }}
+            {{- end }}
             - name: TRAILS_ENABLED
               value: {{ and .Values.map.live.enabled .Values.map.trails.enabled | quote }}
             - name: TRAILS_MAX_AGE
