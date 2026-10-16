@@ -27,6 +27,11 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+        # The volume holds the camera's extracted texture pack, tens of
+        # thousands of files on NFS. The default policy re-chowns every one on
+        # each start, which took over ten minutes; checking the root is enough
+        # because crew only ever writes files as this same group.
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
