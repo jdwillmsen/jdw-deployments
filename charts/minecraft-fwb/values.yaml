@@ -245,6 +245,11 @@ minecraft-bedrock:
     viewDistance: 64
     maxPlayers: 20
     playerIdleTimeout: 0
+    # Matches the 4-core cpu limit above; the chart default of 8 dates from the
+    # old 8-core limit. With 8 threads on 4 cores of quota, chunk loading at a
+    # player's join bursts into CFS throttling (11-14% of periods on 2026-10-15)
+    # and the throttle lands on the tick thread too, dipping TPS to ~18.
+    maxThreads: 4
 
     # LAN-only. HAProxy terminates every frontend in TCP mode and cannot proxy
     # UDP, baseline Pod Security forbids hostPort, and no LoadBalancer provider
