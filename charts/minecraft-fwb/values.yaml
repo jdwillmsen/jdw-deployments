@@ -2120,8 +2120,9 @@ map:
     # 1.41.0 serves the about, guide, privacy, terms and credits pages
     # without a login. 1.43.0 draws the topography and the other overlays
     # again at a whole zoom level, so one switched on between levels is not
-    # left empty. Xbox sign-in and the underground views it also carries
-    # stay off: XBOX_LOGIN_ENABLED and LAYERS_ENABLED are not set.
+    # left empty, and draws the underground views, the Nether's topography
+    # and the lost chunks with layers.enabled below. Xbox sign-in stays off:
+    # XBOX_LOGIN_ENABLED is not set.
     tag: "1.43.0"
     pullPolicy: IfNotPresent
 
@@ -2195,12 +2196,13 @@ map:
       memory: 512Mi
     limits:
       # Sized against the namespace quota, not against the work. limits.cpu is
-      # capped at 8 and 4900m is committed to long-lived pods; the backup,
-      # version-check and volume-recovery jobs can add 2000m at 04:00. 500m
-      # here leaves them room. A first full render at this limit takes
-      # minutes rather than seconds; every later one only redraws what
-      # changed.
-      cpu: 500m
+      # capped at 8; with this at 1 core the long-lived pods hold 5900m and
+      # the backup, version-check and volume-recovery jobs can add 2000m at
+      # 04:00, which still fits. Raised from 500m, which was throttled in
+      # two thirds of its periods once the refresh ran every 5 minutes,
+      # before the underground views add tiles drawn on request. The
+      # strategy is Recreate, so a rollout never holds two of these at once.
+      cpu: "1"
       # The renderer peaked at 1.39 GB rendering the whole overworld with
       # eight chunk processors; one processor needs less, and an OOM kill only
       # costs a restart that resumes where the tiles left off.
@@ -2350,6 +2352,21 @@ map:
   biomes:
     # false reads no biomes and serves none. Restarts the map only.
     enabled: true
+
+  # Cut-through and cave views of every dimension below its surface, in the
+  # blocks' own colours and unmasked (the owner's call: everything the save
+  # holds, for every logged-in player), the Nether's topography under each
+  # of its levels, and the lost-chunks overlay. Tiles are drawn only when
+  # someone looks, at most maxRenders at once, kept in a cache of cacheMB;
+  # about 55 ms a close tile and 180 ms one zoom out on one core. Reading
+  # the Nether's floors adds about 10 s to a cycle in which the Nether
+  # changed, and at least once an hour. Each viewer turns the rows on.
+  layers:
+    # false serves none of it and the page has no rows for it. Restarts the
+    # map only.
+    enabled: true
+    cacheMB: 64
+    maxRenders: 2
 
   # Where each player has been: the positions the live layer already
   # receives, kept in the map's memory for a day and drawn as a line. Like
