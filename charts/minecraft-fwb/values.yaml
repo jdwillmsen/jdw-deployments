@@ -2116,7 +2116,13 @@ map:
     # without the game; see admin below, which is what switches each on.
     # It also serves the map's own status on its internal port, with no
     # name, place or path in it, for agents to read.
-    tag: "1.40.0"
+    #
+    # 1.41.0 serves the about, guide, privacy, terms and credits pages
+    # without a login. 1.43.0 draws the topography and the other overlays
+    # again at a whole zoom level, so one switched on between levels is not
+    # left empty. Xbox sign-in and the underground views it also carries
+    # stay off: XBOX_LOGIN_ENABLED and LAYERS_ENABLED are not set.
+    tag: "1.43.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
