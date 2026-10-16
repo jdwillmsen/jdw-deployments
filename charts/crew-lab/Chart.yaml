@@ -1,0 +1,10 @@
+apiVersion: v2
+name: crew-lab
+description: Offline Bedrock lab server and the crew-1 worker unit that joins it
+type: application
+version: 0.1.0
+appVersion: "LATEST"
+dependencies:
+  - name: minecraft-bedrock
+    version: 2.9.0
+    repository: https://itzg.github.io/minecraft-server-charts/

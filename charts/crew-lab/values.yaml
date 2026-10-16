@@ -1,0 +1,179 @@
+minecraft-bedrock:
+  image:
+    repository: itzg/minecraft-bedrock-server
+    # Pinned rather than latest: the tag versions the container tooling, and a
+    # silent change underneath a running world is a hazard even in a lab. The
+    # server binary itself is chosen by minecraftServer.version below, so the
+    # two move independently.
+    tag: "2026.9.2"
+    pullPolicy: IfNotPresent
+
+  # A StatefulSet terminates its pod and waits for it to go before creating the
+  # replacement, so two writers never share the world volume. That is not
+  # what makes it safe to move; the single-node affinity below is.
+  workloadAsStatefulSet: true
+  strategyType: RollingUpdate
+
+  # A lab with crew-1 and one or two watching players. A fraction of what a
+  # full survival server needs: the world is freshly generated and small, and
+  # the view distance below is kept low so the chunk cache stays small too.
+  #
+  # The namespace quota is shared with the main server's workloads, so the
+  # limits are kept tight rather than generous: at the time of writing about
+  # 2100m of limits.cpu and 4.5Gi of limits.memory were uncommitted, and this
+  # server plus crew-1 together ask for 1750m and 2.5Gi.
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: 1500m
+
+  # One node, not "any". The world is a ReadWriteOnce iSCSI volume, and moving
+  # the pod drags the volume to another node. democratic-csi's unstage reports
+  # success while the ext4 journal is still dirty, so the receiving node's
+  # fsck recovers the journal and corrects errors, discarding inodes; on the
+  # main server that has cost world files more than once. Single-node affinity
+  # forfeits failover, but there is no failover to forfeit: one process owns
+  # one world with no clustering.
+  #
+  # The lab world is disposable, so losing it would be acceptable, but a
+  # rescheduling that corrupts it silently would show up as odd crew behaviour
+  # and waste debugging time. Pinning avoids that for free.
+  #
+  # talos-lx0-6a4 was chosen on 2026-10-16 by headroom: allocatable 15500m cpu
+  # and 64Gi memory, with requests at 48% cpu and 24% memory and `kubectl top`
+  # at 3% cpu and 23% memory. The other schedulable workers were at 66-93%
+  # memory, or (talos-4h8-zy6) already carrying 97% of their memory limits.
+  # This node is the roomiest, so it is the least likely to be the one a
+  # neighbour's burst starves; recheck with `kubectl top nodes` if it fills.
+  #
+  # Revisit when the world moves off democratic-csi to the official TrueNAS CSI
+  # driver -- the migration hazard is that driver's, not Kubernetes'.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - talos-lx0-6a4
+
+  minecraftServer:
+    eula: "TRUE"
+    # LATEST: Bedrock clients only connect within a narrow protocol window of
+    # their own build, and the image checks for the current server on every
+    # container start, independently of image.tag above. Left unreviewed here
+    # because the world is disposable.
+    version: "LATEST"
+    difficulty: normal
+    gameMode: survival
+    levelName: crew-lab
+    serverName: crew-lab
+    cheats: true
+    maxPlayers: 5
+    tickDistance: 4
+    viewDistance: 16
+    playerIdleTimeout: 0
+    maxThreads: 2
+
+    # Offline: the server does not verify clients against Xbox Live, so crew
+    # joins with a bare display name and no account. That also means anyone who
+    # can reach the port can join under any name, which is why the Service
+    # below is ClusterIP only: no NodePort and no LAN exposure. Do not change
+    # serviceType or add a nodePort without turning online mode back on.
+    onlineMode: false
+    serviceType: ClusterIP
+    serverPort: 19132
+
+    # Bedrock answers unconnected pings only when LAN visibility is on, and the
+    # chart's own probes are exactly such a ping, so they can never pass
+    # without it. It is harmless here because nothing outside the cluster can
+    # reach the port.
+    enableLanVisibility: true
+
+  # The subchart's own env only covers part of the server's configuration.
+  extraEnv:
+    # Online mode off is not enough: the image's allow list defaults on and
+    # would refuse crew's unknown name.
+    ALLOW_LIST: "false"
+    # Bedrock 1.26.51 and later default a new world to NetherNet, which opens
+    # no RakNet listener. crew dials RakNet only, and so do the probes this
+    # subchart renders, so the transport is pinned.
+    TRANSPORT: raknet
+
+  startupProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 60
+
+  # Lab world only: no backup, so it is rebuilt from scratch if it is lost.
+  persistence:
+    storageClass: truenas-iscsi
+    dataDir:
+      enabled: true
+      Size: 2Gi
+      accessModes:
+        - ReadWriteOnce
+
+crew:
+  enabled: true
+
+  # Names the Deployment, PVC and Service, so `kubectl logs deploy/crew-1` and
+  # a port-forward to svc/crew-1 work without knowing the release name.
+  name: crew-1
+
+  # Set to 0 (not `enabled: false`) to stop the unit without deleting its
+  # volume. Explicit rather than templated-default; Sprig's `default` coerces
+  # 0 back to 1.
+  replicas: 1
+
+  image:
+    repository: ghcr.io/jdwillmsen/minecraft-crew
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  # The display name the unit joins under. With offline mode there is no
+  # account behind it.
+  username: crew-1
+
+  # Lab only: skip Microsoft sign-in. The lab server runs offline, so a signed
+  # in unit could not join it anyway.
+  offline: true
+
+  viewDistance: 8
+  statusPort: 8080
+
+  camera:
+    enabled: true
+    maxViewers: 4
+    # On the data volume below. The first start fetches Mojang's sample
+    # resource pack from github.com (the namespace allows egress) and builds the
+    # atlas from it. If the fetch fails the view stays flat-coloured and the
+    # build is retried on the next session, so it is not fatal.
+    atlasDir: /data/atlas
+
+  probes:
+    periodSeconds: 10
+    # Generous so a busy unit is not killed for one slow answer.
+    livenessFailureThreshold: 6
+
+  # Steady state is a single UDP session and a small HTTP server. The memory
+  # limit leaves room for building the atlas from the extracted pack and for
+  # camera viewers' sub-chunk replay.
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m
+    limits:
+      memory: 512Mi
+      cpu: 250m
+
+  persistence:
+    # File tier, not block: a few small token files plus the atlas cache.
+    storageClass: truenas-nfs
+    # About 313 MB for the extracted pack plus the atlas, with room to grow.
+    size: 1Gi
