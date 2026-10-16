@@ -1,0 +1,21 @@
+{{- if .Values.crew.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "crew.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "crew.name" . }}
+spec:
+  # ClusterIP and no Ingress, on purpose: the status API and the camera stream
+  # carry the unit's position and have no authentication. Reach them with a
+  # port-forward until something puts auth in front.
+  type: ClusterIP
+  ports:
+    - name: status
+      port: {{ .Values.crew.statusPort }}
+      targetPort: status
+      protocol: TCP
+  selector:
+    app: {{ include "crew.name" . }}
+{{- end }}

@@ -1,0 +1,94 @@
+{{- if .Values.crew.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "crew.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "crew.name" . }}
+spec:
+  # No `| default 1`: Sprig's `default` treats 0 as unset, which would turn a
+  # deliberate scale-to-zero through git back into 1.
+  replicas: {{ .Values.crew.replicas }}
+  revisionHistoryLimit: 0
+  # Recreate, not RollingUpdate: the data volume is ReadWriteOnce, and two
+  # units joining under the same name would kick each other off the server.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ include "crew.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "crew.name" . }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: crew
+          image: "{{ .Values.crew.image.repository }}:{{ .Values.crew.image.tag }}"
+          imagePullPolicy: {{ .Values.crew.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: MC_HOST
+              value: {{ include "crew.serverHost" . }}
+            - name: MC_PORT
+              value: {{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" | quote }}
+            - name: MC_USERNAME
+              value: {{ .Values.crew.username | quote }}
+            - name: MC_OFFLINE
+              value: {{ .Values.crew.offline | quote }}
+            - name: MC_VIEW_DISTANCE
+              value: {{ .Values.crew.viewDistance | quote }}
+            - name: STATUS_ADDR
+              value: "0.0.0.0:{{ .Values.crew.statusPort }}"
+            - name: CAMERA_ENABLED
+              value: {{ .Values.crew.camera.enabled | quote }}
+            - name: CAMERA_MAX_VIEWERS
+              value: {{ .Values.crew.camera.maxViewers | quote }}
+            - name: CAMERA_ATLAS_DIR
+              value: {{ .Values.crew.camera.atlasDir | quote }}
+          ports:
+            - name: status
+              containerPort: {{ .Values.crew.statusPort }}
+              protocol: TCP
+          # Liveness answers only "the process is serving"; readiness follows
+          # the unit's state in the world and is false for long stretches
+          # (dead, server restarting). Nothing may restart the pod on
+          # readiness, and the liveness budget below outlasts a slow start.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: status
+            periodSeconds: {{ .Values.crew.probes.periodSeconds }}
+            timeoutSeconds: 3
+            failureThreshold: {{ .Values.crew.probes.livenessFailureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: status
+            periodSeconds: {{ .Values.crew.probes.periodSeconds }}
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.crew.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "crew.name" . }}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

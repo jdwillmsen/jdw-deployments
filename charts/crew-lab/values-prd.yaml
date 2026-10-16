@@ -1,0 +1,4 @@
+# Environment overlay. The base values are already production-shaped — this
+# tenant has a single environment, so there is nothing to promote between and
+# nothing to differ. Kept so the chart matches the deployment repo's
+# values.yaml + values-<env>.yaml convention.

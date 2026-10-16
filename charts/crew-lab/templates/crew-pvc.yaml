@@ -1,0 +1,18 @@
+{{- if .Values.crew.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "crew.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Plain files with none of the locking or mmap needs that put a world on the
+  # block tier: the sign-in token cache, and the texture atlas cache. The atlas
+  # is the bulk of it, because the resource pack it is built from is extracted
+  # beside it and kept so a restart does not download it again.
+  storageClassName: {{ .Values.crew.persistence.storageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.crew.persistence.size }}
+{{- end }}
