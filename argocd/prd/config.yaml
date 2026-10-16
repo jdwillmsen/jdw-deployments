@@ -23,3 +23,12 @@ apps:
       # installed or updated and restarts the server once; a pack already
       # on the volume stays until uninstall-pack removes it.
       - values-map-pack.yaml
+  # Offline lab server plus the crew-1 worker. Its own app so that nothing here
+  # can sync, restart or reschedule the main server.
+  - name: crew-lab-prd
+    namespace: jdwillmsen-prd
+    chartPath: charts/crew-lab
+    syncWave: "2"
+    valueFiles:
+      - values.yaml
+      - values-prd.yaml
