@@ -2123,7 +2123,14 @@ map:
     # left empty, and draws the underground views, the Nether's topography
     # and the lost chunks with layers.enabled below. Xbox sign-in stays off:
     # XBOX_LOGIN_ENABLED is not set.
-    tag: "1.43.0"
+    #
+    # 1.44.0 draws the real picture of each item in the player panel, with
+    # worn and held items as slots, hearts for health, the backpack above
+    # the hotbar and a glint on enchanted items. The pictures are made from
+    # the game's published art on the first start after the upgrade, which
+    # takes about half a minute and does not hold the map back. 1.45.0 opens
+    # a shulker box carried by a player into its contents.
+    tag: "1.45.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
