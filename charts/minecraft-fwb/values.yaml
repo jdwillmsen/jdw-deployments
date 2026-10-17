@@ -102,7 +102,7 @@ minecraft-bedrock:
     # default rolling tag, which upgrades the server binary underneath a live
     # world; for a GitOps workload whose state is the whole point, that is a
     # silent-change hazard rather than a convenience.
-    tag: "2026.9.2"
+    tag: "2026.10.1"
     pullPolicy: IfNotPresent
 
   # RollingUpdate never runs two writers: a StatefulSet terminates its pod and
@@ -1379,7 +1379,7 @@ agent:
     #
     # 0.32.0 answers !commands and !command with the help list, and whispers
     # the asker when an @server answer fails instead of leaving them silence.
-    tag: "0.32.0"
+    tag: "0.33.2"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -2136,7 +2136,7 @@ map:
     # the game's published art on the first start after the upgrade, which
     # takes about half a minute and does not hold the map back. 1.45.0 opens
     # a shulker box carried by a player into its contents.
-    tag: "1.45.0"
+    tag: "1.46.1"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
