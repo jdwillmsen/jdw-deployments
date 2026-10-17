@@ -5,7 +5,7 @@ minecraft-bedrock:
     # silent change underneath a running world is a hazard even in a lab. The
     # server binary itself is chosen by minecraftServer.version below, so the
     # two move independently.
-    tag: "2026.9.2"
+    tag: "2026.10.1"
     pullPolicy: IfNotPresent
 
   # A StatefulSet terminates its pod and waits for it to go before creating the
@@ -133,7 +133,7 @@ crew:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-crew
-    tag: "1.0.1"
+    tag: "1.2.1"
     pullPolicy: IfNotPresent
 
   # The display name the unit joins under. With offline mode there is no
