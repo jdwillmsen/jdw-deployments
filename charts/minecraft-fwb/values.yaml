@@ -865,7 +865,13 @@ bot:
     # 1.2.2 closes a login it gives up on, the same fix as the agent's
     # 0.27.1: the bot shares the fault because it carries a copy of the
     # agent's client code.
-    tag: "1.2.2"
+    #
+    # 1.5.2 respawns after a death on 1.26.52. It asked to respawn before the
+    # server had started looking for a spawn point, which 1.26.52 ignores, so
+    # a dead bot stayed dead and held no chunks until the nightly restart.
+    # The releases between are dependency bumps; gophertunnel is unchanged and
+    # go-raknet moves to the v1.15.2 the agent already runs on this server.
+    tag: "1.5.2"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -975,8 +981,8 @@ bot2:
     # until the farm says the Go one works.
     #
     # 1.2.1 (the presence release, first built from gameops), the same as bot
-    # above and for the same reason. 1.2.2 likewise.
-    tag: "1.2.2"
+    # above and for the same reason. 1.2.2 and 1.5.2 likewise.
+    tag: "1.5.2"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
