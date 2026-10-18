@@ -104,7 +104,8 @@ minecraft-bedrock:
 
     # Bedrock answers unconnected pings only when LAN visibility is on, and the
     # chart's own probes are exactly such a ping, so they can never pass
-    # without it. It also lists the lab in a LAN client's Friends tab.
+    # without it. It does not list the lab in a client's Friends tab: the LAN
+    # discovery broadcast never reaches the pod through the NodePort.
     enableLanVisibility: true
 
   # The subchart's own env only covers part of the server's configuration.

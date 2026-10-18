@@ -13,10 +13,11 @@ restart or reschedule that server.
 
 Players join from a Bedrock client at any node's LAN address on port 31136
 (for example `192.168.1.163:31136`), or from outside the LAN through a router
-forward of UDP 31136, which is set up outside this repository. The lab also
-shows in the Friends tab of a client on the same LAN.
+forward of UDP 31136, which is set up outside this repository. It does not
+show in a client's Friends tab: LAN discovery broadcasts do not cross the
+NodePort, so add it as a server by address.
 
-The server runs with online mode and the allow list off, and `crew-1` sets
+The server runs with both online mode and the allow list off, and `crew-1` sets
 `MC_OFFLINE=true`, because crew has no Microsoft account. So anyone who can
 reach the port joins, under any name they choose. That is accepted for a
 disposable world, and it is why the lab has no operators: an offline client can
