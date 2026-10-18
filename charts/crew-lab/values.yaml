@@ -76,31 +76,41 @@ minecraft-bedrock:
     levelName: crew-lab
     serverName: crew-lab
     cheats: true
-    maxPlayers: 5
+    # Players join to watch crew work, alongside crew-1 and its cameras.
+    maxPlayers: 10
     tickDistance: 4
     viewDistance: 16
     playerIdleTimeout: 0
     maxThreads: 2
 
     # Offline: the server does not verify clients against Xbox Live, so crew
-    # joins with a bare display name and no account. That also means anyone who
-    # can reach the port can join under any name, which is why the Service
-    # below is ClusterIP only: no NodePort and no LAN exposure. Do not change
-    # serviceType or add a nodePort without turning online mode back on.
+    # joins with a bare display name and no account. It also means a player can
+    # join under any name, and claim any XUID. That is accepted because the
+    # world is disposable and has no allow list anyway, but it is why nobody is
+    # an operator: permissions.json keys operators by XUID, which an offline
+    # client can forge. Lab commands go through the server console instead.
+    # Do not add ops while online mode is off.
     onlineMode: false
-    serviceType: ClusterIP
-    serverPort: 19132
+    defaultPermission: member
+
+    # A NodePort, like the main server's, so players on the LAN (and through a
+    # router forward, from outside it) can join. serverPort matches nodePort
+    # because the subchart says clients show a ping time only when they are
+    # equal. 31136 sits clear of the main server's 31132 and 31134, which are
+    # allocated cluster-wide whatever the protocol.
+    serviceType: NodePort
+    serverPort: 31136
+    nodePort: 31136
 
     # Bedrock answers unconnected pings only when LAN visibility is on, and the
     # chart's own probes are exactly such a ping, so they can never pass
-    # without it. It is harmless here because nothing outside the cluster can
-    # reach the port.
+    # without it. It also lists the lab in a LAN client's Friends tab.
     enableLanVisibility: true
 
   # The subchart's own env only covers part of the server's configuration.
   extraEnv:
-    # Online mode off is not enough: the image's allow list defaults on and
-    # would refuse crew's unknown name.
+    # Open by design. The image's allow list defaults on, which would refuse
+    # crew's unknown name and every player not on the list.
     ALLOW_LIST: "false"
     # Bedrock 1.26.51 and later default a new world to NetherNet, which opens
     # no RakNet listener. crew dials RakNet only, and so do the probes this
