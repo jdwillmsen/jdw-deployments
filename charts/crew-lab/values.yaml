@@ -133,7 +133,7 @@ crew:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-crew
-    tag: "1.2.1"
+    tag: "1.2.2"
     pullPolicy: IfNotPresent
 
   # The display name the unit joins under. With offline mode there is no
