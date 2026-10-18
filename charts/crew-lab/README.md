@@ -6,16 +6,23 @@ restart or reschedule that server.
 
 | Piece | What |
 |---|---|
-| `<release>-minecraft-bedrock` | itzg `minecraft-bedrock` subchart: StatefulSet, ClusterIP Service on 19132/UDP, world on `truenas-iscsi` |
+| `<release>-minecraft-bedrock` | itzg `minecraft-bedrock` subchart: StatefulSet, NodePort Service on 31136/UDP, world on `truenas-iscsi` |
 | `crew-1` | Deployment (1 replica, `Recreate`), ClusterIP Service on 8080, data on `truenas-nfs` |
 
-## Offline, and therefore private
+## Joining the lab
 
-The lab server runs with online mode and the allow list off, and `crew-1` sets
-`MC_OFFLINE=true`, so there is no sign-in step at all. An offline server lets
-anyone who can reach it join under any name, so its Service is ClusterIP only:
-no NodePort, no LAN exposure. Keep it that way unless online mode is turned
-back on.
+Players join from a Bedrock client at any node's LAN address on port 31136
+(for example `192.168.1.163:31136`), or from outside the LAN through a router
+forward of UDP 31136, which is set up outside this repository. The lab also
+shows in the Friends tab of a client on the same LAN.
+
+The server runs with online mode and the allow list off, and `crew-1` sets
+`MC_OFFLINE=true`, because crew has no Microsoft account. So anyone who can
+reach the port joins, under any name they choose. That is accepted for a
+disposable world, and it is why the lab has no operators: an offline client can
+forge the XUID that `permissions.json` keys operators by. Run lab commands from
+the server console (see below), and turn online mode on before adding an
+operator.
 
 ## Transport
 
