@@ -2136,7 +2136,11 @@ map:
     # the game's published art on the first start after the upgrade, which
     # takes about half a minute and does not hold the map back. 1.45.0 opens
     # a shulker box carried by a player into its contents.
-    tag: "1.45.0"
+    #
+    # 1.46.0 moves adding a passkey to the account panel. 1.47.0 names each
+    # day of the timeline by the date and time it was captured in the
+    # viewer's time zone, rather than by its date in UTC.
+    tag: "1.47.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
