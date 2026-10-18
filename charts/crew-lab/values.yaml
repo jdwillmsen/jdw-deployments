@@ -18,17 +18,20 @@ minecraft-bedrock:
   # full survival server needs: the world is freshly generated and small, and
   # the view distance below is kept low so the chunk cache stays small too.
   #
-  # The namespace quota is shared with the main server's workloads, so the
-  # limits are kept tight rather than generous: at the time of writing about
-  # 2100m of limits.cpu and 4.5Gi of limits.memory were uncommitted, and this
-  # server plus crew-1 together ask for 1750m and 2.5Gi.
+  # The namespace quota is shared with the main server's workloads, and what
+  # looks uncommitted in it is not free: the backup (1000m), volume-recovery
+  # and version-check (500m each) CronJobs need limits.cpu headroom to create
+  # their pods at all. At 1500m here, plus crew-1, long-lived pods held 7650m
+  # of the 8000m cap and every backup from 2026-10-17 failed FailedCreate.
+  # Measured use is about 45m, so 400m still leaves room for terrain
+  # generation while keeping 1550m open for the jobs.
   resources:
     requests:
       memory: 1Gi
-      cpu: 500m
+      cpu: 200m
     limits:
       memory: 2Gi
-      cpu: 1500m
+      cpu: 400m
 
   # One node, not "any". The world is a ReadWriteOnce iSCSI volume, and moving
   # the pod drags the volume to another node. democratic-csi's unstage reports
@@ -170,7 +173,7 @@ crew:
       cpu: 50m
     limits:
       memory: 512Mi
-      cpu: 250m
+      cpu: 150m
 
   persistence:
     # File tier, not block: a few small token files plus the atlas cache.
