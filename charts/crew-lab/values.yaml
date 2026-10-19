@@ -118,6 +118,56 @@ minecraft-bedrock:
     # subchart renders, so the transport is pinned.
     TRANSPORT: raknet
 
+  # Gear for the crew units, from the unit-kit ConfigMap (templates/). An
+  # offline-mode player has no XUID, so the server cannot persist its
+  # inventory across a reconnect and every crew restart would otherwise leave
+  # the units bare-handed. The pack tops the gear up instead of relying on it
+  # surviving.
+  #
+  # The init container installs the pack into the world on every start and
+  # merges it into world_behavior_packs.json, keeping any pack already there.
+  # It reuses the server image (keep its tag in step with image.tag) only for
+  # its jq; the root filesystem is
+  # read-only, so everything it writes goes to the data volume.
+  initContainers:
+    - name: install-unit-kit
+      image: "itzg/minecraft-bedrock-server:2026.9.2"
+      command:
+        - sh
+        - -ec
+        - |
+          world=/data/worlds/crew-lab
+          pack=crew-unit-kit
+          id=e26bfbb9-d810-487c-ab14-fbbd10499c84
+          mkdir -p "$world/behavior_packs/$pack/functions/unit_kit"
+          cp /kit/manifest.json "$world/behavior_packs/$pack/manifest.json"
+          cp /kit/tick.json "$world/behavior_packs/$pack/functions/tick.json"
+          for f in init tick equip; do
+            cp "/kit/$f.mcfunction" "$world/behavior_packs/$pack/functions/unit_kit/$f.mcfunction"
+          done
+          list="$world/world_behavior_packs.json"
+          [ -s "$list" ] || echo '[]' > "$list"
+          jq --arg id "$id" 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [1, 0, 0]}]' "$list" > "$list.new"
+          mv "$list.new" "$list"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: datadir
+          mountPath: /data
+        - name: unit-kit
+          mountPath: /kit
+          readOnly: true
+
+  extraVolumes:
+    - volumes:
+        - name: unit-kit
+          configMap:
+            name: crew-lab-unit-kit
+
   startupProbe:
     enabled: true
     initialDelaySeconds: 30
