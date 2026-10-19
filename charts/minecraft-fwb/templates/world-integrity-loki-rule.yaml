@@ -2,18 +2,16 @@
 # A log-derived alert on the server's own corruption lines, which appear before
 # any gauge moves.
 #
-# This does not evaluate yet, and that is stated here rather than discovered
-# during the next incident. Two things in the platform repo have to change
-# first, both described in values.yaml under worldIntegrity.loki: Loki's rules
-# sidecar watches only its own namespace, and its rule store is mounted so that
-# every rule it holds is evaluated as org `platform` while these streams are org
-# `jdwillmsen`. The ConfigMap is in this namespace because the
+# The platform's Loki ruler picks up `loki_rule` ConfigMaps from this
+# tenant's namespace and evaluates them as org `jdwillmsen`, which is where
+# these streams live. The ConfigMap stays in this namespace because the
 # tenant-jdwillmsen AppProject permits no other, so targeting `monitoring` would
 # fail the whole application's sync rather than just this file.
 #
-# It ships anyway because the query is the part worth reviewing in daylight, and
-# because JdwillmsenMinecraftWorldCorruptionReported reads the same two lines
-# through the console bridge's gauge and needs none of the above.
+# JdwillmsenMinecraftWorldCorruptionReported reads the same two lines through
+# the console bridge's gauge. Both fire on one corruption event, deliberately:
+# this one does not depend on the bridge sidecar, which the run-time corruption
+# shutdown takes down with the server.
 apiVersion: v1
 kind: ConfigMap
 metadata:

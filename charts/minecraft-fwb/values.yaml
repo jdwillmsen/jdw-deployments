@@ -2646,9 +2646,8 @@ map:
     # in production on map 1.40.0.
     passkeys: true
     loki:
-      # The Loki copy of the passkey-added alert. It does not evaluate until
-      # the platform's Loki ruler reads this tenant's org; the
-      # PrometheusRule is the one that fires meanwhile.
+      # The Loki copy of the passkey-added alert. It fires alongside the
+      # PrometheusRule of the same event, under a different alert name.
       enabled: true
 
 # Notices the world losing chunks, and the server saying its database is
@@ -2733,20 +2732,15 @@ worldIntegrity:
   # A Loki rule on the server's own corruption lines, which is the one signal
   # that exists before any of the gauges move.
   #
-  # Inert until two things change in the platform repo, and shipped anyway so
-  # that the query is reviewed next to the rules it backs up rather than
-  # written from memory during an incident:
-  #
-  #  1. Loki's rules sidecar runs with no NAMESPACE set, so it watches only
-  #     `monitoring`. This ConfigMap is in jdwillmsen-prd because the
-  #     tenant-jdwillmsen AppProject permits no other namespace -- targeting
-  #     `monitoring` would fail the whole app's sync, not just this file.
-  #  2. The ruler's rule store is mounted at /rules/platform, so every rule it
-  #     has is evaluated as org `platform`. These streams are org `jdwillmsen`,
-  #     and a query in the wrong org returns empty rather than an error.
+  # The platform's Loki ruler evaluates this ConfigMap as org `jdwillmsen`,
+  # which is where these streams are; a query in the wrong org returns empty
+  # rather than an error. The ConfigMap is in jdwillmsen-prd because the
+  # tenant-jdwillmsen AppProject permits no other namespace -- targeting
+  # `monitoring` would fail the whole app's sync, not just this file.
   #
   # The Prometheus corruption rule above reads the same lines through the
-  # console bridge's gauge and needs neither.
+  # console bridge's gauge. Both fire on one event; this one survives the
+  # bridge sidecar going down with the server.
   loki:
     enabled: true
     # Minutes of log the rule looks back over. Longer than its own evaluation

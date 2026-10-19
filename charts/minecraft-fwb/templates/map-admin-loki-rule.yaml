@@ -1,10 +1,10 @@
 {{- if and .Values.map.enabled .Values.map.admin.enabled .Values.map.admin.loki.enabled }}
-# The log's copy of the passkey-added alert. It does not evaluate yet, for
-# the reason world-integrity-loki-rule.yaml gives: the platform's Loki rules
-# sidecar is mounted for the platform org, and these logs are in this
-# tenant's. It ships so that it starts working the day that is fixed;
-# until then JdwillmsenMinecraftMapPasskeyAdded in map-admin-rules.yaml is
-# the alert that fires.
+# The log's copy of the passkey-added alert. The platform's Loki ruler
+# evaluates this tenant's rules from this namespace under org jdwillmsen (see
+# world-integrity-loki-rule.yaml). It fires alongside
+# JdwillmsenMinecraftMapPasskeyAdded in map-admin-rules.yaml, under its own
+# name, so a passkey confirmation can page twice; the log copy survives a
+# metrics outage.
 apiVersion: v1
 kind: ConfigMap
 metadata:
