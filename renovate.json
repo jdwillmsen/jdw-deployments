@@ -63,7 +63,7 @@
       "automerge": true
     },
     {
-      "description": "The crew lab's worker. It runs only against the lab server in its own app, never FWB, so a bump recreates the crew-1 pod and nothing players are connected to moves. That is what makes it safe to merge unattended.",
+      "description": "The crew lab's worker. It runs only against the lab server in its own app, never FWB, so a bump recreates the crew pods and nothing players are connected to moves. That is what makes it safe to merge unattended.",
       "matchPackageNames": [
         "ghcr.io/jdwillmsen/minecraft-crew"
       ],

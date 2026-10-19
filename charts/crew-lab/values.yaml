@@ -14,14 +14,14 @@ minecraft-bedrock:
   workloadAsStatefulSet: true
   strategyType: RollingUpdate
 
-  # A lab with crew-1 and one or two watching players. A fraction of what a
+  # A lab with the crew units and one or two watching players. A fraction of what a
   # full survival server needs: the world is freshly generated and small, and
   # the view distance below is kept low so the chunk cache stays small too.
   #
   # The namespace quota is shared with the main server's workloads, and what
   # looks uncommitted in it is not free: the backup (1000m), volume-recovery
   # and version-check (500m each) CronJobs need limits.cpu headroom to create
-  # their pods at all. At 1500m here, plus crew-1, long-lived pods held 7650m
+  # their pods at all. At 1500m here, plus the lone crew unit, long-lived pods held 7650m
   # of the 8000m cap and every backup from 2026-10-17 failed FailedCreate.
   # Measured use is about 45m, so 400m still leaves room for terrain
   # generation while keeping 1550m open for the jobs.
@@ -76,7 +76,7 @@ minecraft-bedrock:
     levelName: crew-lab
     serverName: crew-lab
     cheats: true
-    # Players join to watch crew work, alongside crew-1 and its cameras.
+    # Players join to watch crew work, alongside the crew units and their cameras.
     maxPlayers: 10
     tickDistance: 4
     viewDistance: 16
@@ -136,23 +136,34 @@ minecraft-bedrock:
 crew:
   enabled: true
 
-  # Names the Deployment, PVC and Service, so `kubectl logs deploy/crew-1` and
-  # a port-forward to svc/crew-1 work without knowing the release name.
-  name: crew-1
+  # One Deployment, Service and PVC per unit, all named by `id`, so
+  # `kubectl logs deploy/crew-01` works without knowing the release name. The
+  # `id` is fixed for life: volumes, Secrets, logs and the task API's identity
+  # use it. `name` is the in-game username (16 characters at most; offline
+  # mode has no account behind it). Names follow one ordered list by number:
+  # 04 Dusty, 05 Ember, 06 Flint, 07 Gravel, 08 Hazel, 09 Ingot, 10 Jasper,
+  # 11 Kettle, 12 Loam, 13 Marble, 14 Nugget, 15 Onyx, 16 Pebble, 17 Quartz,
+  # 18 Rusty, 19 Slate, 20 Tinder, 21 Umber, 22 Vein, 23 Wick, 24 Xeno,
+  # 25 Yarrow, 26 Zinc. Append, never renumber or rename.
+  #
+  # A unit may set `replicas: 0` to stop alone without losing its volume.
+  units:
+    - id: crew-01
+      name: Agate
+    - id: crew-02
+      name: Basalt
+    - id: crew-03
+      name: Cobble
 
-  # Set to 0 (not `enabled: false`) to stop the unit without deleting its
-  # volume. Explicit rather than templated-default; Sprig's `default` coerces
-  # 0 back to 1.
+  # Default for every unit; a unit's own `replicas` wins. Set to 0 (not
+  # `enabled: false`) to stop units without deleting their volumes. Explicit
+  # rather than templated-default; Sprig's `default` coerces 0 back to 1.
   replicas: 1
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-crew
     tag: "1.10.1"
     pullPolicy: IfNotPresent
-
-  # The display name the unit joins under. With offline mode there is no
-  # account behind it.
-  username: crew-1
 
   # Lab only: skip Microsoft sign-in. The lab server runs offline, so a signed
   # in unit could not join it anyway.
@@ -162,11 +173,13 @@ crew:
   statusPort: 8080
 
   # A public, view-only page at this host: the camera and the unit's state, with
-  # no sign-in. The lab is not FWB, so showing where crew-1 is costs nothing.
+  # no sign-in. The lab is not FWB, so showing where a unit is costs nothing.
   # The task API and metrics stay cluster-only (templates/crew-route.yaml).
   route:
     enabled: true
     host: crew.prd.jdwlabs.com
+    # The unit whose Service the route reaches; one camera is public.
+    unit: crew-01
 
   camera:
     enabled: true
@@ -179,10 +192,11 @@ crew:
 
   # The token-guarded task API (`POST /v1/tasks`). The chart only references
   # the Secret: its value never passes through Git or Argo CD, and the owner
-  # creates it by hand (README, "Tasks").
+  # creates it by hand (README, "Tasks"). One Secret serves every unit, so a
+  # new unit needs no new Secret.
   tasks:
     enabled: true
-    secretName: crew-1-tasks
+    secretName: crew-tasks
     timeoutSeconds: 900
 
   probes:
@@ -190,16 +204,18 @@ crew:
     # Generous so a busy unit is not killed for one slow answer.
     livenessFailureThreshold: 6
 
-  # Steady state is a single UDP session and a small HTTP server. The memory
-  # limit leaves room for building the atlas from the extracted pack and for
-  # camera viewers' sub-chunk replay.
+  # Per unit. Steady state is a single UDP session and a small HTTP server
+  # (about 7m idle). The memory limit leaves room for building the atlas from
+  # the extracted pack and for camera viewers' sub-chunk replay. The CPU limit
+  # is what counts against the namespace quota that backup and recovery jobs
+  # need headroom in: three units at 100m add 150m over the single unit's 150m.
   resources:
     requests:
       memory: 128Mi
-      cpu: 50m
+      cpu: 20m
     limits:
       memory: 512Mi
-      cpu: 150m
+      cpu: 100m
 
   persistence:
     # File tier, not block: a few small token files plus the atlas cache.

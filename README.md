@@ -25,7 +25,7 @@ self-contained here rather than referenced remotely.
 | Chart | What |
 |---|---|
 | `minecraft-fwb` | Minecraft Bedrock server, migrated off an unmanaged Proxmox VM |
-| `crew-lab` | Offline Bedrock lab server and the `crew-1` worker unit that joins it |
+| `crew-lab` | Offline Bedrock lab server and the `crew-01` to `crew-03` worker units that join it |
 
 ### NetherNet, and why this server is not on it
 
