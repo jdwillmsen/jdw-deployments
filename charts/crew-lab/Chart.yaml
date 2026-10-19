@@ -1,6 +1,6 @@
 apiVersion: v2
 name: crew-lab
-description: Offline Bedrock lab server and the crew-1 worker unit that joins it
+description: Offline Bedrock lab server and the crew worker units that join it
 type: application
 version: 0.1.0
 appVersion: "LATEST"

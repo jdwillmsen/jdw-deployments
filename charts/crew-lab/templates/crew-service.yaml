@@ -1,20 +1,23 @@
 {{- if .Values.crew.enabled }}
+{{- range $unit := .Values.crew.units }}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "crew.name" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ $unit.id }}
+  namespace: {{ $.Release.Namespace }}
   labels:
-    app: {{ include "crew.name" . }}
+    {{- include "crew.labels" $unit.id | nindent 4 }}
 spec:
   # ClusterIP: the only outside path in is the view-only HTTPRoute, which never
   # reaches the task API or metrics on this same port.
   type: ClusterIP
   ports:
     - name: status
-      port: {{ .Values.crew.statusPort }}
+      port: {{ $.Values.crew.statusPort }}
       targetPort: status
       protocol: TCP
   selector:
-    app: {{ include "crew.name" . }}
+    app: {{ $unit.id }}
+{{- end }}
 {{- end }}
