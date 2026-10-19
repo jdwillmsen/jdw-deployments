@@ -92,9 +92,11 @@ Keys: `1`-`9` pick a unit, `c` cycles the camera mode (`first`, `third`, `orbit`
 
 crew-control (`crew.control`) renders its unit list from `crew.units`, skipping
 any with `replicas: 0`, and proxies only each unit's camera routes. The route
-is view-only: it allow-lists `/`, `/camera`, `/units`, `/v1/units` and
-`/static`, all served by crew-control. The task API, `/metrics` and the probes
-stay cluster-only; `tools/tests/test-crew-route.sh` fails if any of them
+allow-lists `/`, `/camera`, `/units`, `/v1/units/stream`, `/static`, `/signin`,
+`/auth` and `/v1/work`, all served by crew-control. Viewing needs no sign-in;
+`/auth` and `/v1/work` are guarded by passkeys. The task API, `/metrics`, the
+probes and the units' own `/v1/units/{id}/work` and `/events` stay
+cluster-only; `tools/tests/test-crew-route.sh` fails if any of them
 becomes reachable. For those, use a port-forward:
 
 ```
@@ -105,6 +107,47 @@ The image tag in `values.yaml` must be a published `minecraft-crew-control`
 release.
 
 The page loads three.js from a CDN, so the browser needs internet access.
+
+## Signing in
+
+Operators (`crew.control.operators`) sign in with a passkey to queue work. Each
+has an invite code, a key in the Secret `crew-control-invites` named by the
+operator id. The chart only references the Secret. To enrol, open
+`https://crew.prd.jdwlabs.com/signin#operator=<id>&invite=<code>`. The owner reads
+a code to send it (the owner's command, not an agent's):
+
+```
+kubectl -n jdwillmsen-prd get secret crew-control-invites -o jsonpath='{.data.josh}' | base64 -d
+```
+
+Each operator must get a different code. Ten wrong codes in a minute briefly
+block enrolment for everyone.
+
+Units pull queued work from crew-control with the shared token in Secret
+`crew-work` (key `token`), which crew-control and every unit read. Both Secrets
+are optional, so pods start without them.
+
+The invite sits in the URL fragment, so it never reaches server or proxy logs.
+
+Rotate one operator's invite, or the work token, without echoing the value, then
+restart whoever reads it (crew-control for an invite; crew-control and the units
+for the token). The patch touches only that operator's key:
+
+```
+kubectl -n jdwillmsen-prd patch secret crew-control-invites --type merge \
+  -p "{\"stringData\":{\"josh\":\"$(openssl rand -hex 24)\"}}"
+kubectl -n jdwillmsen-prd create secret generic crew-work \
+  --from-literal=token="$(openssl rand -hex 24)" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n jdwillmsen-prd rollout restart deploy/crew-control
+kubectl -n jdwillmsen-prd rollout restart deploy -l app.kubernetes.io/component=crew
+```
+
+Passkeys live in `passkeys.json` on the `crew-control` PVC. To remove one, scale
+crew-control to 0 first, edit the file on the volume, then scale back up;
+otherwise a write from the running server can undo the edit. Removing an
+operator from `crew.control.operators` also means deleting their passkeys the
+same way. Work is queued in the shared Postgres (`crew.control.database`), whose
+credentials arrive through the `crew-control-db` ExternalSecret.
 
 ## Tasks
 
