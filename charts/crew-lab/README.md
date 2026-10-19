@@ -80,22 +80,29 @@ Set `replicas: 0` on one unit to stop it without deleting its volume;
 - The image tag in `values.yaml` must be a published `minecraft-crew` release.
   A tag that does not exist leaves the pods in `ImagePullBackOff`.
 
-## Reaching the camera
+## Reaching the console
 
-Open <https://crew.prd.jdwlabs.com>, which redirects to `/camera`. It shows one
-unit, the one named by `crew.route.unit` (default `crew-01`). It is
-public and has no sign-in. That is fine for the lab, which is not FWB, but the
-page shows where that unit is to anyone with the link, and at most
-`crew.camera.maxViewers` people can watch at once.
+Open <https://crew.prd.jdwlabs.com>. It is the crew-control console: every unit's
+camera and state on one page, public and with no sign-in. That is fine for the
+lab, which is not FWB, but it shows where the units are to anyone with the link,
+and at most `crew.camera.maxViewers` people can watch one unit at once.
 
-The route is view-only. It allow-lists `/camera`, `/v1/camera/*` and
-`/v1/state`. The task API, `/metrics` and the probes share the same port and
+Keys: `1`-`9` pick a unit, `c` cycles the camera mode (`first`, `third`, `orbit`,
+`top`), `w` toggles the wall of all units.
+
+crew-control (`crew.control`) renders its unit list from `crew.units`, skipping
+any with `replicas: 0`, and proxies only each unit's camera routes. The route
+is view-only: it allow-lists `/`, `/camera`, `/units`, `/v1/units` and
+`/static`, all served by crew-control. The task API, `/metrics` and the probes
 stay cluster-only; `tools/tests/test-crew-route.sh` fails if any of them
 becomes reachable. For those, use a port-forward:
 
 ```
 kubectl -n jdwillmsen-prd port-forward deploy/crew-01 8080:8080
 ```
+
+The image tag in `values.yaml` must be a published `minecraft-crew-control`
+release.
 
 The page loads three.js from a CDN, so the browser needs internet access.
 
@@ -114,7 +121,7 @@ kubectl -n jdwillmsen-prd create secret generic crew-tasks \
 kubectl -n jdwillmsen-prd rollout restart deploy -l app.kubernetes.io/component=crew
 ```
 
-Submit over a port-forward to the unit's Deployment (see "Reaching the camera"),
+Submit over a port-forward to the unit's Deployment (see "Reaching the console"),
 never the public host, which does not route `/v1/tasks`. The crew README has the
 template.
 
