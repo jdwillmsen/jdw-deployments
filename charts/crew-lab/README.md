@@ -63,6 +63,24 @@ kubectl -n jdwillmsen-prd port-forward deploy/crew-1 8080:8080
 Then open `http://127.0.0.1:8080/camera`, or `curl 127.0.0.1:8080/readyz`. The
 page loads three.js from a CDN, so the browser needs internet access.
 
+## Tasks
+
+`crew-1` takes work over `POST /v1/tasks` once `TASKS_TOKEN` is set, and the
+token comes from the Secret `crew-1-tasks` (key `token`). The chart only
+references it, so the value never passes through Git or Argo CD. Until the
+Secret exists the unit runs without the task routes.
+
+Create it in your own terminal, then restart the unit so it reads the token:
+
+```
+kubectl -n jdwillmsen-prd create secret generic crew-1-tasks \
+  --from-literal=token="$(openssl rand -hex 32)"
+kubectl -n jdwillmsen-prd rollout restart deploy/crew-1
+```
+
+Submit over the same port-forward as the camera; the crew README has the
+template.
+
 ## Checks after a sync
 
 ```
