@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Renders the crew-lab chart and checks the crew units: one Deployment, Service
-# and PVC per unit, a shared task
-# token, and a total CPU limit that leaves the namespace quota headroom for the
+# and PVC per unit, a shared task token, a kit chest to rearm from,
+# and a total CPU limit that leaves the namespace quota headroom for the
 # backup and recovery CronJobs.
 set -euo pipefail
 
@@ -51,6 +51,8 @@ for uid, name in want.items():
     assert claim == uid, (uid, claim)
     ref = e["TASKS_TOKEN"]["valueFrom"]["secretKeyRef"]
     assert ref["name"] == "crew-tasks" and ref.get("optional") is True, (uid, ref)
+    x, y, z = (int(v) for v in e["KIT_CHEST"]["value"].split(","))
+    assert 1 <= int(e["KIT_FOOD"]["value"]) <= 64, (uid, e["KIT_FOOD"])
 
 for svc in crew("Service"):
     assert svc["spec"]["selector"] == {"app": svc["metadata"]["name"]}

@@ -221,7 +221,7 @@ crew:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-crew
-    tag: "1.16.0"
+    tag: "1.18.0"
     pullPolicy: IfNotPresent
 
   # Lab only: skip Microsoft sign-in. The lab server runs offline, so a signed
@@ -247,6 +247,14 @@ crew:
     # atlas from it. If the fetch fails the view stays flat-coloured and the
     # build is retried on the next session, so it is not fatal.
     atlasDir: /data/atlas
+
+  # A chest units rearm from when they have no sword or food on the hotbar,
+  # as after a death (the lab runs with keepInventory off). It sits in the
+  # spawn courtyard, beside where units respawn, and is stocked by hand from
+  # the server console, never by crew. Empty `chest` turns rearming off.
+  kit:
+    chest: "3,64,-403"
+    food: 8
 
   # The token-guarded task API (`POST /v1/tasks`). The chart only references
   # the Secret: its value never passes through Git or Argo CD, and the owner

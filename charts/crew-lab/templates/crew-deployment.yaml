@@ -66,6 +66,14 @@ spec:
               value: {{ $.Values.crew.camera.maxViewers | quote }}
             - name: CAMERA_ATLAS_DIR
               value: {{ $.Values.crew.camera.atlasDir | quote }}
+            {{- with $.Values.crew.kit }}
+            {{- if .chest }}
+            - name: KIT_CHEST
+              value: {{ .chest | quote }}
+            - name: KIT_FOOD
+              value: {{ .food | quote }}
+            {{- end }}
+            {{- end }}
             {{- with $.Values.crew.tasks }}
             {{- if .enabled }}
             # Optional so the unit still starts before the owner creates the
