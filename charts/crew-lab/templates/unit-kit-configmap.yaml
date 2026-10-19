@@ -1,0 +1,54 @@
+{{- /*
+A behaviour pack that keeps every crew unit's gear topped up. It lives in this
+chart, and not in the shared server chart, so it cannot be switched on for the
+main server. The server pod mounts it by this fixed name (values.yaml,
+minecraft-bedrock.extraVolumes).
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crew-lab-unit-kit
+  namespace: {{ .Release.Namespace }}
+data:
+  manifest.json: |
+    {
+      "format_version": 2,
+      "header": {
+        "name": "Crew unit kit",
+        "description": "Keeps the crew units equipped",
+        "uuid": "e26bfbb9-d810-487c-ab14-fbbd10499c84",
+        "version": [1, 0, 0],
+        "min_engine_version": [1, 21, 0]
+      },
+      "modules": [
+        {
+          "type": "data",
+          "uuid": "d83ae7f5-7887-400b-bc90-451510d633e6",
+          "version": [1, 0, 0]
+        }
+      ]
+    }
+  # Two functions, so the objective's "already exists" failure never touches the
+  # counter or the equipping.
+  tick.json: |
+    {
+      "values": ["unit_kit/init", "unit_kit/tick"]
+    }
+  init.mcfunction: |
+    scoreboard objectives add unitkit dummy
+  # 40 ticks is about 2 s: the gear check does not need to run every tick.
+  tick.mcfunction: |
+    scoreboard players add kit unitkit 1
+    execute if score kit unitkit matches 40.. run function unit_kit/equip
+    execute if score kit unitkit matches 40.. run scoreboard players set kit unitkit 0
+  # Each line runs only for a unit missing that piece, so nothing is replaced
+  # while it is held; `execute as` keeps a no-match from counting as a failure.
+  equip.mcfunction: |
+    {{- range $unit := .Values.crew.units }}
+    {{- $n := $unit.name | quote }}
+    execute as @a[name={{ $n }},hasitem={item=iron_sword,quantity=0}] run replaceitem entity @s slot.hotbar 8 iron_sword 1
+    execute as @a[name={{ $n }},hasitem={item=iron_helmet,location=slot.armor.head,quantity=0}] run replaceitem entity @s slot.armor.head 0 iron_helmet 1
+    execute as @a[name={{ $n }},hasitem={item=iron_chestplate,location=slot.armor.chest,quantity=0}] run replaceitem entity @s slot.armor.chest 0 iron_chestplate 1
+    execute as @a[name={{ $n }},hasitem={item=iron_leggings,location=slot.armor.legs,quantity=0}] run replaceitem entity @s slot.armor.legs 0 iron_leggings 1
+    execute as @a[name={{ $n }},hasitem={item=iron_boots,location=slot.armor.feet,quantity=0}] run replaceitem entity @s slot.armor.feet 0 iron_boots 1
+    {{- end }}
