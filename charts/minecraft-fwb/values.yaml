@@ -1379,7 +1379,11 @@ agent:
     #
     # 0.32.0 answers !commands and !command with the help list, and whispers
     # the asker when an @server answer fails instead of leaving them silence.
-    tag: "0.32.0"
+    #
+    # 0.33.3 respawns a dead bot in the order 1.26.52 servers require, and
+    # answers !map with a passkey's fingerprint or name by pointing at
+    # !map passkey.
+    tag: "0.33.3"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -2140,7 +2144,10 @@ map:
     # 1.46.0 moves adding a passkey to the account panel. 1.47.0 names each
     # day of the timeline by the date and time it was captured in the
     # viewer's time zone, rather than by its date in UTC.
-    tag: "1.47.0"
+    #
+    # 1.48.0 lays out adding a passkey as numbered steps, and lists every
+    # player the live feed has seen in a panel that opens their details.
+    tag: "1.48.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
