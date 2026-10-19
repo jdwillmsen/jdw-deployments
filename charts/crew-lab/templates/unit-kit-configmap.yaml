@@ -52,3 +52,8 @@ data:
     execute as @a[name={{ $n }},hasitem={item=iron_leggings,location=slot.armor.legs,quantity=0}] run replaceitem entity @s slot.armor.legs 0 iron_leggings 1
     execute as @a[name={{ $n }},hasitem={item=iron_boots,location=slot.armor.feet,quantity=0}] run replaceitem entity @s slot.armor.feet 0 iron_boots 1
     {{- end }}
+    {{- with .Values.crew.kit.chest }}
+    {{- /* The units take their food from the kit chest, which would otherwise
+    run dry; the last slot is kept full of bread. */}}
+    replaceitem block {{ splitList "," . | join " " }} slot.container 26 bread 64
+    {{- end }}
