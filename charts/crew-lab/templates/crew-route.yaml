@@ -41,6 +41,11 @@ spec:
             type: PathPrefix
             value: /v1/camera
       backendRefs:
+        {{- $ids := list }}
+        {{- range .Values.crew.units }}{{ $ids = append $ids .id }}{{ end }}
+        {{- if not (has .Values.crew.route.unit $ids) }}
+        {{- fail (printf "crew.route.unit %q is not in crew.units" .Values.crew.route.unit) }}
+        {{- end }}
         - name: {{ .Values.crew.route.unit }}
           port: {{ .Values.crew.statusPort }}
 {{- end }}

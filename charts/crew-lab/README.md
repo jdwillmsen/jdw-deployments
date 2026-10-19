@@ -62,8 +62,9 @@ object carries `app.kubernetes.io/component: crew`, so
 To add a unit, append the next id and the next name from the ordered list in
 `values.yaml` (`crew-04` Dusty, `crew-05` Ember, and on to `crew-26` Zinc).
 Never renumber or rename a unit, and never reuse an id. Check the budget first:
-each unit adds its `limits.cpu` (100m) to the namespace quota, which the backup
-and recovery CronJobs need headroom in.
+each unit adds its `limits.cpu` (50m) to the namespace quota, and the three
+units already use all the room FWB's 04:00 backup can spare. A fourth unit
+needs the tenant quota raised, or a smaller limit for every unit.
 
 Set `replicas: 0` on one unit to stop it without deleting its volume;
 `crew.replicas` is the default for the rest.
