@@ -170,6 +170,14 @@ crew:
     # build is retried on the next session, so it is not fatal.
     atlasDir: /data/atlas
 
+  # The token-guarded task API (`POST /v1/tasks`). The chart only references
+  # the Secret: its value never passes through Git or Argo CD, and the owner
+  # creates it by hand (README, "Tasks").
+  tasks:
+    enabled: true
+    secretName: crew-1-tasks
+    timeoutSeconds: 900
+
   probes:
     periodSeconds: 10
     # Generous so a busy unit is not killed for one slow answer.

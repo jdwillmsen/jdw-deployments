@@ -62,6 +62,20 @@ spec:
               value: {{ .Values.crew.camera.maxViewers | quote }}
             - name: CAMERA_ATLAS_DIR
               value: {{ .Values.crew.camera.atlasDir | quote }}
+            {{- with .Values.crew.tasks }}
+            {{- if .enabled }}
+            # Optional so the unit still starts before the owner creates the
+            # Secret; with no token crew registers no task routes at all.
+            - name: TASKS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: token
+                  optional: true
+            - name: TASK_TIMEOUT_S
+              value: {{ .timeoutSeconds | quote }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: status
               containerPort: {{ .Values.crew.statusPort }}
