@@ -1,0 +1,46 @@
+{{- if and .Values.crew.enabled .Values.crew.route.enabled }}
+# View-only on purpose: the public hostname reaches the camera and the unit's
+# state and nothing else. The task API shares this port and must never be
+# routed here, and neither are /metrics or the probes. Rules are allow-listed
+# paths rather than a catch-all with exclusions, so a route the unit adds later
+# stays private until someone lists it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "crew.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "crew.name" . }}
+spec:
+  parentRefs:
+    - name: platform-gateway
+      namespace: nginx-gateway
+      sectionName: https
+  hostnames:
+    - {{ .Values.crew.route.host | quote }}
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /camera
+            statusCode: 302
+    - matches:
+        - path:
+            type: Exact
+            value: /camera
+        - path:
+            type: Exact
+            value: /v1/state
+        - path:
+            type: PathPrefix
+            value: /v1/camera
+      backendRefs:
+        - name: {{ include "crew.name" . }}
+          port: {{ .Values.crew.statusPort }}
+{{- end }}

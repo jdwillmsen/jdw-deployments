@@ -53,15 +53,21 @@ given in `values.yaml`; the node was chosen by measured headroom, so recheck
 
 ## Reaching the camera
 
-Neither the status API nor the camera stream has authentication and both carry
-the unit's position, so there is no Ingress. Use a port-forward:
+Open <https://crew.prd.jdwlabs.com>, which redirects to `/camera`. It is
+public and has no sign-in. That is fine for the lab, which is not FWB, but the
+page shows where crew-1 is to anyone with the link, and at most
+`crew.camera.maxViewers` people can watch at once.
+
+The route is view-only. It allow-lists `/camera`, `/v1/camera/*` and
+`/v1/state`. The task API, `/metrics` and the probes share the same port and
+stay cluster-only; `tools/tests/test-crew-route.sh` fails if any of them
+becomes reachable. For those, use a port-forward:
 
 ```
 kubectl -n jdwillmsen-prd port-forward deploy/crew-1 8080:8080
 ```
 
-Then open `http://127.0.0.1:8080/camera`, or `curl 127.0.0.1:8080/readyz`. The
-page loads three.js from a CDN, so the browser needs internet access.
+The page loads three.js from a CDN, so the browser needs internet access.
 
 ## Tasks
 
@@ -78,7 +84,8 @@ kubectl -n jdwillmsen-prd create secret generic crew-1-tasks \
 kubectl -n jdwillmsen-prd rollout restart deploy/crew-1
 ```
 
-Submit over the same port-forward as the camera; the crew README has the
+Submit over the port-forward in "Reaching the camera", never the public host,
+which does not route `/v1/tasks`. The crew README has the
 template.
 
 ## Checks after a sync
