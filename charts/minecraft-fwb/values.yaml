@@ -2139,8 +2139,10 @@ map:
     #
     # 1.46.0 moves adding a passkey to the account panel. 1.47.0 names each
     # day of the timeline by the date and time it was captured in the
-    # viewer's time zone, rather than by its date in UTC.
-    tag: "1.47.0"
+    # viewer's time zone, rather than by its date in UTC. 1.48.0 lists every
+    # player the map has seen, online or not, and opens their details from
+    # the list; it keeps that roster in the data volume.
+    tag: "1.48.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
