@@ -129,6 +129,12 @@ minecraft-bedrock:
   # It reuses the server image (keep its tag in step with image.tag) only for
   # its jq; the root filesystem is
   # read-only, so everything it writes goes to the data volume.
+  #
+  # The pack is copied only at pod start and the server reads functions only
+  # at startup, so a changed pack needs a restart: bump this with any edit to
+  # templates/unit-kit-configmap.yaml. The restart disconnects players.
+  podAnnotations:
+    crew-lab/unit-kit-rev: "2"
   initContainers:
     - name: install-unit-kit
       image: "itzg/minecraft-bedrock-server:2026.9.2"
