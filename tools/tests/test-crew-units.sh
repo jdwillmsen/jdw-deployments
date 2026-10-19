@@ -65,7 +65,7 @@ def milli(v):
 
 total = sum(milli(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["cpu"])
             for d in deps.values())
-assert total <= 300, f"crew limits.cpu totals {total}m, want <= 300m"
+assert total <= 150, f"crew limits.cpu totals {total}m, want <= 150m"
 PY
 
 # A unit's replicas can be overridden alone, including to 0.

@@ -207,15 +207,18 @@ crew:
   # Per unit. Steady state is a single UDP session and a small HTTP server
   # (about 7m idle). The memory limit leaves room for building the atlas from
   # the extracted pack and for camera viewers' sub-chunk replay. The CPU limit
-  # is what counts against the namespace quota that backup and recovery jobs
-  # need headroom in: three units at 100m add 150m over the single unit's 150m.
+  # is what counts against the namespace quota, and the units together stay at
+  # the single unit's old 150m: FWB's 04:00 backup (1000m) has to fit beside
+  # the version-check or volume-recovery job (500m) that can start at the same
+  # minute, which leaves no headroom to spend. Raise the quota before raising
+  # this.
   resources:
     requests:
       memory: 128Mi
       cpu: 20m
     limits:
       memory: 512Mi
-      cpu: 100m
+      cpu: 50m
 
   persistence:
     # File tier, not block: a few small token files plus the atlas cache.
