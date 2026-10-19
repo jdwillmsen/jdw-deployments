@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Renders the crew-lab chart and checks that its public route stays view-only.
-# The task API, /metrics and the probes share the unit's port, so a route that
+# The task API, /metrics and the probes share each unit's port, so a route that
 # reaches any of them hands a public hostname the ability to make crew act.
 set -euo pipefail
 
@@ -23,6 +23,11 @@ assert len(routes) == 1, f"want one HTTPRoute, got {len(routes)}"
 spec = routes[0]["spec"]
 assert spec["hostnames"] == ["crew.prd.jdwlabs.com"], spec["hostnames"]
 
+for rule in spec["rules"]:
+    for b in rule.get("backendRefs", []):
+        assert b["name"] == "crew-control", f"backend {b['name']} is not crew-control"
+    assert not any(f.get("type") == "RequestRedirect" for f in rule.get("filters", [])), "unexpected redirect"
+
 def reachable(path):
     for rule in spec["rules"]:
         if not rule.get("backendRefs"):
@@ -38,9 +43,9 @@ def reachable(path):
                 raise AssertionError(f"unexpected match type {p['type']}")
     return False
 
-for path in ["/camera", "/v1/state", "/v1/camera/ws", "/v1/camera/atlas.json", "/v1/camera/atlas.png"]:
+for path in ["/", "/camera", "/units/crew-01/camera", "/units/crew-01/v1/state", "/units/crew-01/v1/camera/ws", "/v1/units", "/v1/units/stream", "/static/console.js"]:
     assert reachable(path), f"{path} should be routed"
-for path in ["/v1/tasks", "/v1/tasks/abc/cancel", "/metrics", "/healthz", "/readyz", "/v1/statex", "/v1/camerax"]:
+for path in ["/v1/tasks", "/v1/tasks/abc/cancel", "/metrics", "/healthz", "/readyz", "/v1/state", "/v1/camera/ws", "/unitsx", "/v1/unitsx", "/staticx"]:
     assert not reachable(path), f"{path} must not be routed"
 PY
 

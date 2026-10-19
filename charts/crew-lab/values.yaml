@@ -172,14 +172,13 @@ crew:
   viewDistance: 8
   statusPort: 8080
 
-  # A public, view-only page at this host: the camera and the unit's state, with
-  # no sign-in. The lab is not FWB, so showing where a unit is costs nothing.
+  # A public, view-only console at this host, served by crew-control (below):
+  # every unit's camera and state, with no sign-in. The lab is not FWB, so
+  # showing where a unit is costs nothing.
   # The task API and metrics stay cluster-only (templates/crew-route.yaml).
   route:
     enabled: true
     host: crew.prd.jdwlabs.com
-    # The unit whose Service the route reaches; one camera is public.
-    unit: crew-01
 
   camera:
     enabled: true
@@ -219,6 +218,27 @@ crew:
     limits:
       memory: 512Mi
       cpu: 50m
+
+  # The public console. It serves the page and reverse-proxies an allow-list of
+  # each unit's camera routes, so the route reaches this one Service instead of
+  # a unit, and the task API and metrics are never exposed. The units list
+  # above feeds it; a unit with `replicas: 0` is left out.
+  control:
+    enabled: true
+    image:
+      repository: ghcr.io/jdwillmsen/minecraft-crew-control
+      tag: "1.0.0"
+      pullPolicy: IfNotPresent
+    port: 8080
+    logLevel: info
+    # It only relays bytes, so a small share of a core is plenty.
+    resources:
+      requests:
+        memory: 32Mi
+        cpu: 10m
+      limits:
+        memory: 128Mi
+        cpu: 50m
 
   persistence:
     # File tier, not block: a few small token files plus the atlas cache.

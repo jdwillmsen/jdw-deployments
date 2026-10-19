@@ -1,9 +1,10 @@
 {{- if and .Values.crew.enabled .Values.crew.route.enabled }}
-# View-only on purpose: the public hostname reaches one unit's camera and its
-# state and nothing else. The task API shares this port and must never be
-# routed here, and neither are /metrics or the probes. Rules are allow-listed
-# paths rather than a catch-all with exclusions, so a route the unit adds later
-# stays private until someone lists it.
+# View-only on purpose: the public hostname reaches crew-control, which serves
+# the console and proxies only each unit's camera and state. The units' task
+# API shares their port and must never be routed here, and neither are
+# /metrics or the probes. Rules are allow-listed paths rather than a catch-all
+# with exclusions, so a route crew-control adds later stays private until
+# someone lists it.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -23,29 +24,20 @@ spec:
         - path:
             type: Exact
             value: /
-      filters:
-        - type: RequestRedirect
-          requestRedirect:
-            path:
-              type: ReplaceFullPath
-              replaceFullPath: /camera
-            statusCode: 302
-    - matches:
+        # The app redirects this to /.
         - path:
             type: Exact
             value: /camera
         - path:
-            type: Exact
-            value: /v1/state
+            type: PathPrefix
+            value: /units
         - path:
             type: PathPrefix
-            value: /v1/camera
+            value: /v1/units
+        - path:
+            type: PathPrefix
+            value: /static
       backendRefs:
-        {{- $ids := list }}
-        {{- range .Values.crew.units }}{{ $ids = append $ids .id }}{{ end }}
-        {{- if not (has .Values.crew.route.unit $ids) }}
-        {{- fail (printf "crew.route.unit %q is not in crew.units" .Values.crew.route.unit) }}
-        {{- end }}
-        - name: {{ .Values.crew.route.unit }}
-          port: {{ .Values.crew.statusPort }}
+        - name: crew-control
+          port: {{ .Values.crew.control.port }}
 {{- end }}
