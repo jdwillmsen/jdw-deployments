@@ -1,0 +1,77 @@
+{{- if and .Values.crew.enabled .Values.crew.control.enabled }}
+{{- $units := list }}
+{{- range .Values.crew.units }}
+{{- /* Stopped units are left out so the console does not list cameras that cannot answer. */}}
+{{- $reps := ternary .replicas $.Values.crew.replicas (hasKey . "replicas") }}
+{{- if ne (int $reps) 0 }}
+{{- $units = append $units (dict "id" .id "name" .name "url" (printf "http://%s:%v" .id $.Values.crew.statusPort)) }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crew-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: crew-control
+    app.kubernetes.io/component: crew-control
+spec:
+  # Zero when every unit is stopped: crew-control refuses an empty roster and
+  # would crash-loop, so it stops with them.
+  replicas: {{ if $units }}1{{ else }}0{{ end }}
+  revisionHistoryLimit: 0
+  # Rolling is safe here, unlike the units: there is no volume and no
+  # in-world identity, so two pods overlapping is harmless.
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: crew-control
+  template:
+    metadata:
+      labels:
+        app: crew-control
+        app.kubernetes.io/component: crew-control
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: crew-control
+          image: "{{ .Values.crew.control.image.repository }}:{{ .Values.crew.control.image.tag }}"
+          imagePullPolicy: {{ .Values.crew.control.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: CREW_UNITS
+              value: {{ $units | toJson | quote }}
+            - name: LISTEN_ADDR
+              value: "0.0.0.0:{{ .Values.crew.control.port }}"
+            - name: LOG_LEVEL
+              value: {{ .Values.crew.control.logLevel | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.crew.control.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: {{ .Values.crew.probes.periodSeconds }}
+            timeoutSeconds: 3
+            failureThreshold: {{ .Values.crew.probes.livenessFailureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: {{ .Values.crew.probes.periodSeconds }}
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.crew.control.resources | nindent 12 }}
+{{- end }}

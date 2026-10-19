@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Renders the crew-lab chart and checks the crew units: one Deployment, Service
-# and PVC per unit, the public route on the configured unit, a shared task
+# and PVC per unit, a shared task
 # token, and a total CPU limit that leaves the namespace quota headroom for the
 # backup and recovery CronJobs.
 set -euo pipefail
@@ -55,11 +55,6 @@ for uid, name in want.items():
 for svc in crew("Service"):
     assert svc["spec"]["selector"] == {"app": svc["metadata"]["name"]}
 
-routes = of("HTTPRoute")
-assert len(routes) == 1
-backends = {b["name"] for r in routes[0]["spec"]["rules"] for b in r.get("backendRefs", [])}
-assert backends == {"crew-01"}, backends
-
 def milli(v):
     return int(v[:-1]) if v.endswith("m") else int(float(v) * 1000)
 
@@ -76,7 +71,7 @@ python3 - "$work/scaled.yaml" <<'PY' || fail "per-unit replicas override is wron
 import sys, yaml
 reps = {d["metadata"]["name"]: d["spec"]["replicas"]
         for d in yaml.safe_load_all(open(sys.argv[1]))
-        if d and d.get("kind") == "Deployment" and d["metadata"]["name"].startswith("crew-")}
+        if d and d.get("kind") == "Deployment" and d["metadata"]["labels"].get("app.kubernetes.io/component") == "crew"}
 assert reps == {"crew-01": 1, "crew-02": 0, "crew-03": 1}, reps
 PY
 

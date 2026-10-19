@@ -1,0 +1,19 @@
+{{- if and .Values.crew.enabled .Values.crew.control.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: crew-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: crew-control
+    app.kubernetes.io/component: crew-control
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.crew.control.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: crew-control
+{{- end }}
