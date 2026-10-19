@@ -7,9 +7,8 @@ metadata:
   labels:
     app: {{ include "crew.name" . }}
 spec:
-  # ClusterIP and no Ingress, on purpose: the status API and the camera stream
-  # carry the unit's position and have no authentication. Reach them with a
-  # port-forward until something puts auth in front.
+  # ClusterIP: the only outside path in is the view-only HTTPRoute, which never
+  # reaches the task API or metrics on this same port.
   type: ClusterIP
   ports:
     - name: status
