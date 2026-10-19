@@ -2147,7 +2147,12 @@ map:
     # player the map has seen, online or not, and opens their details from
     # the list; it keeps that roster in the data volume. It also lays out
     # adding a passkey as numbered steps.
-    tag: "1.48.0"
+    #
+    # 1.49.0 draws every mob from its game model, the 17 that were spawn
+    # eggs and the faces that did not read in profile. Its first start
+    # makes the mob pictures again from the volume's pin, serving the old
+    # ones until then.
+    tag: "1.49.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
