@@ -254,10 +254,10 @@ crew:
     # build is retried on the next session, so it is not fatal.
     atlasDir: /data/atlas
 
-  # A chest units rearm from when they have no sword or food on the hotbar,
-  # as after a death (the lab runs with keepInventory off). It sits in the
-  # spawn courtyard, beside where units respawn, and is stocked by hand from
-  # the server console, never by crew. Empty `chest` turns rearming off.
+  # A chest units rearm from when they have no sword or food on the hotbar.
+  # It sits in the spawn courtyard, beside where units respawn. Crew never
+  # stocks it: the unit-kit pack keeps its last slot full of bread, and the
+  # swords in it were placed by hand. Empty `chest` turns rearming off.
   kit:
     chest: "3,64,-403"
     food: 8
