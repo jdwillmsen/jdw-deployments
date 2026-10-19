@@ -2151,8 +2151,9 @@ map:
     # 1.49.0 draws every mob from its game model, the 17 that were spawn
     # eggs and the faces that did not read in profile. Its first start
     # makes the mob pictures again from the volume's pin, serving the old
-    # ones until then.
-    tag: "1.49.0"
+    # ones until then. 1.49.1 adds a Copy button for !map passkey and
+    # tightens the account panel.
+    tag: "1.49.1"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
