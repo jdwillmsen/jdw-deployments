@@ -10,3 +10,7 @@ Takes the unit id.
 app: {{ . }}
 app.kubernetes.io/component: crew
 {{- end -}}
+
+{{- define "crew.control.dbSecret.name" -}}
+crew-control-db
+{{- end -}}
