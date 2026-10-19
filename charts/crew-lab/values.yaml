@@ -149,6 +149,15 @@ minecraft-bedrock:
           [ -s "$list" ] || echo '[]' > "$list"
           jq --arg id "$id" 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [1, 0, 0]}]' "$list" > "$list.new"
           mv "$list.new" "$list"
+      # Below the server's own, so the pod's quota charge is unchanged: an
+      # init container counts only where it exceeds the main containers.
+      resources:
+        requests:
+          memory: 16Mi
+          cpu: 10m
+        limits:
+          memory: 64Mi
+          cpu: 50m
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
