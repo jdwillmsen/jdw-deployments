@@ -11,11 +11,15 @@ restart or reschedule that server.
 
 ## Joining the lab
 
-Players join from a Bedrock client at any node's LAN address on port 31136
-(for example `192.168.1.163:31136`), or from outside the LAN through a router
-forward of UDP 31136, which is set up outside this repository. It does not
-show in a client's Friends tab: LAN discovery broadcasts do not cross the
-NodePort, so add it as a server by address.
+Players join from a Bedrock client at `crew.prd.jdwlabs.com`, port **19133**,
+from inside or outside the LAN. Any `jdwlabs.com` name works, since they all
+resolve to the same address. The path is the same one FWB uses on 19132: the
+router forwards UDP 19132-19141 to the HAProxy VM, and a DNAT rule there,
+placed by hand in `/etc/minecraft-udp-nat.nft` and outside this repository,
+sends 19133 to NodePort 31136 on `192.168.1.163`. If that node changes, the
+rule has to follow it. On the LAN, any node's address on 31136 also works. It
+does not show in a client's Friends tab: LAN discovery broadcasts do not cross
+the NodePort, so add it as a server by address.
 
 The server runs with both online mode and the allow list off, and `crew-1` sets
 `MC_OFFLINE=true`, because crew has no Microsoft account. So anyone who can
