@@ -1,6 +1,7 @@
 {{- if and .Values.crew.enabled .Values.crew.route.enabled }}
-# View-only on purpose: the public hostname reaches crew-control, which serves
-# the console and proxies only each unit's camera and state. The units' task
+# Sign-in and the operator work API are the only writes, and crew-control
+# authenticates both. View-only otherwise: the public hostname reaches
+# crew-control, which serves the console and proxies only each unit's camera and state. The units' task
 # API shares their port and must never be routed here, and neither are
 # /metrics or the probes. Rules are allow-listed paths rather than a catch-all
 # with exclusions, so a route crew-control adds later stays private until
@@ -31,9 +32,20 @@ spec:
         - path:
             type: PathPrefix
             value: /units
+        # Exact, not a prefix: /v1/units/{id}/work and /events are for the
+        # units and must stay unrouted.
+        - path:
+            type: Exact
+            value: /v1/units/stream
+        - path:
+            type: Exact
+            value: /signin
         - path:
             type: PathPrefix
-            value: /v1/units
+            value: /auth
+        - path:
+            type: PathPrefix
+            value: /v1/work
         - path:
             type: PathPrefix
             value: /static

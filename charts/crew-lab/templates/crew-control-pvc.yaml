@@ -1,0 +1,19 @@
+{{- if and .Values.crew.enabled .Values.crew.control.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: crew-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: crew-control
+    app.kubernetes.io/component: crew-control
+spec:
+  # Three small files (session key, passkeys, spent invites): plain file
+  # semantics, so the file tier rather than block.
+  storageClassName: {{ .Values.crew.control.persistence.storageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.crew.control.persistence.size }}
+{{- end }}

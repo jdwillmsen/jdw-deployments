@@ -307,7 +307,36 @@ crew:
       pullPolicy: IfNotPresent
     port: 8080
     logLevel: info
-    # It only relays bytes, so a small share of a core is plenty.
+    # Two people today. An id is fixed for life: it names the invite file, the
+    # passkeys and the work each operator queues. Ids match
+    # ^[a-z][a-z0-9-]{1,15}$. Rendered inline into the Deployment, never a
+    # ConfigMap, so changing who may sign in rolls the pod.
+    operators:
+      - id: owner
+        name: Jake
+      - id: josh
+        name: Josh
+    # Secrets the chart only references (README, "Signing in"). crew-control
+    # treats both as optional: with no invites nobody can enrol, with no work
+    # token the work API is shut. The units need the work token to start.
+    invitesSecretName: crew-control-invites
+    workTokenSecretName: crew-work
+    # Session key, passkeys and spent invites survive restarts here.
+    persistence:
+      storageClass: truenas-nfs
+      size: 64Mi
+    # Same Postgres and the same credentials source as the FWB agent. Without a
+    # host crew-control answers the work routes 503.
+    database:
+      credentials:
+        # Rendered ahead of its reader (sync-wave, and a flag of its own), as
+        # the FWB agent does, so a credential that fails to sync fails alone.
+        create: true
+      enabled: true
+      host: platform-postgresql-cluster-prd-rw.database.svc.cluster.local
+      port: 5432
+      name: jdwillmsen_prd
+    # Sign-in and the work queue add a little load to what was a plain relay.
     resources:
       requests:
         memory: 32Mi

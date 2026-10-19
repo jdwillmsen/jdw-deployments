@@ -74,6 +74,18 @@ spec:
               value: {{ .food | quote }}
             {{- end }}
             {{- end }}
+            {{- if $.Values.crew.control.enabled }}
+            # Both or neither: the unit refuses a control URL without a token
+            # and exits, so the Secret is required rather than optional; a
+            # missing one shows as a pod that cannot start, not a crash loop.
+            - name: CONTROL_URL
+              value: {{ printf "http://crew-control:%v" $.Values.crew.control.port | quote }}
+            - name: CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.crew.control.workTokenSecretName }}
+                  key: token
+            {{- end }}
             {{- with $.Values.crew.tasks }}
             {{- if .enabled }}
             # Optional so the unit still starts before the owner creates the

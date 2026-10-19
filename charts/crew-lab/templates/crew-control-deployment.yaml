@@ -20,10 +20,11 @@ spec:
   # would crash-loop, so it stops with them.
   replicas: {{ if $units }}1{{ else }}0{{ end }}
   revisionHistoryLimit: 0
-  # Rolling is safe here, unlike the units: there is no volume and no
-  # in-world identity, so two pods overlapping is harmless.
+  # Recreate: the data volume is ReadWriteOnce, so a rolling update would start
+  # the new pod while the old one still holds it. The two would also race on
+  # passkeys.json and the session key.
   strategy:
-    type: RollingUpdate
+    type: Recreate
   selector:
     matchLabels:
       app: crew-control
@@ -55,6 +56,42 @@ spec:
               value: "0.0.0.0:{{ .Values.crew.control.port }}"
             - name: LOG_LEVEL
               value: {{ .Values.crew.control.logLevel | quote }}
+            - name: PUBLIC_ORIGIN
+              value: {{ printf "https://%s" .Values.crew.route.host | quote }}
+            - name: CREW_OPERATORS
+              value: {{ .Values.crew.control.operators | toJson | quote }}
+            - name: CREW_INVITES_DIR
+              value: /invites
+            - name: DATA_DIR
+              value: /data
+            - name: WORK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.crew.control.workTokenSecretName }}
+                  key: token
+                  optional: true
+            {{- with .Values.crew.control.database }}
+            {{- if .enabled }}
+            - name: PG_HOST
+              value: {{ .host | quote }}
+            - name: PG_PORT
+              value: {{ .port | quote }}
+            - name: PG_DATABASE
+              value: {{ .name | quote }}
+            # From the ExternalSecret, not values: a password in plain env
+            # would sit in the Deployment object.
+            - name: PG_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "crew.control.dbSecret.name" $ }}
+                  key: PG_USERNAME
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "crew.control.dbSecret.name" $ }}
+                  key: PG_PASSWORD
+            {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.crew.control.port }}
@@ -72,6 +109,20 @@ spec:
               port: http
             periodSeconds: {{ .Values.crew.probes.periodSeconds }}
             timeoutSeconds: 3
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: invites
+              mountPath: /invites
+              readOnly: true
           resources:
             {{- toYaml .Values.crew.control.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: crew-control
+        - name: invites
+          secret:
+            secretName: {{ .Values.crew.control.invitesSecretName }}
+            optional: true
 {{- end }}
