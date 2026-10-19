@@ -150,10 +150,10 @@ past it. Both are true statements about the world while they last.
   `JdwillmsenMinecraftWorldNotCensused` reports rather than leaving silent.
 - The corruption gauge needs the console bridge sidecar, and only sees lines
   from the process it is attached to plus the history that process replays.
-- The Loki rule `JdwillmsenMinecraftWorldCorruptionLogged` ships in this chart
-  but does not evaluate yet; `worldIntegrity.loki` in `values.yaml` says exactly
-  which two platform-side changes it waits on. The Prometheus corruption rule
-  reads the same two log lines and needs neither.
+- The Loki rule `JdwillmsenMinecraftWorldCorruptionLogged` is evaluated
+  by the platform's Loki ruler under org `jdwillmsen`. The Prometheus corruption
+  rule reads the same two log lines through the bridge's gauge, so one
+  corruption event raises both.
 
 ## Restoring from a retained generation
 
@@ -619,10 +619,9 @@ Two alerts reach the owner directly, because they carry `tenant: jdwillmsen`:
   is no longer an operator, a passkey never confirmed). Refusals before the
   signature is checked are anyone's to make and do not page.
 
-The Loki copy of the passkey-added alert is inert for now, for the reason
-`world-integrity-loki-rule.yaml` gives: the platform's Loki ruler does not read
-this tenant's rules. It ships so that it works the day that is fixed; until then
-the PrometheusRule is what fires.
+The Loki copy of the passkey-added alert is evaluated by the platform's Loki
+ruler (see `world-integrity-loki-rule.yaml`) and fires under its own name,
+`JdwillmsenMinecraftMapPasskeyAddedLogged`, alongside the PrometheusRule's.
 
 `tools/tests/test-map.sh` pins the switches, their order and the origin.
 `tools/tests/test-map-admin.sh` pins the alerts, with promtool cases for a
