@@ -16,7 +16,7 @@ helm template crew-lab "$chart" --namespace jdwillmsen-prd \
   -f "$chart/values.yaml" -f "$chart/values-prd.yaml" > "$work/rendered.yaml"
 
 python3 - "$work/rendered.yaml" <<'PY' || fail "the crew units are not rendered as expected"
-import sys, yaml
+import json, sys, yaml
 
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 
@@ -27,17 +27,21 @@ def of(kind):
 crew = lambda kind: [d for d in of(kind)
                      if d["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "crew"]
 
-want = {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble"}
+want = {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder"}
+own_claim = {"crew-01", "crew-02", "crew-03"}
+roles = {"miner", "chopper", "hauler", "shaft"}
 
 deps = {d["metadata"]["name"]: d for d in crew("Deployment")}
 assert sorted(deps) == sorted(want), f"deployments: {sorted(deps)}"
 assert sorted(d["metadata"]["name"] for d in crew("Service")) == sorted(want)
-assert sorted(d["metadata"]["name"] for d in crew("PersistentVolumeClaim")) == sorted(want)
+# The namespace caps claims at 20, so units past the third share one.
+assert sorted(d["metadata"]["name"] for d in crew("PersistentVolumeClaim")) == sorted(own_claim | {"crew-shared"})
 
 def env(dep):
     c = dep["spec"]["template"]["spec"]["containers"][0]
     return {e["name"]: e for e in c["env"]}
 
+chests = set()
 for uid, name in want.items():
     dep = deps[uid]
     e = env(dep)
@@ -48,7 +52,15 @@ for uid, name in want.items():
     assert dep["spec"]["selector"]["matchLabels"] == {"app": uid}, uid
     assert dep["spec"]["template"]["metadata"]["labels"]["app"] == uid, uid
     claim = dep["spec"]["template"]["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"]
-    assert claim == uid, (uid, claim)
+    assert claim == (uid if uid in own_claim else "crew-shared"), (uid, claim)
+    if uid not in own_claim:
+        assert e["CAMERA_ATLAS_DIR"]["value"] == f"/data/{uid}/atlas", uid
+    plan = json.loads(e["WORK_PLAN"]["value"])
+    assert 1 <= len(plan) <= 8, (uid, plan)
+    mine = {json.dumps(c, sort_keys=True) for t in plan for c in [t.get("chest")] + [t.get("to")] + (t.get("from") or []) if c}
+    assert not (mine & chests), f"{uid} shares a chest with another unit"
+    chests |= mine
+    assert int(e["JOIN_DELAY_S"]["value"] if "JOIN_DELAY_S" in e else 0) == (int(uid[5:]) - 1) * 6, uid
     ref = e["TASKS_TOKEN"]["valueFrom"]["secretKeyRef"]
     assert ref["name"] == "crew-tasks" and ref.get("optional") is True, (uid, ref)
     x, y, z = (int(v) for v in e["KIT_CHEST"]["value"].split(","))
@@ -62,7 +74,11 @@ def milli(v):
 
 total = sum(milli(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["cpu"])
             for d in deps.values())
-assert total <= 150, f"crew limits.cpu totals {total}m, want <= 150m"
+# 20 units at 50m; the namespace sum is worked out in values.yaml.
+assert total <= 1000, f"crew limits.cpu totals {total}m, want <= 1000m"
+mem = sum(int(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"][:-2]) for d in deps.values())
+assert mem <= 20 * 384, f"crew limits.memory totals {mem}Mi, want <= 7680Mi"
+assert len(chests) >= len(want)
 PY
 
 # A unit's replicas can be overridden alone, including to 0.
@@ -74,7 +90,7 @@ import sys, yaml
 reps = {d["metadata"]["name"]: d["spec"]["replicas"]
         for d in yaml.safe_load_all(open(sys.argv[1]))
         if d and d.get("kind") == "Deployment" and d["metadata"]["labels"].get("app.kubernetes.io/component") == "crew"}
-assert reps == {"crew-01": 1, "crew-02": 0, "crew-03": 1}, reps
+assert reps == {k: (0 if k == "crew-02" else 1) for k in {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder"}}, reps
 PY
 
 echo "PASS: crew units render as expected"

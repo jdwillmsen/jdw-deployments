@@ -33,7 +33,7 @@ for u in units:
 if len(sys.argv) > 3:
     sys.exit(0)
 
-assert [u["name"] for u in units] == ["Agate", "Basalt", "Cobble"], units
+assert [u["name"] for u in units] == ["Agate", "Basalt", "Cobble", "Dusty", "Ember", "Flint", "Gravel", "Hazel", "Ingot", "Jasper", "Kettle", "Loam", "Marble", "Nugget", "Onyx", "Pebble", "Quartz", "Rusty", "Slate", "Tinder"], units
 assert dep["spec"]["replicas"] == 1
 assert dep["spec"]["strategy"]["type"] == "Recreate"
 assert c["securityContext"]["readOnlyRootFilesystem"] is True
@@ -67,14 +67,14 @@ assert es["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"] == "-1"
 assert es["spec"]["target"]["name"] == "crew-control-db"
 assert sorted(x["secretKey"] for x in es["spec"]["data"]) == ["PG_PASSWORD", "PG_USERNAME"]
 
-for u in ("crew-01", "crew-02", "crew-03"):
+for u in want:
     ud = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == u)
     ue = {e["name"]: e for e in ud["spec"]["template"]["spec"]["containers"][0]["env"]}
     assert ue["CONTROL_URL"]["value"] == "http://crew-control:8080", u
     assert ue["CONTROL_TOKEN"]["valueFrom"]["secretKeyRef"] == {"name": "crew-work", "key": "token"}, u
 assert c["livenessProbe"]["httpGet"]["path"] == "/healthz"
 assert c["readinessProbe"]["httpGet"]["path"] == "/healthz"
-assert c["image"] == "ghcr.io/jdwillmsen/minecraft-crew-control:1.2.0", c["image"]
+assert c["image"] == "ghcr.io/jdwillmsen/minecraft-crew-control:1.3.0", c["image"]
 
 cpu = c["resources"]["limits"]["cpu"]
 milli = int(cpu[:-1]) if cpu.endswith("m") else int(float(cpu) * 1000)
@@ -86,15 +86,16 @@ assert svc["spec"]["selector"] == {"app": "crew-control"}
 '
 
 render > "$work/rendered.yaml"
-python3 -c "$check" "$work/rendered.yaml" '["crew-01","crew-02","crew-03"]' \
+python3 -c "$check" "$work/rendered.yaml" '["crew-01","crew-02","crew-03","crew-04","crew-05","crew-06","crew-07","crew-08","crew-09","crew-10","crew-11","crew-12","crew-13","crew-14","crew-15","crew-16","crew-17","crew-18","crew-19","crew-20"]' \
   || fail "crew-control is not rendered as expected"
 
 render --set 'crew.units[1].replicas=0' > "$work/scaled.yaml"
-python3 -c "$check" "$work/scaled.yaml" '["crew-01","crew-03"]' skip \
+python3 -c "$check" "$work/scaled.yaml" '["crew-01","crew-03","crew-04","crew-05","crew-06","crew-07","crew-08","crew-09","crew-10","crew-11","crew-12","crew-13","crew-14","crew-15","crew-16","crew-17","crew-18","crew-19","crew-20"]' skip \
   || fail "a stopped unit is still listed by crew-control"
 
-render --set 'crew.units[0].replicas=0' --set 'crew.units[1].replicas=0' \
-  --set 'crew.units[2].replicas=0' > "$work/empty.yaml"
+stop_all=()
+for i in $(seq 0 19); do stop_all+=(--set "crew.units[$i].replicas=0"); done
+render "${stop_all[@]}" > "$work/empty.yaml"
 python3 - "$work/empty.yaml" <<'PY' || fail "crew-control is not scaled to zero with no running units"
 import sys, yaml
 dep = next(d for d in yaml.safe_load_all(open(sys.argv[1]))
@@ -114,7 +115,7 @@ left = [d["kind"] for d in docs
         if d["kind"] in ("Deployment", "Service", "PersistentVolumeClaim", "ExternalSecret")
         and d["metadata"]["name"] in ("crew-control", "crew-control-db")]
 for d in docs:
-    if d["kind"] == "Deployment" and d["metadata"]["name"].startswith("crew-0"):
+    if d["kind"] == "Deployment" and d["metadata"]["name"].startswith("crew-"):
         names = [e["name"] for e in d["spec"]["template"]["spec"]["containers"][0]["env"]]
         assert "CONTROL_URL" not in names and "CONTROL_TOKEN" not in names, "units still point at a missing crew-control"
 assert not left, left
