@@ -1,0 +1,130 @@
+{{- if .Values.labRebuild.enabled }}
+{{- $name := "lab-field-rebuild" }}
+{{- $serverPod := printf "%s-minecraft-bedrock-0" .Release.Name }}
+# Rebuilds the lab's test fields so a test starts from a clean state. The
+# logic lives in the crew image's lab scripts (minecraft/crew/lab in gameops),
+# not here: an init container running the crew image writes the plans and
+# scripts into a volume, and the kubectl container runs them. Distroless has
+# no cp, so the binary writes the files itself.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # get, not list: the job names the one pod it drives.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["get"]
+  # kubectl exec and cp open a stream with create; logs read is get.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.labRebuild.schedule | quote }}
+  concurrencyPolicy: Forbid
+  # A missed night is not made up later: a rebuild mid-afternoon would land on
+  # whatever test is running. The next night's run is soon enough.
+  startingDeadlineSeconds: {{ .Values.labRebuild.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ .Values.labRebuild.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.labRebuild.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ .Values.labRebuild.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: {{ .Values.labRebuild.ttlSecondsAfterFinished }}
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ $name }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: plans
+              image: "{{ .Values.crew.image.repository }}:{{ .Values.crew.image.tag }}"
+              imagePullPolicy: {{ .Values.crew.image.pullPolicy }}
+              command: ["/labcourses", "-o", "/work"{{ range .Values.labRebuild.fields }}, {{ . | quote }}{{ end }}]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+{{- toYaml .Values.labRebuild.initResources | nindent 16 }}
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+          containers:
+            - name: rebuild
+              image: {{ .Values.labRebuild.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+{{- toYaml .Values.labRebuild.resources | nindent 16 }}
+              env:
+                # kubectl writes its discovery cache under $HOME.
+                - name: HOME
+                  value: /tmp
+                - name: LAB
+                  value: "k8s:{{ .Release.Namespace }}/{{ $serverPod }}"
+                - name: FIELDS
+                  value: {{ join " " .Values.labRebuild.fields | quote }}
+                - name: PLANS
+                  value: /work
+                # Anyone online who is not a unit is a person, and a rebuild
+                # replaces the ground under them.
+                - name: UNITS
+                  value: {{ range $i, $u := .Values.crew.units }}{{ if $i }} {{ end }}{{ $u.name }}{{ end }}
+              command: ["/work/nightly.sh"]
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 16Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 16Mi
+{{- end }}
