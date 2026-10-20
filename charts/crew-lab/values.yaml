@@ -463,3 +463,49 @@ crew:
     # The crew-shared claim holds one such directory for each unit that sets
     # `sharedVolume`: 17 x 313 MB, with room to grow.
     sharedSize: 8Gi
+
+# Nightly rebuild of the lab's test fields (minecraft/crew/lab in gameops), so
+# a test starts from a clean state. Off here; the prd overlay turns it on.
+# The crew image supplies the plans and scripts, so crew.image.tag must be a
+# release that ships /labcourses before this is enabled.
+labRebuild:
+  enabled: false
+
+  # Fields to rebuild, in order. Each replaces everything in its box.
+  fields:
+    - grounds
+    - courses
+
+  # 08:15 UTC, 03:15 CDT. The chart sets no timeZone on any CronJob, so every
+  # schedule in it compares in UTC. The slot is when nobody is expected in the
+  # lab; the job skips anyway while a person is online. A run takes under
+  # twenty minutes.
+  schedule: "15 8 * * *"
+  startingDeadlineSeconds: 600
+
+  # Two fields are about 2000 commands at about twenty a second, plus chunk
+  # loading. Past this the run is stuck, and it ends rather than holding
+  # ticking areas open.
+  activeDeadlineSeconds: 2400
+  ttlSecondsAfterFinished: 86400
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+
+  # kubectl and bash for the feed; the same image as the main server's jobs.
+  image: alpine/k8s:1.37.1
+
+  # The namespace quota's memory limits have about 3Gi left, so these are small.
+  resources:
+    requests:
+      memory: 32Mi
+      cpu: 10m
+    limits:
+      memory: 128Mi
+      cpu: 100m
+  initResources:
+    requests:
+      memory: 16Mi
+      cpu: 10m
+    limits:
+      memory: 64Mi
+      cpu: 50m
