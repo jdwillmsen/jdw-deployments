@@ -23,15 +23,18 @@ minecraft-bedrock:
   # and version-check (500m each) CronJobs need limits.cpu headroom to create
   # their pods at all. At 1500m here, plus the lone crew unit, long-lived pods held 7650m
   # of the 8000m cap and every backup from 2026-10-17 failed FailedCreate.
-  # Measured use is about 45m, so 400m still leaves room for terrain
-  # generation while keeping 1550m open for the jobs.
+  # The cap is now 12 cores. At 400m, with three crew units plus test bots on,
+  # the server was throttled in 25% of CPU periods (2026-10-20). It fell below
+  # 20 ticks a second, and the units' break, pickup and chest waits timed out.
+  # 1000m keeps the namespace near 7.8 of 12 cores, well above the jobs' 2-core
+  # headroom.
   resources:
     requests:
       memory: 1Gi
       cpu: 200m
     limits:
       memory: 2Gi
-      cpu: 400m
+      cpu: 1000m
 
   # One node, not "any". The world is a ReadWriteOnce iSCSI volume, and moving
   # the pod drags the volume to another node. democratic-csi's unstage reports
