@@ -60,6 +60,8 @@ spec:
               value: {{ printf "https://%s" .Values.crew.route.host | quote }}
             - name: CREW_OPERATORS
               value: {{ .Values.crew.control.operators | toJson | quote }}
+            - name: CREW_PLACES
+              value: {{ .Values.crew.control.places | toJson | quote }}
             - name: CREW_INVITES_DIR
               value: /invites
             - name: DATA_DIR

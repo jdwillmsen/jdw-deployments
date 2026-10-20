@@ -18,7 +18,7 @@ render() {
 }
 
 check='
-import json, sys, yaml
+import json, re, sys, yaml
 
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 dep = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "crew-control")
@@ -48,6 +48,33 @@ assert mounts["invites"]["mountPath"] == "/invites" and mounts["invites"]["readO
 
 assert env["PUBLIC_ORIGIN"] == "https://crew.prd.jdwlabs.com", env["PUBLIC_ORIGIN"]
 assert json.loads(env["CREW_OPERATORS"]) == [{"id": "owner", "name": "Jake"}, {"id": "josh", "name": "Josh"}]
+places = json.loads(env["CREW_PLACES"])
+assert isinstance(places, list) and places, "CREW_PLACES must be a non-empty list"
+ids = set()
+chests = set()
+for p in places:
+    assert set(p) <= {"id", "name", "kind", "box", "items"}, p
+    assert re.fullmatch(r"[a-z][a-z0-9-]{1,31}", p["id"]), p["id"]
+    assert p["id"] not in ids, "duplicate " + p["id"]
+    ids.add(p["id"])
+    assert 0 < len(p["name"].strip()) <= 64, p
+    lo, hi = p["box"]["min"], p["box"]["max"]
+    for pos in (lo, hi):
+        assert -500 <= pos["x"] <= 499 and -500 <= pos["z"] <= 499 and -64 <= pos["y"] <= 320, p
+    assert all(lo[k] <= hi[k] for k in "xyz"), p
+    if p["kind"] == "chest":
+        assert lo == hi, p["id"] + ": a chest is one block"
+        assert (lo["x"], lo["y"], lo["z"]) not in chests, p["id"] + ": two chests at one position"
+        chests.add((lo["x"], lo["y"], lo["z"]))
+    else:
+        assert p["kind"] == "area", p
+        assert all(hi[k] - lo[k] < 64 for k in "xyz"), p["id"] + ": area spans 64 or more"
+    assert all(re.fullmatch(r"[a-z_]{1,32}", i) for i in p.get("items", [])), p
+by = {p["id"]: p for p in places}
+for pid, kind, items in [("quarry-1", "area", ["cobblestone"]), ("grove-1", "area", ["oak_log"]),
+                         ("outbox-a", "chest", []), ("outbox-b", "chest", []), ("store", "chest", [])]:
+    assert pid in by, pid + " is missing"
+    assert by[pid]["kind"] == kind and by[pid].get("items", []) == items, by[pid]
 assert env["CREW_INVITES_DIR"] == "/invites" and env["DATA_DIR"] == "/data"
 assert "WORK_STORE" not in env
 assert env["PG_HOST"] == "platform-postgresql-cluster-prd-rw.database.svc.cluster.local"

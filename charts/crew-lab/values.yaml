@@ -426,6 +426,58 @@ crew:
         name: Jake
       - id: josh
         name: Josh
+    # Named places the crew's jobs use, seeded into the ledger on start and
+    # read-only in the console. Rendered inline into the Deployment, so editing
+    # them rolls the pod; an empty list clears the seeded places. Chests are one
+    # block (min == max); an area spans under 64 blocks per axis.
+    #
+    # "y" stays quoted: unquoted, YAML 1.1 reads it as a boolean key.
+    # Positions are the crew test grounds on the lab world, which the labcourses
+    # program builds from the grid at x 150, z -500 (cells 40 wide, roads 6,
+    # ground y 63). Re-derive them there if the grounds are rebuilt elsewhere.
+    #  - grove: cell (0,0) at x 156, z -494. Trees stand every 8 blocks, logs
+    #    from y 64 to 69, and one in nine is oak (the rest are other species),
+    #    so the box spans the whole grove.
+    #  - quarry: cell (1,0) at x 202, z -494; the 24x24 stone block starts at
+    #    x 210, z -486. Its bottom six layers (y 64..69) are deepslate and its
+    #    top five (y 75..79) are granite, diorite and the like, so the box is
+    #    only the plain stone between them (y 70..74); ores there sit in stone.
+    #  - chests: storage cell (0,1) at x 156, z -448 has plain chests two blocks
+    #    apart along z -444, -440, -436 at y 64. Row z -444 is stocked with tools
+    #    and materials, so the three used here are the empty row z -440.
+    places:
+      - id: quarry-1
+        name: Test grounds quarry
+        kind: area
+        box:
+          min: {x: 210, "y": 70, z: -486}
+          max: {x: 233, "y": 74, z: -463}
+        items: [cobblestone]
+      - id: grove-1
+        name: Test grounds grove
+        kind: area
+        box:
+          min: {x: 160, "y": 64, z: -490}
+          max: {x: 192, "y": 69, z: -458}
+        items: [oak_log]
+      - id: outbox-a
+        name: Test grounds outbox A
+        kind: chest
+        box:
+          min: {x: 160, "y": 64, z: -440}
+          max: {x: 160, "y": 64, z: -440}
+      - id: outbox-b
+        name: Test grounds outbox B
+        kind: chest
+        box:
+          min: {x: 162, "y": 64, z: -440}
+          max: {x: 162, "y": 64, z: -440}
+      - id: store
+        name: Test grounds store
+        kind: chest
+        box:
+          min: {x: 164, "y": 64, z: -440}
+          max: {x: 164, "y": 64, z: -440}
     # Secrets the chart only references (README, "Signing in"). crew-control
     # treats both as optional: with no invites nobody can enrol, with no work
     # token the work API is shut. The units need the work token to start.
