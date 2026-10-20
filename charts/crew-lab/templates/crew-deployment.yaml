@@ -64,8 +64,24 @@ spec:
               value: {{ $.Values.crew.camera.enabled | quote }}
             - name: CAMERA_MAX_VIEWERS
               value: {{ $.Values.crew.camera.maxViewers | quote }}
+            {{- if $unit.sharedVolume }}
+            # Units on the shared claim each keep to their own directory.
+            - name: CAMERA_ATLAS_DIR
+              value: {{ printf "/data/%s/atlas" $unit.id | quote }}
+            - name: AUTH_CACHE_DIR
+              value: {{ printf "/data/%s/auth" $unit.id | quote }}
+            {{- else }}
             - name: CAMERA_ATLAS_DIR
               value: {{ $.Values.crew.camera.atlasDir | quote }}
+            {{- end }}
+            {{- if $unit.role }}
+            - name: WORK_PLAN
+              value: {{ include "crew.workPlan" (dict "unit" $unit "yards" $.Values.crew.yards) | quote }}
+            {{- end }}
+            {{- with $.Values.crew.joinStaggerSeconds }}
+            - name: JOIN_DELAY_S
+              value: {{ mul (sub (atoi (trimPrefix "crew-" $unit.id)) 1) . | quote }}
+            {{- end }}
             {{- with $.Values.crew.kit }}
             {{- if .chest }}
             - name: KIT_CHEST
@@ -131,7 +147,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ $unit.id }}
+            claimName: {{ if $unit.sharedVolume }}crew-shared{{ else }}{{ $unit.id }}{{ end }}
         - name: tmp
           emptyDir: {}
 {{- end }}
