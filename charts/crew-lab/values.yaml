@@ -130,14 +130,17 @@ minecraft-bedrock:
   # its jq; the root filesystem is
   # read-only, so everything it writes goes to the data volume.
   #
-  # The pack is copied only at pod start and the server reads functions only
-  # at startup, so a changed pack needs a restart: bump this with any edit to
-  # templates/unit-kit-configmap.yaml. The restart disconnects players.
-  podAnnotations:
-    crew-lab/unit-kit-rev: "2"
   initContainers:
     - name: install-unit-kit
       image: "itzg/minecraft-bedrock-server:2026.9.2"
+      # The pack is copied only at pod start and the server reads functions
+      # only at startup, so a changed pack needs a restart: bump this with any
+      # edit to templates/unit-kit-configmap.yaml. It is an env var and not a
+      # pod annotation because Argo CD ignores StatefulSet template
+      # annotations here. The restart disconnects players.
+      env:
+        - name: UNIT_KIT_REV
+          value: "2"
       command:
         - sh
         - -ec
