@@ -1,5 +1,9 @@
 {{- if .Values.crew.enabled }}
+{{- $shared := false }}
 {{- range $unit := .Values.crew.units }}
+{{- if $unit.sharedVolume }}
+{{- $shared = true }}
+{{- else }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -19,5 +23,27 @@ spec:
   resources:
     requests:
       storage: {{ $.Values.crew.persistence.size }}
+{{- end }}
+{{- end }}
+{{- if $shared }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: crew-shared
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: crew
+spec:
+  # One claim for every unit marked `sharedVolume`, each in its own directory
+  # (templates/crew-deployment.yaml). The namespace caps claims at 20 and one
+  # claim per unit would pass that at 20 units beside the other workloads.
+  # File tier, so many pods can mount it.
+  storageClassName: {{ $.Values.crew.persistence.storageClass }}
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ $.Values.crew.persistence.sharedSize }}
 {{- end }}
 {{- end }}

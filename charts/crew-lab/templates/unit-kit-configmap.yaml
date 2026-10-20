@@ -41,6 +41,9 @@ data:
     scoreboard players add kit unitkit 1
     execute if score kit unitkit matches 40.. run function unit_kit/equip
     execute if score kit unitkit matches 40.. run scoreboard players set kit unitkit 0
+    scoreboard players add restock unitkit 1
+    execute if score restock unitkit matches 1200.. run function unit_kit/restock
+    execute if score restock unitkit matches 1200.. run scoreboard players set restock unitkit 0
   # Each line runs only for a unit missing that piece, so nothing is replaced
   # while it is held; `execute as` keeps a no-match from counting as a failure.
   equip.mcfunction: |
@@ -51,9 +54,59 @@ data:
     execute as @a[name={{ $n }},hasitem={item=iron_chestplate,location=slot.armor.chest,quantity=0}] run replaceitem entity @s slot.armor.chest 0 iron_chestplate 1
     execute as @a[name={{ $n }},hasitem={item=iron_leggings,location=slot.armor.legs,quantity=0}] run replaceitem entity @s slot.armor.legs 0 iron_leggings 1
     execute as @a[name={{ $n }},hasitem={item=iron_boots,location=slot.armor.feet,quantity=0}] run replaceitem entity @s slot.armor.feet 0 iron_boots 1
+    {{- if $unit.role }}
+    {{- /* A unit with a role works in its own yard, far from the spawn it joins
+    at (and respawns at), so anything still within the hub's reach is sent
+    there. Its tool and bread are given too: an offline unit loses its
+    inventory on every reconnect, and the kit chest is a long walk away. */}}
+    {{- $p := include "crew.plot" (dict "id" $unit.id "yards" $.Values.crew.yards) | fromJson }}
+    execute as @a[name={{ $n }},x=0,y=64,z=-400,r=200] run tp @s {{ add (int64 $p.x) 5 }} 64 {{ add (int64 $p.z) 6 }}
+    {{- if or (eq $unit.role "miner") (eq $unit.role "shaft") }}
+    execute as @a[name={{ $n }},hasitem={item=iron_pickaxe,quantity=0}] run replaceitem entity @s slot.hotbar 0 iron_pickaxe 1
+    {{- else if eq $unit.role "chopper" }}
+    execute as @a[name={{ $n }},hasitem={item=iron_axe,quantity=0}] run replaceitem entity @s slot.hotbar 0 iron_axe 1
+    {{- end }}
+    execute as @a[name={{ $n }},hasitem={item=bread,quantity=0}] run replaceitem entity @s slot.hotbar 7 bread 16
+    {{- end }}
     {{- end }}
     {{- with .Values.crew.kit.chest }}
     {{- /* The units take their food from the kit chest, which would otherwise
     run dry; the last slot is kept full of bread. */}}
     replaceitem block {{ splitList "," . | join " " }} slot.container 26 bread 64
+    {{- end }}
+  # Keeps every unit's work yard supplied, once a minute (tick.mcfunction), so
+  # standing work never runs out: the yard is built the first time and put back
+  # as units use it up. `keep` places only into air, so nothing standing is
+  # replaced. A plot's offsets are the ones in the crew.workPlan helper
+  # (_helpers.tpl); the commands fail quietly where no unit has loaded the
+  # chunks. Chest slots 0-3 are cleared so a deposit always has room; a hauler's
+  # chests keep a stack of cobblestone in slot 0 instead, which also replaces
+  # what a restarted unit lost from its inventory mid-haul.
+  restock.mcfunction: |
+    {{- range $unit := .Values.crew.units }}
+    {{- if $unit.role }}
+    {{- $p := include "crew.plot" (dict "id" $unit.id "yards" $.Values.crew.yards) | fromJson }}
+    {{- $x := int64 $p.x }}
+    {{- $z := int64 $p.z }}
+    {{- $chests := list (list (add $x 3) (add $z 4)) (list (add $x 3) (add $z 8)) }}
+    {{- range $c := $chests }}
+    setblock {{ index $c 0 }} 64 {{ index $c 1 }} chest [] keep
+    {{- range $s := until 4 }}
+    {{- if and (eq $unit.role "hauler") (eq $s 0) }}
+    replaceitem block {{ index $c 0 }} 64 {{ index $c 1 }} slot.container 0 cobblestone 64
+    {{- else }}
+    replaceitem block {{ index $c 0 }} 64 {{ index $c 1 }} slot.container {{ $s }} air
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if eq $unit.role "miner" }}
+    fill {{ add $x 10 }} 64 {{ add $z 3 }} {{ add $x 17 }} 66 {{ add $z 8 }} stone keep
+    {{- else if eq $unit.role "chopper" }}
+    {{- range $dx := list 10 13 16 19 22 }}
+    {{- range $dz := list 14 17 20 23 }}
+    fill {{ add $x $dx }} 64 {{ add $z $dz }} {{ add $x $dx }} 65 {{ add $z $dz }} oak_log keep
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
     {{- end }}

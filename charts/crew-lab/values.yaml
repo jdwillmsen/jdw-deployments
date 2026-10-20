@@ -28,13 +28,19 @@ minecraft-bedrock:
   # 20 ticks a second, and the units' break, pickup and chest waits timed out.
   # 1000m keeps the namespace near 7.8 of 12 cores, well above the jobs' 2-core
   # headroom.
+  #
+  # With 20 units each sending an input every 50 ms and loading its own chunks,
+  # the server gets 2000m (JDW-128). Limits then total 7100m - 1000m + 2000m +
+  # 17 new units x 50m = 8950m of 12000m, which leaves 3050m for the 2000m of
+  # jobs. Memory stays at 2Gi: 643Mi was in use with three units, and the
+  # namespace's memory limits (see crew.resources) have only 3.3Gi to spare.
   resources:
     requests:
       memory: 1Gi
-      cpu: 200m
+      cpu: 500m
     limits:
       memory: 2Gi
-      cpu: 1000m
+      cpu: 2000m
 
   # One node, not "any". The world is a ReadWriteOnce iSCSI volume, and moving
   # the pod drags the volume to another node. democratic-csi's unstage reports
@@ -80,11 +86,11 @@ minecraft-bedrock:
     serverName: crew-lab
     cheats: true
     # Players join to watch crew work, alongside the crew units and their cameras.
-    maxPlayers: 10
+    maxPlayers: 30
     tickDistance: 4
     viewDistance: 16
     playerIdleTimeout: 0
-    maxThreads: 2
+    maxThreads: 4
 
     # Offline: the server does not verify clients against Xbox Live, so crew
     # joins with a bare display name and no account. It also means a player can
@@ -143,7 +149,7 @@ minecraft-bedrock:
       # annotations here. The restart disconnects players.
       env:
         - name: UNIT_KIT_REV
-          value: "2"
+          value: "3"
       command:
         - sh
         - -ec
@@ -154,7 +160,7 @@ minecraft-bedrock:
           mkdir -p "$world/behavior_packs/$pack/functions/unit_kit"
           cp /kit/manifest.json "$world/behavior_packs/$pack/manifest.json"
           cp /kit/tick.json "$world/behavior_packs/$pack/functions/tick.json"
-          for f in init tick equip; do
+          for f in init tick equip restock; do
             cp "/kit/$f.mcfunction" "$world/behavior_packs/$pack/functions/unit_kit/$f.mcfunction"
           done
           list="$world/world_behavior_packs.json"
@@ -218,13 +224,90 @@ crew:
   # 25 Yarrow, 26 Zinc. Append, never renumber or rename.
   #
   # A unit may set `replicas: 0` to stop alone without losing its volume.
+  #
+  # `role` gives a unit standing work in its own plot of the yards below
+  # (miner, chopper, hauler or shaft; templates/_helpers.tpl). `sharedVolume`
+  # puts a unit's files in its own directory on the one crew-shared claim; units
+  # 01-03 predate it and keep their own claims, which cannot be merged without
+  # losing the atlas they already built.
   units:
     - id: crew-01
       name: Agate
+      role: miner
     - id: crew-02
       name: Basalt
+      role: chopper
     - id: crew-03
       name: Cobble
+      role: hauler
+    - id: crew-04
+      name: Dusty
+      role: miner
+      sharedVolume: true
+    - id: crew-05
+      name: Ember
+      role: chopper
+      sharedVolume: true
+    - id: crew-06
+      name: Flint
+      role: hauler
+      sharedVolume: true
+    - id: crew-07
+      name: Gravel
+      role: shaft
+      sharedVolume: true
+    - id: crew-08
+      name: Hazel
+      role: miner
+      sharedVolume: true
+    - id: crew-09
+      name: Ingot
+      role: chopper
+      sharedVolume: true
+    - id: crew-10
+      name: Jasper
+      role: hauler
+      sharedVolume: true
+    - id: crew-11
+      name: Kettle
+      role: shaft
+      sharedVolume: true
+    - id: crew-12
+      name: Loam
+      role: miner
+      sharedVolume: true
+    - id: crew-13
+      name: Marble
+      role: chopper
+      sharedVolume: true
+    - id: crew-14
+      name: Nugget
+      role: hauler
+      sharedVolume: true
+    - id: crew-15
+      name: Onyx
+      role: shaft
+      sharedVolume: true
+    - id: crew-16
+      name: Pebble
+      role: miner
+      sharedVolume: true
+    - id: crew-17
+      name: Quartz
+      role: chopper
+      sharedVolume: true
+    - id: crew-18
+      name: Rusty
+      role: hauler
+      sharedVolume: true
+    - id: crew-19
+      name: Slate
+      role: miner
+      sharedVolume: true
+    - id: crew-20
+      name: Tinder
+      role: chopper
+      sharedVolume: true
 
   # Default for every unit; a unit's own `replicas` wins. Set to 0 (not
   # `enabled: false`) to stop units without deleting their volumes. Explicit
@@ -233,7 +316,7 @@ crew:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-crew
-    tag: "1.23.1"
+    tag: "1.24.0"
     pullPolicy: IfNotPresent
 
   # Lab only: skip Microsoft sign-in. The lab server runs offline, so a signed
@@ -283,20 +366,44 @@ crew:
     livenessFailureThreshold: 6
 
   # Per unit. Steady state is a single UDP session and a small HTTP server
-  # (about 7m idle). The memory limit leaves room for building the atlas from
-  # the extracted pack and for camera viewers' sub-chunk replay. The CPU limit
-  # is what counts against the namespace quota, and the units together stay at
-  # the single unit's old 150m: FWB's 04:00 backup (1000m) has to fit beside
-  # the version-check or volume-recovery job (500m) that can start at the same
-  # minute, which leaves no headroom to spend. Raise the quota before raising
-  # this.
+  # (2-4m CPU idle, 176-257Mi measured on 2026-10-20 with the camera on). The
+  # memory limit leaves a third over the peak for building the atlas from the
+  # extracted pack and for camera viewers' sub-chunk replay. Both limits count
+  # against the namespace quota, and the 20 units together are what
+  # decides what is left for the CronJobs:
+  #   limits.cpu     7100m now - 1000m (server) + 2000m + 17 x 50m = 8950m of
+  #                  12000m, so 3050m remain for the backup (1000m) beside the
+  #                  version-check and volume-recovery jobs (500m each)
+  #   limits.memory  15104Mi + 17 x 384Mi + 3 x (384 - 512)Mi = 21248Mi of
+  #                  24576Mi, so 3328Mi remain for the jobs (about 1Gi at once)
+  #   requests.cpu   2570m + 17 x 20m + 300m (server) = 3210m of 6000m
+  #   requests.memory 6544Mi + 17 x 128Mi = 8720Mi of 12288Mi
+  # Raise the quota before raising any of these.
   resources:
     requests:
       memory: 128Mi
       cpu: 20m
     limits:
-      memory: 512Mi
+      memory: 384Mi
       cpu: 50m
+
+  # Where the units work (JDW-128): a grid of 32x32-block plots on the flat
+  # square, east of the test grounds, one per unit number (crew-01 is the
+  # north-west plot, filled west to east then north to south). Five columns by
+  # four rows span x 300..459, z -500..-373. Each plot holds a quarry, a grove
+  # and two chests, kept supplied by the unit-kit pack's restock function, so
+  # a plot is only ever touched by its own unit. Everything is at ground level
+  # y 64 on the grass at y 63.
+  yards:
+    originX: 300
+    originZ: -500
+    columns: 5
+    pitch: 32
+
+  # Seconds between one unit's first login and the next's, by unit number, so
+  # a rollout of 20 units does not log them in on one second (crew-20 waits
+  # 114 s).
+  joinStaggerSeconds: 6
 
   # The public console. It serves the page and reverse-proxies an allow-list of
   # each unit's camera routes, so the route reaches this one Service instead of
@@ -306,7 +413,7 @@ crew:
     enabled: true
     image:
       repository: ghcr.io/jdwillmsen/minecraft-crew-control
-      tag: "1.2.0"
+      tag: "1.3.0"
       pullPolicy: IfNotPresent
     port: 8080
     logLevel: info
@@ -353,3 +460,6 @@ crew:
     storageClass: truenas-nfs
     # About 313 MB for the extracted pack plus the atlas, with room to grow.
     size: 1Gi
+    # The crew-shared claim holds one such directory for each unit that sets
+    # `sharedVolume`: 17 x 313 MB, with room to grow.
+    sharedSize: 8Gi
