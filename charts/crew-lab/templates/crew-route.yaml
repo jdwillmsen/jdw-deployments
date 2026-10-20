@@ -1,5 +1,5 @@
 {{- if and .Values.crew.enabled .Values.crew.route.enabled }}
-# Sign-in and the operator work API are the only writes, and crew-control
+# Sign-in, the operator work API and jobs are the only writes, and crew-control
 # authenticates both. View-only otherwise: the public hostname reaches
 # crew-control, which serves the console and proxies only each unit's camera and state. The units' task
 # API shares their port and must never be routed here, and neither are
@@ -46,6 +46,12 @@ spec:
         - path:
             type: PathPrefix
             value: /v1/work
+        - path:
+            type: PathPrefix
+            value: /v1/jobs
+        - path:
+            type: PathPrefix
+            value: /v1/places
         - path:
             type: PathPrefix
             value: /static
