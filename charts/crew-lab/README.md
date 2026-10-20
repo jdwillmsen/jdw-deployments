@@ -93,8 +93,10 @@ Keys: `1`-`9` pick a unit, `c` cycles the camera mode (`first`, `third`, `orbit`
 crew-control (`crew.control`) renders its unit list from `crew.units`, skipping
 any with `replicas: 0`, and proxies only each unit's camera routes. The route
 allow-lists `/`, `/camera`, `/units`, `/v1/units/stream`, `/static`, `/signin`,
-`/auth` and `/v1/work`, all served by crew-control. Viewing needs no sign-in;
-`/auth` and `/v1/work` are guarded by passkeys. The task API, `/metrics`, the
+`/auth`, `/v1/work`, `/v1/jobs` and `/v1/places`, all served by crew-control.
+Viewing needs no sign-in. Every request to `/v1/work`, `/v1/jobs` and
+`/v1/places`, reads included, needs a passkey session; `/auth` is the sign-in
+itself. The task API, `/metrics`, the
 probes and the units' own `/v1/units/{id}/work` and `/events` stay
 cluster-only; `tools/tests/test-crew-route.sh` fails if any of them
 becomes reachable. For those, use a port-forward:
@@ -206,6 +208,22 @@ server pod, `get` its logs and `create` on `pods/exec`. `concurrencyPolicy` is
 kubectl -n jdwillmsen-prd create job --from=cronjob/lab-field-rebuild lab-field-rebuild-now
 kubectl -n jdwillmsen-prd logs job/lab-field-rebuild-now -c rebuild
 ```
+
+## Jobs and places
+
+The console's Jobs panel (press `Shift+J`) queues multi-step jobs that crew-control
+splits across the free units. The built-in parallel demo is one of them: it
+sends one unit to mine cobblestone, one to fell oak, and one to haul both into
+the store chest, using the places below. A stock goal asks for a count of an
+item in a chest (for example 64 cobblestone in `store`) and keeps the job
+running until the units' last sighting of that chest meets it.
+
+Places are the named chests and areas jobs refer to. The seeded ones come from
+`crew.control.places` in values, rendered as `CREW_PLACES`, so they change only
+through a values PR and a pod roll, and the console shows them read-only. Today
+they are the quarry, grove and three chests of the test grounds on the lab
+world. Chests the units find elsewhere appear as unnamed places in the ledger.
+Setting `places: []` clears the seeded places.
 
 ## Checks after a sync
 
