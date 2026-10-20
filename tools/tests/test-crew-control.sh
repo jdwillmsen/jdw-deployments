@@ -74,7 +74,7 @@ for u in ("crew-01", "crew-02", "crew-03"):
     assert ue["CONTROL_TOKEN"]["valueFrom"]["secretKeyRef"] == {"name": "crew-work", "key": "token"}, u
 assert c["livenessProbe"]["httpGet"]["path"] == "/healthz"
 assert c["readinessProbe"]["httpGet"]["path"] == "/healthz"
-assert c["image"] == "ghcr.io/jdwillmsen/minecraft-crew-control:1.1.0", c["image"]
+assert c["image"] == "ghcr.io/jdwillmsen/minecraft-crew-control:1.2.0", c["image"]
 
 cpu = c["resources"]["limits"]["cpu"]
 milli = int(cpu[:-1]) if cpu.endswith("m") else int(float(cpu) * 1000)
