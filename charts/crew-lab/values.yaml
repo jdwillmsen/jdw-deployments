@@ -149,7 +149,7 @@ minecraft-bedrock:
       # annotations here. The restart disconnects players.
       env:
         - name: UNIT_KIT_REV
-          value: "4"
+          value: "5"
       command:
         - sh
         - -ec
