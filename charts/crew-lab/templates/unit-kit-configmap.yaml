@@ -82,6 +82,9 @@ data:
   # chunks. Chest slots 0-3 are cleared so a deposit always has room; a hauler's
   # chests keep a stack of cobblestone in slot 0 instead, which also replaces
   # what a restarted unit lost from its inventory mid-haul.
+  # A quarry row is refilled only while its miner is not within a row of it:
+  # a fill places stone into the air a unit stands in, which sealed miners into
+  # their own tunnels ("no path to the chest").
   restock.mcfunction: |
     {{- range $unit := .Values.crew.units }}
     {{- if $unit.role }}
@@ -100,7 +103,9 @@ data:
     {{- end }}
     {{- end }}
     {{- if eq $unit.role "miner" }}
-    fill {{ add $x 10 }} 64 {{ add $z 3 }} {{ add $x 17 }} 66 {{ add $z 8 }} stone keep
+    {{- range $r := until 6 }}
+    execute unless entity @a[name={{ $unit.name | quote }},x={{ add $x 10 }},y=64,z={{ add $z 2 $r }},dx=7,dy=2,dz=2] run fill {{ add $x 10 }} 64 {{ add $z 3 $r }} {{ add $x 17 }} 66 {{ add $z 3 $r }} stone keep
+    {{- end }}
     {{- else if eq $unit.role "chopper" }}
     {{- range $dx := list 10 13 16 19 22 }}
     {{- range $dz := list 14 17 20 23 }}
