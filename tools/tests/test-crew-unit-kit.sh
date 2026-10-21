@@ -36,6 +36,8 @@ for name in ('Agate', 'Basalt', 'Cobble', 'Dusty', 'Ember', 'Flint', 'Gravel', '
 # Yards are kept supplied: every plot gets two chests, and a unit is sent to its plot.
 assert restock.count("chest [] keep") == 40, restock.count("chest [] keep")
 assert equip.count("run tp @s") == 20
+# A miner's quarry is refilled row by row, skipping rows its unit is in or beside.
+assert restock.count("unless entity @a[name=") == 36, restock.count("unless entity @a[name=")
 assert "unit_kit/restock" in cm["tick.mcfunction"]
 
 # The Dota kit ships byte-for-byte and the function loads it with its entities.
