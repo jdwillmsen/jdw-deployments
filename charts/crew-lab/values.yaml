@@ -475,6 +475,13 @@ labRebuild:
   fields:
     - grounds
     - courses
+    - trees
+    - works
+
+  # Crew names come from crew.units in the CronJob template. These patterns
+  # cover other automation that is safe to leave connected during a rebuild.
+  nonHumanPlayerPatterns:
+    - load-*
 
   # 08:15 UTC, 03:15 CDT. The chart sets no timeZone on any CronJob, so every
   # schedule in it compares in UTC. The slot is when nobody is expected in the
@@ -483,7 +490,7 @@ labRebuild:
   schedule: "15 8 * * *"
   startingDeadlineSeconds: 600
 
-  # Two fields are about 2000 commands at about twenty a second, plus chunk
+  # Four fields are about 4000 commands at about twenty a second, plus chunk
   # loading. Past this the run is stuck, and it ends rather than holding
   # ticking areas open.
   activeDeadlineSeconds: 2400
