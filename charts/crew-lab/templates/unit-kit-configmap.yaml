@@ -34,6 +34,11 @@ data:
     {
       "values": ["unit_kit/init", "unit_kit/tick"]
     }
+  # Dotablaze's named, enchanted and trimmed kit, handed over from the console
+  # with `execute as Dotablaze at @s run function kits/dota`. The items drop at
+  # the player's feet, so they land straight in the inventory.
+  dota.mcfunction: |
+    structure load dota_kit ~ ~ ~ 0_degrees none true false
   init.mcfunction: |
     scoreboard objectives add unitkit dummy
   # 40 ticks is about 2 s: the gear check does not need to run every tick.
@@ -110,3 +115,7 @@ data:
     {{- end }}
     {{- end }}
     {{- end }}
+binaryData:
+  # Built by tools/crew-lab-dota-kit.py; a structure is the only way Bedrock
+  # loads named or trimmed items.
+  dota_kit.mcstructure: {{ .Files.Get "files/dota_kit.mcstructure" | b64enc }}

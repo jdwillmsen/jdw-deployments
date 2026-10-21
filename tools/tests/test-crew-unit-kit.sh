@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Renders the crew-lab chart and checks the unit-kit behaviour pack: valid JSON,
-# one gear block per crew unit, and the init container that installs it.
+# one gear block per crew unit, the Dota kit, and the init container that
+# installs it.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,8 +14,12 @@ fail() { echo "FAIL: $1"; exit 1; }
 helm template crew-lab "$chart" --namespace jdwillmsen-prd \
   -f "$chart/values.yaml" -f "$chart/values-prd.yaml" > "$work/rendered.yaml"
 
-python3 - "$work/rendered.yaml" <<'PY' || fail "the unit kit is not rendered as expected"
-import sys, json, yaml
+python3 "$here/tools/crew-lab-dota-kit.py" "$work/dota_kit.mcstructure"
+cmp -s "$work/dota_kit.mcstructure" "$chart/files/dota_kit.mcstructure" \
+  || fail "charts/crew-lab/files/dota_kit.mcstructure is stale: rerun tools/crew-lab-dota-kit.py"
+
+python3 - "$work/rendered.yaml" "$work/dota_kit.mcstructure" <<'PY' || fail "the unit kit is not rendered as expected"
+import base64, sys, json, yaml
 
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 cm = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "crew-lab-unit-kit")["data"]
@@ -33,9 +38,15 @@ assert restock.count("chest [] keep") == 40, restock.count("chest [] keep")
 assert equip.count("run tp @s") == 20
 assert "unit_kit/restock" in cm["tick.mcfunction"]
 
+# The Dota kit ships byte-for-byte and the function loads it with its entities.
+kit = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "crew-lab-unit-kit")["binaryData"]["dota_kit.mcstructure"]
+assert base64.b64decode(kit) == open(sys.argv[2], "rb").read(), "rendered Dota kit differs from the generated one"
+assert cm["dota.mcfunction"].strip() == "structure load dota_kit ~ ~ ~ 0_degrees none true false"
+
 sts = next(d for d in docs if d["kind"] == "StatefulSet")["spec"]["template"]["spec"]
 init = next(c for c in sts["initContainers"] if c["name"] == "install-unit-kit")
 assert pack_id in init["command"][2], "init container registers a different pack id"
+assert "structures/dota_kit.mcstructure" in init["command"][2] and "functions/kits/dota.mcfunction" in init["command"][2]
 assert any(v["name"] == "unit-kit" and v["configMap"]["name"] == "crew-lab-unit-kit" for v in sts["volumes"])
 PY
 
