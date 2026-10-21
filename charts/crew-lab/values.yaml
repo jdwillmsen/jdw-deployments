@@ -319,7 +319,7 @@ crew:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-crew
-    tag: "1.32.0"
+    tag: "1.33.0"
     pullPolicy: IfNotPresent
 
   # Lab only: skip Microsoft sign-in. The lab server runs offline, so a signed
