@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Renders the crew-lab chart and checks the nightly field rebuild: off unless
 # the overlay turns it on, RBAC limited to the lab server's pod, a CronJob that
-# cannot overlap itself, and a UNITS list that matches the chart's units so a
-# unit is never mistaken for a person.
+# cannot overlap itself, and non-human player patterns that match the chart's
+# units and its load-test bots.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -54,13 +54,13 @@ crew = [d for d in docs if d.get("kind") == "Deployment"
 (main,) = pod["containers"]
 img = [c["image"] for c in [d["spec"]["template"]["spec"]["containers"][0] for d in crew]]
 assert init["image"] in img, "the plans come from a different image than the units run"
-assert init["command"][:3] == ["/labcourses", "-o", "/work"] and init["command"][3:] == ["grounds", "courses"], init["command"]
+assert init["command"][:3] == ["/labcourses", "-o", "/work"] and init["command"][3:] == ["grounds", "courses", "trees", "works"], init["command"]
 
 env = {e["name"]: e["value"] for e in main["env"]}
-assert env["FIELDS"] == "grounds courses"
+assert env["FIELDS"] == "grounds courses trees works"
 assert env["LAB"] == f"k8s:jdwillmsen-prd/{server}", env["LAB"]
 units = {e["value"] for d in crew for e in d["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"] == "MC_USERNAME"}
-assert set(env["UNITS"].split()) == units and len(units) == 20, env["UNITS"]
+assert set(env["NON_HUMAN"].split()) == units | {"load-*"} and len(units) == 20, env["NON_HUMAN"]
 assert main["command"] == ["/work/nightly.sh"]
 
 for c in (init, main):

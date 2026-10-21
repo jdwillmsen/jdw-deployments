@@ -188,19 +188,19 @@ prints one line per unit and exits non-zero unless all three finish `done`.
 
 `labRebuild` (values.yaml; on in `values-prd.yaml`) is a CronJob,
 `lab-field-rebuild`, that rebuilds the test fields in `labRebuild.fields`
-(`grounds` and `courses`) at 08:15 UTC, 03:15 CDT, so a test starts from a
-clean field. An init container runs the crew image's `/labcourses -o` to write
-the plans and gameops' `courses.sh` and `nightly.sh` into a volume; an
-`alpine/k8s` container runs `nightly.sh`, the same feed as a manual
-`courses.sh` run. The crew image supplies the scripts, so they move with
+(`grounds`, `courses`, `trees` and `works`) at 08:15 UTC, 03:15 CDT, so a
+test starts from a clean field. An init container runs the crew image's
+`/labcourses -o` to write the plans and gameops' `courses.sh` and `nightly.sh`
+into a volume; an `alpine/k8s` container runs `nightly.sh`, the same feed as a
+manual `courses.sh` run. The crew image supplies the scripts, so they move with
 `crew.image.tag`, which must be a release that ships `/labcourses`.
 
-It skips with exit 0 and a log line while anyone online is not in
-`crew.units`, or a `crew-course-*` ticking area exists. It exits 1 if a field
-reports errors or the server's state is unreadable. Its ServiceAccount can
-only `get` the lab server pod, `get` its logs and `create` on `pods/exec`.
-`concurrencyPolicy` is `Forbid` and a run ends after
-`activeDeadlineSeconds` (40 minutes).
+It skips with exit 0 and a log line while anyone online does not match a crew
+name or one of `labRebuild.nonHumanPlayerPatterns` (such as `load-*`), or a
+`crew-course-*` ticking area exists. It exits 1 if a field reports errors or
+the server's state is unreadable. Its ServiceAccount can only `get` the lab
+server pod, `get` its logs and `create` on `pods/exec`. `concurrencyPolicy` is
+`Forbid` and a run ends after `activeDeadlineSeconds` (40 minutes).
 
 ```
 kubectl -n jdwillmsen-prd create job --from=cronjob/lab-field-rebuild lab-field-rebuild-now

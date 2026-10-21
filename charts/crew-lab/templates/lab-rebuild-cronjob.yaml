@@ -1,6 +1,13 @@
 {{- if .Values.labRebuild.enabled }}
 {{- $name := "lab-field-rebuild" }}
 {{- $serverPod := printf "%s-minecraft-bedrock-0" .Release.Name }}
+{{- $nonHumanPlayers := list }}
+{{- range .Values.crew.units }}
+{{- $nonHumanPlayers = append $nonHumanPlayers .name }}
+{{- end }}
+{{- range .Values.labRebuild.nonHumanPlayerPatterns }}
+{{- $nonHumanPlayers = append $nonHumanPlayers . }}
+{{- end }}
 # Rebuilds the lab's test fields so a test starts from a clean state. The
 # logic lives in the crew image's lab scripts (minecraft/crew/lab in gameops),
 # not here: an init container running the crew image writes the plans and
@@ -109,10 +116,10 @@ spec:
                   value: {{ join " " .Values.labRebuild.fields | quote }}
                 - name: PLANS
                   value: /work
-                # Anyone online who is not a unit is a person, and a rebuild
-                # replaces the ground under them.
-                - name: UNITS
-                  value: {{ range $i, $u := .Values.crew.units }}{{ if $i }} {{ end }}{{ $u.name }}{{ end }}
+                # Anything not listed is a person, and a rebuild replaces the
+                # ground under them.
+                - name: NON_HUMAN
+                  value: {{ join " " $nonHumanPlayers | quote }}
               command: ["/work/nightly.sh"]
               volumeMounts:
                 - name: work
