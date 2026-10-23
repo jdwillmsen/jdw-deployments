@@ -93,6 +93,20 @@ assert mem <= 20 * 384, f"crew limits.memory totals {mem}Mi, want <= 7680Mi"
 assert len(chests) >= len(want) - len(squads)
 PY
 
+# Every warrior's squad role has the kit function and structure its equip
+# lines run; the other units trigger no warrior function.
+python3 - "$work/rendered.yaml" <<'PY' || fail "the warriors' kit is not wired to their squad role"
+import sys, yaml
+
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+cm = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "crew-lab-unit-kit")
+equip = cm["data"]["equip.mcfunction"]
+for name, role in (("Rusty", "vanguard"), ("Slate", "striker"), ("Tinder", "ranger")):
+    assert f'name="{name}",tag=kitneed] at @s run function kits/warrior_{role}' in equip, name
+    assert f"warrior_{role}.mcfunction" in cm["data"] and f"warrior_{role}_kit.mcstructure" in cm["binaryData"], role
+assert equip.count("function kits/warrior_") == 3
+PY
+
 # A unit's replicas can be overridden alone, including to 0.
 helm template crew-lab "$chart" --namespace jdwillmsen-prd \
   -f "$chart/values.yaml" -f "$chart/values-prd.yaml" \
