@@ -183,7 +183,8 @@ data:
   # Each line runs only for a unit missing that piece, so nothing is replaced
   # while it is held; `execute as` keeps a no-match from counting as a failure.
   # A unit given a catalog kit is tagged `kitted` and keeps that kit's gear
-  # instead; its bread and cobblestone still come from here.
+  # instead; its bread and cobblestone still come from here, but are given
+  # rather than put in a slot, which could hold a piece of the kit.
   equip.mcfunction: |
     {{- range $unit := .Values.crew.units }}
     {{- $n := $unit.name | quote }}
@@ -223,12 +224,14 @@ data:
     {{- if eq $unit.role "shaft" }}
     {{- /* Blocks to bridge a missing stair floor with. The deposit chest is no
     source: it sits in a chunk that is rarely loaded when the restock runs. */}}
-    execute as @a[name={{ $n }},hasitem={item=cobblestone,quantity=0}] run replaceitem entity @s slot.hotbar 6 cobblestone 32
+    execute as @a[name={{ $n }},hasitem={item=cobblestone,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 6 cobblestone 32
+    execute as @a[name={{ $n }},hasitem={item=cobblestone,quantity=0},tag=kitted] run give @s cobblestone 32
     {{- end }}
     {{- else if eq $unit.role "chopper" }}
     execute as @a[name={{ $n }},hasitem={item=iron_axe,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 0 iron_axe 1
     {{- end }}
-    execute as @a[name={{ $n }},hasitem={item=bread,quantity=0}] run replaceitem entity @s slot.hotbar 7 bread 16
+    execute as @a[name={{ $n }},hasitem={item=bread,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 7 bread 16
+    execute as @a[name={{ $n }},hasitem={item=bread,quantity=0},tag=kitted] run give @s bread 16
     {{- end }}
     {{- end }}
     {{- end }}
