@@ -54,12 +54,12 @@ data:
   dota.mcfunction: |
     structure load dota_kit ~ ~ ~ 0_degrees none true false
     scriptevent kits:arrange Dota's
-  # The Light King's kit, with his dog: the script spawns Lumen beside him,
+  # The Light King's kit, with his dog: the script spawns Cassie beside him,
   # tamed to him and armoured, unless one already exists.
   lightking.mcfunction: |
     structure load lightking_kit ~ ~ ~ 0_degrees none true false
     scriptevent kits:arrange Light King's
-    scriptevent kits:dog Lumen
+    scriptevent kits:dog Cassie
   # Commands cannot move a named or trimmed item without rebuilding it bare, so
   # a script wears the kit's armour, puts its weapons and pickaxes in the hotbar
   # and its shield in the off hand, swapping out what was there. The message is
@@ -112,6 +112,8 @@ data:
       if (!dog) {
         dog = player.dimension.spawnEntity("minecraft:wolf", player.location);
         dog.nameTag = name;
+        // The snowy pelt is the white one; its spawn event must run before the taming.
+        dog.triggerEvent("minecraft:spawn_wild_snowy");
       }
       const tame = dog.getComponent("tameable");
       if (!tame.isTamed) tame.tame(player);

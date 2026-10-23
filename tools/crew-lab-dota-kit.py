@@ -113,12 +113,12 @@ THEMES = {
         },
         "trim": {"Material": "quartz", "Pattern": "sentry"},
         "uid": -0x11C47000,
-        # The dog, Lumen, is spawned at the hub with armour already on; he
-        # tames it with a bone. The tag is for later dogs.
+        # The dog, Cassie, is spawned tamed and armoured by the kit's script;
+        # the bones feed her and the tag is for later dogs.
         "extras": [
             {"Name": "minecraft:bone", "Count": byte(16), "Damage": short(0), "WasPickedUp": byte(0)},
             {"Name": "minecraft:name_tag", "Count": byte(1), "Damage": short(0), "WasPickedUp": byte(0),
-             "tag": {"display": {"Name": "Lumen"}}},
+             "tag": {"display": {"Name": "Cassie"}}},
         ],
     },
 }

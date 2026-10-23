@@ -86,7 +86,7 @@ init = next(c for c in sts["initContainers"] if c["name"] == "install-unit-kit")
 assert pack_id in init["command"][2], "init container registers a different pack id"
 assert "armoury" not in init["command"][2] and "armory_clean" not in init["command"][2]
 assert "structures/lightking_kit.mcstructure" in init["command"][2] and "functions/kits/lightking.mcfunction" in init["command"][2]
-assert "scriptevent kits:dog Lumen" in cm["lightking.mcfunction"] and "wolf_armor" in cm["main.js"]
+assert "scriptevent kits:dog Cassie" in cm["lightking.mcfunction"] and "wolf_armor" in cm["main.js"]
 assert "structures/dota_kit.mcstructure" in init["command"][2] and "functions/kits/dota.mcfunction" in init["command"][2]
 assert "scripts/main.js" in init["command"][2]
 assert any(v["name"] == "unit-kit" and v["configMap"]["name"] == "crew-lab-unit-kit" for v in sts["volumes"])
