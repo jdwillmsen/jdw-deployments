@@ -201,21 +201,21 @@ data:
     execute as @a[name={{ $n }},hasitem={item=iron_boots,location=slot.armor.feet,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.feet 0 iron_boots 1
     {{- end }}
     {{- if eq $unit.role "warrior" }}
-    {{- /* A warrior fights instead of working, so the combat kit replaces
-    everything the yard roles get here: no plot tp, no work tools, no bread.
-    Lines still only fire when that piece is spent (the same hasitem guard
-    as the yard kit) and sit in the same slots as the yard kit's (0 tool, 7
-    food, 8 weapon). The shield rides the offhand, the one hand a Bedrock
-    player keeps free while a sword is drawn. */}}
-    execute as @a[name={{ $n }},hasitem={item=diamond_sword,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 8 diamond_sword 1
-    execute as @a[name={{ $n }},hasitem={item=bow,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 0 bow 1
-    execute as @a[name={{ $n }},hasitem={item=arrow,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 1 arrow 64
-    execute as @a[name={{ $n }},hasitem={item=golden_apple,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 7 golden_apple 16
-    execute as @a[name={{ $n }},hasitem={item=shield,location=slot.weapon.offhand,quantity=0},tag=!kitted] run replaceitem entity @s slot.weapon.offhand 0 shield 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_helmet,location=slot.armor.head,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_chestplate,location=slot.armor.chest,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_leggings,location=slot.armor.legs,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_boots,location=slot.armor.feet,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1
+    {{- $kits := dict "vanguard" "vanguard" "striker" "duelist" "ranger" "ranger" }}
+    {{- $kit := get $kits (default "" $unit.squadRole) }}
+    {{- if not $kit }}
+    {{- fail (printf "unit %s: squadRole %q must be vanguard, striker or ranger" $unit.id (toString $unit.squadRole)) }}
+    {{- end }}
+    {{- /* A warrior fights instead of working, so it gets a catalog kit and none
+    of what the yard roles get: no plot tp, no work tools, no bread. The kit is
+    handed over whole whenever there is no netherite chestplate anywhere on the
+    unit, which covers a join, a death and a restart alike. The check is not
+    limited to the chest slot: the kit lands in the inventory and is worn about
+    2 s later, so a slot check would hand over a second kit before that. The
+    kits carry fewer golden apples than the plain kit did, so they are topped
+    up here, by give because the kit's items own the hotbar. */}}
+    execute as @a[name={{ $n }},hasitem={item=netherite_chestplate,quantity=0}] at @s run function kits/{{ $kit }}/t5
+    execute as @a[name={{ $n }},hasitem={item=golden_apple,quantity=0}] run give @s golden_apple 16
     {{- else if $unit.role }}
     {{- /* A unit with a role works in its own yard, far from the spawn it joins
     at (and respawns at), so anything still within the hub's reach is sent
