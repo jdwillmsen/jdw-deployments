@@ -45,24 +45,18 @@ for name in ('Pebble', 'Quartz'):
     assert f'name="{name}",hasitem' not in equip, name
     assert f'name="{name}",x=0' in equip, name
 
-# The squad trades the yard kit for the combat one: diamond and a bow in the
-# yard kit's slots, one line per piece to top it up, no iron anywhere and no
-# bread. Nothing sends a warrior to its plot, so its yard and chest stay
-# unbuilt somewhere else.
-for name in ('Rusty', 'Slate', 'Tinder'):
-    got = [l.strip() for l in equip.splitlines() if f'name="{name}",hasitem' in l]
-    want = [f'execute as @a[name="{name}",hasitem={{item=diamond_sword,quantity=0}},tag=!kitted] run replaceitem entity @s slot.hotbar 8 diamond_sword 1',
-            f'execute as @a[name="{name}",hasitem={{item=bow,quantity=0}},tag=!kitted] run replaceitem entity @s slot.hotbar 0 bow 1',
-            f'execute as @a[name="{name}",hasitem={{item=arrow,quantity=0}},tag=!kitted] run replaceitem entity @s slot.hotbar 1 arrow 64',
-            f'execute as @a[name="{name}",hasitem={{item=golden_apple,quantity=0}},tag=!kitted] run replaceitem entity @s slot.hotbar 7 golden_apple 16',
-            f'execute as @a[name="{name}",hasitem={{item=shield,location=slot.weapon.offhand,quantity=0}},tag=!kitted] run replaceitem entity @s slot.weapon.offhand 0 shield 1',
-            f'execute as @a[name="{name}",hasitem={{item=diamond_helmet,location=slot.armor.head,quantity=0}},tag=!kitted] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1',
-            f'execute as @a[name="{name}",hasitem={{item=diamond_chestplate,location=slot.armor.chest,quantity=0}},tag=!kitted] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1',
-            f'execute as @a[name="{name}",hasitem={{item=diamond_leggings,location=slot.armor.legs,quantity=0}},tag=!kitted] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1',
-            f'execute as @a[name="{name}",hasitem={{item=diamond_boots,location=slot.armor.feet,quantity=0}},tag=!kitted] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1']
-    assert sorted(got) == sorted(want), (name, sorted(got))
-    assert f'name="{name}",x=0' not in equip, name
+# The squad trades the yard kit for a catalog kit, handed out whole whenever the
+# unit has no netherite chestplate anywhere (join, death, restart), plus a
+# top-up of golden apples. No plain diamond or iron line is left, nothing sends
+# a warrior to its plot, and its yard and chest stay unbuilt.
+squad_kit = {"Rusty": "vanguard", "Slate": "duelist", "Tinder": "ranger"}
+for name, role in squad_kit.items():
+    got = [l.strip() for l in equip.splitlines() if f'name="{name}"' in l]
+    want = [f'execute as @a[name="{name}",hasitem={{item=netherite_chestplate,quantity=0}}] at @s run function kits/{role}/t5',
+            f'execute as @a[name="{name}",hasitem={{item=golden_apple,quantity=0}}] run give @s golden_apple 16']
+    assert got == want, (name, got)
     assert f'name="{name}"' not in restock, name
+assert "diamond_" not in equip and "slot.weapon.offhand" not in equip
 
 # Yards are kept supplied: every working plot gets two chests, and a working
 # unit is sent to its plot (17 units; the three warriors get neither).
@@ -137,10 +131,25 @@ for line in equip.splitlines():
         assert "tag=!kitted]" in line, line
     if "tag=kitted]" in line:
         assert "run give @s " in line and any(f"item={x}," in line for x in ("bread", "cobblestone")), line
+
 assert 0 < equip.count("tag=kitted] run give @s bread") == equip.count("tag=!kitted] run replaceitem entity @s slot.hotbar 7 bread")
+# Every kit function the equip tick calls ships in the catalog.
+for fn in re.findall(r"run function (kits/\w+/t\d)", equip):
+    assert f"functions/{fn}.mcfunction" in names, fn
+assert len(re.findall(r"run function kits/", equip)) == 3
 assert "MOB_GEAR" in cm["main.js"] and "EquipmentSlot.Head" in cm["main.js"]
 
 assert any(v["name"] == "unit-kit" and v["configMap"]["name"] == "crew-lab-unit-kit" for v in sts["volumes"])
 PY
+
+# A squadRole outside the three the pack has kits for fails the render, instead
+# of calling a function that does not exist.
+for role in healer ""; do
+  if helm template crew-lab "$chart" --namespace jdwillmsen-prd -f "$chart/values.yaml" \
+      -f "$chart/values-prd.yaml" --set "crew.units[17].squadRole=$role" > "$work/bad.yaml" 2> "$work/bad.err"; then
+    fail "squadRole '$role' rendered"
+  fi
+  grep -q "squadRole" "$work/bad.err" || fail "squadRole '$role' failed without naming squadRole: $(cat "$work/bad.err")"
+done
 
 echo "PASS: unit kit renders as expected"
