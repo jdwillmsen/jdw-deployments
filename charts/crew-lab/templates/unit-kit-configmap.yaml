@@ -108,15 +108,16 @@ data:
     });
 
     function adopt(player, name) {
-      let dog = player.dimension.getEntities({ type: "minecraft:wolf", name, location: player.location, maxDistance: 64 })[0];
+      let dog = player.dimension.getEntities({ type: "minecraft:wolf", name })[0];
       if (!dog) {
         dog = player.dimension.spawnEntity("minecraft:wolf", player.location);
         dog.nameTag = name;
         // The snowy pelt is the white one; its spawn event must run before the taming.
         dog.triggerEvent("minecraft:spawn_wild_snowy");
       }
+      // Only a wild wolf carries the component; a tamed one has swapped it away.
       const tame = dog.getComponent("tameable");
-      if (!tame.isTamed) tame.tame(player);
+      if (tame && !tame.isTamed) tame.tame(player);
       dog.runCommand("replaceitem entity @s slot.armor.body 0 wolf_armor 1");
     }
 
