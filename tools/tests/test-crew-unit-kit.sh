@@ -18,6 +18,9 @@ for kit in dota lightking; do
   python3 "$here/tools/crew-lab-dota-kit.py" "$work/${kit}_kit.mcstructure" "$kit"
   cmp -s "$work/${kit}_kit.mcstructure" "$chart/files/${kit}_kit.mcstructure" \
     || fail "charts/crew-lab/files/${kit}_kit.mcstructure is stale: rerun tools/crew-lab-dota-kit.py"
+  python3 "$here/tools/crew-lab-dota-kit.py" "$work/${kit}_armoury.mcstructure" "$kit" armoury
+  cmp -s "$work/${kit}_armoury.mcstructure" "$chart/files/${kit}_armoury.mcstructure" \
+    || fail "charts/crew-lab/files/${kit}_armoury.mcstructure is stale: rerun tools/crew-lab-dota-kit.py"
 done
 
 python3 - "$work/rendered.yaml" "$work/dota_kit.mcstructure" <<'PY' || fail "the unit kit is not rendered as expected"
@@ -50,11 +53,17 @@ assert "unit_kit/restock" in cm["tick.mcfunction"]
 # The Dota kit ships byte-for-byte and the function loads it with its entities.
 kit = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "crew-lab-unit-kit")["binaryData"]["dota_kit.mcstructure"]
 assert base64.b64decode(kit) == open(sys.argv[2], "rb").read(), "rendered Dota kit differs from the generated one"
-assert cm["dota.mcfunction"].strip() == "structure load dota_kit ~ ~ ~ 0_degrees none true false"
+for kit in ("dota", "lightking"):
+    fn = cm[kit + ".mcfunction"]
+    assert f"structure load {kit}_kit ~ ~ ~ 0_degrees none true false" in fn
+    assert f"structure load {kit}_armoury ~-1 ~ ~-1 0_degrees none false true" in fn
+    assert fn.count("redstone_block") == 4 and "armory_rig" in fn
+assert "armory_clean" in cm["tick.mcfunction"] and "kill @s" in cm["armory_clean.mcfunction"]
 
 sts = next(d for d in docs if d["kind"] == "StatefulSet")["spec"]["template"]["spec"]
 init = next(c for c in sts["initContainers"] if c["name"] == "install-unit-kit")
 assert pack_id in init["command"][2], "init container registers a different pack id"
+assert "structures/lightking_armoury.mcstructure" in init["command"][2] and "armory_clean" in init["command"][2]
 assert "structures/lightking_kit.mcstructure" in init["command"][2] and "functions/kits/lightking.mcfunction" in init["command"][2]
 assert "summon wolf Lumen" in cm["lightking.mcfunction"] and "slot.armor.body" in cm["lightking.mcfunction"]
 assert "structures/dota_kit.mcstructure" in init["command"][2] and "functions/kits/dota.mcfunction" in init["command"][2]

@@ -7,7 +7,7 @@ with the name tag and bones for his dog).
 Bedrock has no command that names, trims or patterns an item, so a structure
 is the only way to hand out such items without a player at an anvil or loom.
 
-Usage: tools/crew-lab-dota-kit.py [output-path [dota|lightking]]
+Usage: tools/crew-lab-dota-kit.py [output-path [dota|lightking [armoury]]]
 """
 import os
 import struct
@@ -183,9 +183,13 @@ def dropped(theme, n, it):
     }
 
 
+ARMOUR_PIECES = 4
+
+
 def build(kit="dota"):
     theme = THEMES[kit]
-    items = [item(theme, *k) for k in KIT]
+    # The first four pieces go through the armoury instead, which wears them.
+    items = [item(theme, *k) for k in KIT[ARMOUR_PIECES:]]
     # The bow's Infinity needs one arrow; a full stack also feeds the crossbow.
     items.append({"Name": "minecraft:arrow", "Count": byte(64), "Damage": short(0), "WasPickedUp": byte(0)})
     items.extend(theme["extras"])
@@ -202,9 +206,46 @@ def build(kit="dota"):
     return struct.pack("<bH", COMPOUND, 0) + payload(tag(root))
 
 
+# Dispenser facing_direction: 4 west, 5 east, 2 north, 3 south. Each stands
+# beside the centre cell, facing the player there; a dispenser puts a piece of
+# armour straight onto whoever is in front of it, with its name and enchants.
+DISPENSERS = [((2, 0, 1), 4), ((0, 0, 1), 5), ((1, 0, 2), 2), ((1, 0, 0), 3)]
+SIZE = (3, 1, 3)
+
+
+def build_armoury(kit="dota"):
+    theme = THEMES[kit]
+    pieces = [item(theme, *k) for k in KIT[:ARMOUR_PIECES]]
+    sx, sy, sz = SIZE
+    layer = [int_(-1)] * (sx * sy * sz)
+    palette, data = [], {}
+    for n, ((x, y, z), facing) in enumerate(DISPENSERS):
+        index = (x * sy + y) * sz + z
+        layer[index] = int_(n)
+        palette.append({
+            "name": "minecraft:dispenser",
+            "states": {"facing_direction": int_(facing), "triggered_bit": byte(0)},
+            "version": int_(17959425),
+        })
+        slot = dict(pieces[n], Slot=byte(0))
+        data[str(index)] = {"block_entity_data": {"id": "Dispenser", "isMovable": byte(1), "Items": list_(COMPOUND, [slot])}}
+    root = {
+        "format_version": int_(1),
+        "size": list_(INT, [int_(v) for v in SIZE]),
+        "structure_world_origin": list_(INT, [int_(0)] * 3),
+        "structure": {
+            "block_indices": list_(LIST, [list_(INT, layer), list_(INT, [int_(-1)] * len(layer))]),
+            "entities": list_(COMPOUND, []),
+            "palette": {"default": {"block_palette": list_(COMPOUND, palette), "block_position_data": data}},
+        },
+    }
+    return struct.pack("<bH", COMPOUND, 0) + payload(tag(root))
+
+
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
     kit = sys.argv[2] if len(sys.argv) > 2 else "dota"
-    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "..", "charts", "crew-lab", "files", kit + "_kit.mcstructure")
+    armoury = len(sys.argv) > 3 and sys.argv[3] == "armoury"
+    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "..", "charts", "crew-lab", "files", kit + ("_armoury" if armoury else "_kit") + ".mcstructure")
     with open(out, "wb") as f:
-        f.write(build(kit))
+        f.write(build_armoury(kit) if armoury else build(kit))
