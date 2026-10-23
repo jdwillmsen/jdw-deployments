@@ -455,6 +455,16 @@ crew:
         name: Jake
       - id: josh
         name: Josh
+    # Reads each unit's inventory and ender chest from the lab world's save,
+    # for the unit detail route. Mounts the game server's data claim read-only
+    # and runs crew-control on the game server's node (the claim is
+    # ReadWriteOnce). Off, the route still answers from live state and says
+    # the save is off.
+    world:
+      enabled: true
+      # Scratch space for the database copy each read takes: the save is
+      # about 26 MB and a read happens at most every few seconds.
+      workSize: 256Mi
     # Named places the crew's jobs use, seeded into the ledger on start and
     # read-only in the console. Rendered inline into the Deployment, so editing
     # them rolls the pod; an empty list clears the seeded places. Chests are one

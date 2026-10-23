@@ -40,6 +40,17 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      {{- if .Values.crew.control.world.enabled }}
+      # The world claim is ReadWriteOnce, so the pod that reads it has to run
+      # on the node that already has it attached to the game server.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: {{ printf "%s-minecraft-bedrock" .Release.Name }}
+      {{- end }}
       containers:
         - name: crew-control
           image: "{{ .Values.crew.control.image.repository }}:{{ .Values.crew.control.image.tag }}"
@@ -66,6 +77,14 @@ spec:
               value: /invites
             - name: DATA_DIR
               value: /data
+            {{- if .Values.crew.control.world.enabled }}
+            # The lab world's save, for the unit detail route. The claim holds
+            # worlds/<level>/db under its root.
+            - name: CREW_WORLD_DB
+              value: {{ printf "/world/worlds/%s/db" (index .Values "minecraft-bedrock" "minecraftServer" "levelName") | quote }}
+            - name: CREW_WORLD_WORK
+              value: /world-work
+            {{- end }}
             - name: WORK_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -117,6 +136,13 @@ spec:
             - name: invites
               mountPath: /invites
               readOnly: true
+            {{- if .Values.crew.control.world.enabled }}
+            - name: world
+              mountPath: /world
+              readOnly: true
+            - name: world-work
+              mountPath: /world-work
+            {{- end }}
           resources:
             {{- toYaml .Values.crew.control.resources | nindent 12 }}
       volumes:
@@ -127,4 +153,15 @@ spec:
           secret:
             secretName: {{ .Values.crew.control.invitesSecretName }}
             optional: true
+        {{- if .Values.crew.control.world.enabled }}
+        - name: world
+          persistentVolumeClaim:
+            claimName: {{ printf "datadir-%s-minecraft-bedrock-0" .Release.Name }}
+            readOnly: true
+        # The root filesystem is read-only and the world claim cannot take
+        # hard links, so each read copies the database here.
+        - name: world-work
+          emptyDir:
+            sizeLimit: {{ .Values.crew.control.world.workSize }}
+        {{- end }}
 {{- end }}
