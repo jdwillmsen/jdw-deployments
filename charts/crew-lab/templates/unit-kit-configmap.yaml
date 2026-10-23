@@ -80,8 +80,25 @@ data:
   # a script puts a kit's weapons and pickaxes in the hotbar and its shield in
   # the off hand, swapping out what was there. The message is the kit owner's
   # name prefix, as in the item names.
+  # It also hands each listed player their kit once, on their first join after
+  # this tag was set; change the tag to hand everyone theirs again.
   main.js: |
-    import { system, EquipmentSlot } from "@minecraft/server";
+    import { world, system, EquipmentSlot } from "@minecraft/server";
+
+    const KIT_ON_JOIN = { Dotablaze: "dota", LightKing0221: "lightking" };
+    const KIT_ON_JOIN_TAG = "kit_on_join_1";
+
+    world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
+      const kit = KIT_ON_JOIN[player.name];
+      if (!initialSpawn || !kit || player.hasTag(KIT_ON_JOIN_TAG)) return;
+      // A kit loaded before the chunks around a joining player are ticking
+      // drops nothing, so it waits 10 s.
+      system.runTimeout(() => {
+        if (!player.isValid || player.hasTag(KIT_ON_JOIN_TAG)) return;
+        player.addTag(KIT_ON_JOIN_TAG);
+        player.runCommand(`function kits/${kit}`);
+      }, 200);
+    });
 
     const HOTBAR = ["Sword", "Axe", "Mace", "Spear", "Trident", "Bow", "Crossbow", "Fortune Pickaxe", "Silk Pickaxe"];
 
