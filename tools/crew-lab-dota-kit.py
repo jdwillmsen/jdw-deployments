@@ -189,13 +189,17 @@ def build(kit="dota"):
     # The bow's Infinity needs one arrow; a full stack also feeds the crossbow.
     items.append({"Name": "minecraft:arrow", "Count": byte(64), "Damage": short(0), "WasPickedUp": byte(0)})
     items.extend(theme["extras"])
+    return structure([dropped(theme, n, it) for n, it in enumerate(items)])
+
+
+def structure(entities):
     root = {
         "format_version": int_(1),
         "size": list_(INT, [int_(1)] * 3),
         "structure_world_origin": list_(INT, [int_(0)] * 3),
         "structure": {
             "block_indices": list_(LIST, [list_(INT, [int_(-1)]), list_(INT, [int_(-1)])]),
-            "entities": list_(COMPOUND, [dropped(theme, n, it) for n, it in enumerate(items)]),
+            "entities": list_(COMPOUND, entities),
             "palette": {"default": {"block_palette": list_(COMPOUND, []), "block_position_data": {}}},
         },
     }

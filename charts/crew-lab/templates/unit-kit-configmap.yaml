@@ -266,3 +266,7 @@ binaryData:
   # loads named or trimmed items.
   dota_kit.mcstructure: {{ .Files.Get "files/dota_kit.mcstructure" | b64enc }}
   lightking_kit.mcstructure: {{ .Files.Get "files/lightking_kit.mcstructure" | b64enc }}
+  # The squad warriors' enchanted kits, built by tools/crew-lab-warrior-kit.py.
+  {{- range $role := list "vanguard" "striker" "ranger" }}
+  warrior_{{ $role }}_kit.mcstructure: {{ $.Files.Get (printf "files/warrior_%s_kit.mcstructure" $role) | b64enc }}
+  {{- end }}
