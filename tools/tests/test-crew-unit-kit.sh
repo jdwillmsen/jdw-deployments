@@ -18,9 +18,6 @@ for kit in dota lightking; do
   python3 "$here/tools/crew-lab-dota-kit.py" "$work/${kit}_kit.mcstructure" "$kit"
   cmp -s "$work/${kit}_kit.mcstructure" "$chart/files/${kit}_kit.mcstructure" \
     || fail "charts/crew-lab/files/${kit}_kit.mcstructure is stale: rerun tools/crew-lab-dota-kit.py"
-  python3 "$here/tools/crew-lab-dota-kit.py" "$work/${kit}_armoury.mcstructure" "$kit" armoury
-  cmp -s "$work/${kit}_armoury.mcstructure" "$chart/files/${kit}_armoury.mcstructure" \
-    || fail "charts/crew-lab/files/${kit}_armoury.mcstructure is stale: rerun tools/crew-lab-dota-kit.py"
 done
 
 python3 - "$work/rendered.yaml" "$work/dota_kit.mcstructure" <<'PY' || fail "the unit kit is not rendered as expected"
@@ -76,20 +73,20 @@ assert base64.b64decode(kit) == open(sys.argv[2], "rb").read(), "rendered Dota k
 for kit in ("dota", "lightking"):
     fn = cm[kit + ".mcfunction"]
     assert f"structure load {kit}_kit ~ ~ ~ 0_degrees none true false" in fn
-    assert f"structure load {kit}_armoury ~-1 ~ ~-1 0_degrees none false true" in fn
-    assert fn.count("redstone_block") == 4 and "armory_rig" in fn
+    assert "armoury" not in fn and "redstone_block" not in fn
     assert "\nscriptevent kits:arrange " + {"dota": "Dota's", "lightking": "Light King's"}[kit] + "\n" in fn
 assert any(m["type"] == "script" and m["entry"] == "scripts/main.js" for m in manifest["modules"])
 assert "kits:arrange" in cm["main.js"]
 assert 'Dotablaze: "dota"' in cm["main.js"] and "function kits/${kit}" in cm["main.js"]
-assert "armory_clean" in cm["tick.mcfunction"] and "kill @s" in cm["armory_clean.mcfunction"]
+assert "armory" not in cm["tick.mcfunction"] and "armory_clean.mcfunction" not in cm
+assert "kits:dog" in cm["main.js"] and "tame(" in cm["main.js"] and "setEquipment(WORN" in cm["main.js"]
 
 sts = next(d for d in docs if d["kind"] == "StatefulSet")["spec"]["template"]["spec"]
 init = next(c for c in sts["initContainers"] if c["name"] == "install-unit-kit")
 assert pack_id in init["command"][2], "init container registers a different pack id"
-assert "structures/lightking_armoury.mcstructure" in init["command"][2] and "armory_clean" in init["command"][2]
+assert "armoury" not in init["command"][2] and "armory_clean" not in init["command"][2]
 assert "structures/lightking_kit.mcstructure" in init["command"][2] and "functions/kits/lightking.mcfunction" in init["command"][2]
-assert "summon wolf Lumen" in cm["lightking.mcfunction"] and "slot.armor.body" in cm["lightking.mcfunction"]
+assert "scriptevent kits:dog Lumen" in cm["lightking.mcfunction"] and "wolf_armor" in cm["main.js"]
 assert "structures/dota_kit.mcstructure" in init["command"][2] and "functions/kits/dota.mcfunction" in init["command"][2]
 assert "scripts/main.js" in init["command"][2]
 assert any(v["name"] == "unit-kit" and v["configMap"]["name"] == "crew-lab-unit-kit" for v in sts["volumes"])
