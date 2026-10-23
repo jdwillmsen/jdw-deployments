@@ -95,8 +95,15 @@ data:
       // drops nothing, so it waits 10 s.
       system.runTimeout(() => {
         if (!player.isValid || player.hasTag(KIT_ON_JOIN_TAG)) return;
+        // Tagged first, so a kit that half-ran is not handed out twice; a
+        // command that could not run at all leaves the player eligible.
         player.addTag(KIT_ON_JOIN_TAG);
-        player.runCommand(`function kits/${kit}`);
+        try {
+          player.runCommand(`function kits/${kit}`);
+        } catch (e) {
+          player.removeTag(KIT_ON_JOIN_TAG);
+          throw e;
+        }
       }, 200);
     });
 
