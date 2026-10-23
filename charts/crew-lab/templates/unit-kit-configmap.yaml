@@ -49,37 +49,22 @@ data:
     }
   # Dotablaze's named, enchanted and trimmed kit, handed over from the console
   # with `execute as Dotablaze at @s run function kits/dota`. The items drop at
-  # the player's feet, so they land straight in the inventory.
-  # The armour goes on through four dispensers set around the player (the
-  # armoury structure), which a redstone block fires; the marker stand at a
-  # corner, which no dispenser faces, times their removal (tick.mcfunction).
+  # the player's feet, so they land straight in the inventory, and the script
+  # below then wears the armour and arranges the hotbar.
   dota.mcfunction: |
     structure load dota_kit ~ ~ ~ 0_degrees none true false
-    structure load dota_armoury ~-1 ~ ~-1 0_degrees none false true
-    summon armor_stand armory_rig ~-1 ~ ~-1
-    setblock ~1 ~1 ~ redstone_block
-    setblock ~-1 ~1 ~ redstone_block
-    setblock ~ ~1 ~1 redstone_block
-    setblock ~ ~1 ~-1 redstone_block
     scriptevent kits:arrange Dota's
-  # The Light King's kit, with his dog: Lumen is spawned beside him in armour
-  # unless one already exists. A wolf has no owner until its player feeds it a
-  # bone, so he is untamed on purpose; the name keeps him from despawning.
+  # The Light King's kit, with his dog: the script spawns Lumen beside him,
+  # tamed to him and armoured, unless one already exists.
   lightking.mcfunction: |
     structure load lightking_kit ~ ~ ~ 0_degrees none true false
-    structure load lightking_armoury ~-1 ~ ~-1 0_degrees none false true
-    summon armor_stand armory_rig ~-1 ~ ~-1
-    setblock ~1 ~1 ~ redstone_block
-    setblock ~-1 ~1 ~ redstone_block
-    setblock ~ ~1 ~1 redstone_block
-    setblock ~ ~1 ~-1 redstone_block
     scriptevent kits:arrange Light King's
-    execute unless entity @e[type=wolf,name=Lumen] run summon wolf Lumen ~2 ~ ~
-    replaceitem entity @e[type=wolf,name=Lumen,r=6] slot.armor.body 0 wolf_armor 1
+    scriptevent kits:dog Lumen
   # Commands cannot move a named or trimmed item without rebuilding it bare, so
-  # a script puts a kit's weapons and pickaxes in the hotbar and its shield in
-  # the off hand, swapping out what was there. The message is the kit owner's
-  # name prefix, as in the item names.
+  # a script wears the kit's armour, puts its weapons and pickaxes in the hotbar
+  # and its shield in the off hand, swapping out what was there. The message is
+  # the kit owner's name prefix, as in the item names. Bedrock has no command
+  # that sets a wolf's owner, so the script tames the dog.
   # It also hands each listed player their kit once, on their first join after
   # this tag was set; change the tag to hand everyone theirs again.
   main.js: |
@@ -107,13 +92,31 @@ data:
       }, 200);
     });
 
+    const WORN = {
+      helmet: EquipmentSlot.Head,
+      chestplate: EquipmentSlot.Chest,
+      leggings: EquipmentSlot.Legs,
+      boots: EquipmentSlot.Feet,
+    };
     const HOTBAR = ["Sword", "Axe", "Mace", "Spear", "Trident", "Bow", "Crossbow", "Fortune Pickaxe", "Silk Pickaxe"];
 
     system.afterEvents.scriptEventReceive.subscribe(({ id, message, sourceEntity }) => {
-      if (id !== "kits:arrange" || sourceEntity?.typeId !== "minecraft:player") return;
+      if (sourceEntity?.typeId !== "minecraft:player") return;
       // The dropped kit is picked up over the following ticks.
-      system.runTimeout(() => arrange(sourceEntity, message.trim()), 40);
+      if (id === "kits:arrange") system.runTimeout(() => arrange(sourceEntity, message.trim()), 40);
+      if (id === "kits:dog") adopt(sourceEntity, message.trim());
     });
+
+    function adopt(player, name) {
+      let dog = player.dimension.getEntities({ type: "minecraft:wolf", name, location: player.location, maxDistance: 64 })[0];
+      if (!dog) {
+        dog = player.dimension.spawnEntity("minecraft:wolf", player.location);
+        dog.nameTag = name;
+      }
+      const tame = dog.getComponent("tameable");
+      if (!tame.isTamed) tame.tame(player);
+      dog.runCommand("replaceitem entity @s slot.armor.body 0 wolf_armor 1");
+    }
 
     function arrange(player, owner) {
       if (!player.isValid) return;
@@ -126,6 +129,15 @@ data:
         }
         return -1;
       };
+      for (let i = 0; i < inv.size; i++) {
+        const item = inv.getItem(i);
+        const piece = item?.typeId.split("_").pop();
+        if (!WORN[piece] || !item.nameTag?.replace(/§./g, "").includes(`${owner} `)) continue;
+        const worn = player.getComponent("equippable");
+        const held = worn.getEquipment(WORN[piece]);
+        worn.setEquipment(WORN[piece], item);
+        inv.setItem(i, held);
+      }
       HOTBAR.forEach((title, slot) => {
         const i = find(title);
         if (i >= 0 && i !== slot) inv.swapItems(slot, i, inv);
@@ -145,17 +157,9 @@ data:
     scoreboard players add kit unitkit 1
     execute if score kit unitkit matches 40.. run function unit_kit/equip
     execute if score kit unitkit matches 40.. run scoreboard players set kit unitkit 0
-    scoreboard players add @e[type=armor_stand,name=armory_rig] unitkit 1
-    execute as @e[type=armor_stand,name=armory_rig,scores={unitkit=20..}] at @s run function unit_kit/armory_clean
     scoreboard players add restock unitkit 1
     execute if score restock unitkit matches 1200.. run function unit_kit/restock
     execute if score restock unitkit matches 1200.. run scoreboard players set restock unitkit 0
-  # A second after the dispensers fired, takes the rig down; the marker stand
-  # stands at its corner.
-  armory_clean.mcfunction: |
-    fill ~ ~ ~ ~2 ~ ~2 air replace dispenser
-    fill ~ ~1 ~ ~2 ~1 ~2 air replace redstone_block
-    kill @s
   # Each line runs only for a unit missing that piece, so nothing is replaced
   # while it is held; `execute as` keeps a no-match from counting as a failure.
   equip.mcfunction: |
@@ -259,5 +263,3 @@ binaryData:
   # loads named or trimmed items.
   dota_kit.mcstructure: {{ .Files.Get "files/dota_kit.mcstructure" | b64enc }}
   lightking_kit.mcstructure: {{ .Files.Get "files/lightking_kit.mcstructure" | b64enc }}
-  dota_armoury.mcstructure: {{ .Files.Get "files/dota_armoury.mcstructure" | b64enc }}
-  lightking_armoury.mcstructure: {{ .Files.Get "files/lightking_armoury.mcstructure" | b64enc }}
