@@ -63,15 +63,18 @@ data:
   # Commands cannot move a named or trimmed item without rebuilding it bare, so
   # a script wears the kit's armour, puts its weapons and pickaxes in the hotbar
   # and its shield in the off hand, swapping out what was there. The message is
-  # the kit owner's name prefix, as in the item names. Bedrock has no command
-  # that sets a wolf's owner, so the script tames the dog.
+  # the kit owner's name prefix, as in the item names ("Dota's", "Legendary
+  # Vanguard"). Bedrock has no command that sets a wolf's owner, so the script
+  # tames the dog.
   # It also hands each listed player their kit once, on their first join after
-  # this tag was set; change the tag to hand everyone theirs again.
+  # this tag was set; change the tag to hand everyone theirs again. And it
+  # deletes gear a catalog kit mob drops (tools/crew-lab-kits.py marks it).
   main.js: |
     import { world, system, EquipmentSlot } from "@minecraft/server";
 
     const KIT_ON_JOIN = { Dotablaze: "dota", LightKing0221: "lightking" };
     const KIT_ON_JOIN_TAG = "kit_on_join_1";
+    const MOB_GEAR = "§r§8Mob gear";
 
     world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
       const kit = KIT_ON_JOIN[player.name];
@@ -92,13 +95,22 @@ data:
       }, 200);
     });
 
+    world.afterEvents.entitySpawn.subscribe(({ entity }) => {
+      if (entity.typeId !== "minecraft:item") return;
+      if (entity.getComponent("item")?.itemStack.getLore().includes(MOB_GEAR)) entity.remove();
+    });
+
     const WORN = {
       helmet: EquipmentSlot.Head,
       chestplate: EquipmentSlot.Chest,
       leggings: EquipmentSlot.Legs,
       boots: EquipmentSlot.Feet,
     };
-    const HOTBAR = ["Sword", "Axe", "Mace", "Spear", "Trident", "Bow", "Crossbow", "Fortune Pickaxe", "Silk Pickaxe"];
+    // The first nine of these a kit has fill the hotbar, in this order.
+    const HOTBAR = [
+      "Sword", "Axe", "Mace", "Breaker Mace", "Spear", "Trident", "Riptide Trident", "Bow", "Crossbow",
+      "Scatter Crossbow", "Fortune Pickaxe", "Silk Pickaxe", "Shovel", "Hoe", "Shears", "Fishing Rod",
+    ];
 
     system.afterEvents.scriptEventReceive.subscribe(({ id, message, sourceEntity }) => {
       if (sourceEntity?.typeId !== "minecraft:player") return;
@@ -124,11 +136,12 @@ data:
     function arrange(player, owner) {
       if (!player.isValid) return;
       const inv = player.getComponent("inventory").container;
-      // Names are "!! <owner> <title> !!" once the colour codes are gone.
+      // Names are "<owner> <title>" once the colour codes and the "!!"
+      // sparkle are gone.
       const find = (title) => {
         for (let i = 0; i < inv.size; i++) {
-          const name = inv.getItem(i)?.nameTag?.replace(/§./g, "");
-          if (name?.includes(`${owner} ${title} `)) return i;
+          const name = inv.getItem(i)?.nameTag?.replace(/§./g, "").replace(/!!/g, "").trim();
+          if (name === `${owner} ${title}`) return i;
         }
         return -1;
       };
@@ -141,10 +154,13 @@ data:
         worn.setEquipment(WORN[piece], item);
         inv.setItem(i, held);
       }
-      HOTBAR.forEach((title, slot) => {
-        const i = find(title);
-        if (i >= 0 && i !== slot) inv.swapItems(slot, i, inv);
-      });
+      let slot = 0;
+      for (const title of HOTBAR) {
+        const i = slot < 9 ? find(title) : -1;
+        if (i < 0) continue;
+        if (i !== slot) inv.swapItems(slot, i, inv);
+        slot++;
+      }
       const shield = find("Shield");
       if (shield >= 0) {
         const hands = player.getComponent("equippable");
@@ -155,6 +171,7 @@ data:
     }
   init.mcfunction: |
     scoreboard objectives add unitkit dummy
+    scoreboard objectives add kitroll dummy
   # 40 ticks is about 2 s: the gear check does not need to run every tick.
   tick.mcfunction: |
     scoreboard players add kit unitkit 1
@@ -165,15 +182,17 @@ data:
     execute if score restock unitkit matches 1200.. run scoreboard players set restock unitkit 0
   # Each line runs only for a unit missing that piece, so nothing is replaced
   # while it is held; `execute as` keeps a no-match from counting as a failure.
+  # A unit given a catalog kit is tagged `kitted` and keeps that kit's gear
+  # instead; its bread and cobblestone still come from here.
   equip.mcfunction: |
     {{- range $unit := .Values.crew.units }}
     {{- $n := $unit.name | quote }}
     {{- if and (not $unit.hard) (ne $unit.role "warrior") }}
-    execute as @a[name={{ $n }},hasitem={item=iron_sword,quantity=0}] run replaceitem entity @s slot.hotbar 8 iron_sword 1
-    execute as @a[name={{ $n }},hasitem={item=iron_helmet,location=slot.armor.head,quantity=0}] run replaceitem entity @s slot.armor.head 0 iron_helmet 1
-    execute as @a[name={{ $n }},hasitem={item=iron_chestplate,location=slot.armor.chest,quantity=0}] run replaceitem entity @s slot.armor.chest 0 iron_chestplate 1
-    execute as @a[name={{ $n }},hasitem={item=iron_leggings,location=slot.armor.legs,quantity=0}] run replaceitem entity @s slot.armor.legs 0 iron_leggings 1
-    execute as @a[name={{ $n }},hasitem={item=iron_boots,location=slot.armor.feet,quantity=0}] run replaceitem entity @s slot.armor.feet 0 iron_boots 1
+    execute as @a[name={{ $n }},hasitem={item=iron_sword,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 8 iron_sword 1
+    execute as @a[name={{ $n }},hasitem={item=iron_helmet,location=slot.armor.head,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.head 0 iron_helmet 1
+    execute as @a[name={{ $n }},hasitem={item=iron_chestplate,location=slot.armor.chest,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.chest 0 iron_chestplate 1
+    execute as @a[name={{ $n }},hasitem={item=iron_leggings,location=slot.armor.legs,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.legs 0 iron_leggings 1
+    execute as @a[name={{ $n }},hasitem={item=iron_boots,location=slot.armor.feet,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.feet 0 iron_boots 1
     {{- end }}
     {{- if eq $unit.role "warrior" }}
     {{- /* A warrior fights instead of working, so the combat kit replaces
@@ -182,15 +201,15 @@ data:
     as the yard kit) and sit in the same slots as the yard kit's (0 tool, 7
     food, 8 weapon). The shield rides the offhand, the one hand a Bedrock
     player keeps free while a sword is drawn. */}}
-    execute as @a[name={{ $n }},hasitem={item=diamond_sword,quantity=0}] run replaceitem entity @s slot.hotbar 8 diamond_sword 1
-    execute as @a[name={{ $n }},hasitem={item=bow,quantity=0}] run replaceitem entity @s slot.hotbar 0 bow 1
-    execute as @a[name={{ $n }},hasitem={item=arrow,quantity=0}] run replaceitem entity @s slot.hotbar 1 arrow 64
-    execute as @a[name={{ $n }},hasitem={item=golden_apple,quantity=0}] run replaceitem entity @s slot.hotbar 7 golden_apple 16
-    execute as @a[name={{ $n }},hasitem={item=shield,location=slot.weapon.offhand,quantity=0}] run replaceitem entity @s slot.weapon.offhand 0 shield 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_helmet,location=slot.armor.head,quantity=0}] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_chestplate,location=slot.armor.chest,quantity=0}] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_leggings,location=slot.armor.legs,quantity=0}] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_boots,location=slot.armor.feet,quantity=0}] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1
+    execute as @a[name={{ $n }},hasitem={item=diamond_sword,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 8 diamond_sword 1
+    execute as @a[name={{ $n }},hasitem={item=bow,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 0 bow 1
+    execute as @a[name={{ $n }},hasitem={item=arrow,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 1 arrow 64
+    execute as @a[name={{ $n }},hasitem={item=golden_apple,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 7 golden_apple 16
+    execute as @a[name={{ $n }},hasitem={item=shield,location=slot.weapon.offhand,quantity=0},tag=!kitted] run replaceitem entity @s slot.weapon.offhand 0 shield 1
+    execute as @a[name={{ $n }},hasitem={item=diamond_helmet,location=slot.armor.head,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1
+    execute as @a[name={{ $n }},hasitem={item=diamond_chestplate,location=slot.armor.chest,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1
+    execute as @a[name={{ $n }},hasitem={item=diamond_leggings,location=slot.armor.legs,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1
+    execute as @a[name={{ $n }},hasitem={item=diamond_boots,location=slot.armor.feet,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1
     {{- else if $unit.role }}
     {{- /* A unit with a role works in its own yard, far from the spawn it joins
     at (and respawns at), so anything still within the hub's reach is sent
@@ -200,14 +219,14 @@ data:
     execute as @a[name={{ $n }},x=0,y=64,z=-400,r=200] run tp @s {{ add (int64 $p.x) 5 }} 64 {{ add (int64 $p.z) 6 }}
     {{- if not $unit.hard }}
     {{- if or (eq $unit.role "miner") (eq $unit.role "shaft") }}
-    execute as @a[name={{ $n }},hasitem={item=iron_pickaxe,quantity=0}] run replaceitem entity @s slot.hotbar 0 iron_pickaxe 1
+    execute as @a[name={{ $n }},hasitem={item=iron_pickaxe,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 0 iron_pickaxe 1
     {{- if eq $unit.role "shaft" }}
     {{- /* Blocks to bridge a missing stair floor with. The deposit chest is no
     source: it sits in a chunk that is rarely loaded when the restock runs. */}}
     execute as @a[name={{ $n }},hasitem={item=cobblestone,quantity=0}] run replaceitem entity @s slot.hotbar 6 cobblestone 32
     {{- end }}
     {{- else if eq $unit.role "chopper" }}
-    execute as @a[name={{ $n }},hasitem={item=iron_axe,quantity=0}] run replaceitem entity @s slot.hotbar 0 iron_axe 1
+    execute as @a[name={{ $n }},hasitem={item=iron_axe,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 0 iron_axe 1
     {{- end }}
     execute as @a[name={{ $n }},hasitem={item=bread,quantity=0}] run replaceitem entity @s slot.hotbar 7 bread 16
     {{- end }}
@@ -265,4 +284,7 @@ binaryData:
   # Built by tools/crew-lab-dota-kit.py [path] [dota|lightking]; a structure is the only way Bedrock
   # loads named or trimmed items.
   dota_kit.mcstructure: {{ .Files.Get "files/dota_kit.mcstructure" | b64enc }}
+  # The role and mob kit catalog (KITS.md), built by tools/crew-lab-kits.py:
+  # over a hundred structures would not fit a ConfigMap unpacked.
+  kits.tar.gz: {{ .Files.Get "files/kits.tar.gz" | b64enc }}
   lightking_kit.mcstructure: {{ .Files.Get "files/lightking_kit.mcstructure" | b64enc }}
