@@ -120,7 +120,8 @@ data:
   # (_helpers.tpl); the commands fail quietly where no unit has loaded the
   # chunks. Chest slots 0-3 are cleared so a deposit always has room; a hauler's
   # chests keep a stack of cobblestone in slot 0 instead, which also replaces
-  # what a restarted unit lost from its inventory mid-haul.
+  # what a restarted unit lost from its inventory mid-haul. A shaft unit's does
+  # too: it takes a reserve from there to bridge a missing stair floor with.
   # A quarry row is refilled only while its miner is not within a row of it:
   # a fill places stone into the air a unit stands in, which sealed miners into
   # their own tunnels ("no path to the chest").
@@ -134,7 +135,7 @@ data:
     {{- range $c := $chests }}
     setblock {{ index $c 0 }} 64 {{ index $c 1 }} chest [] keep
     {{- range $s := until 4 }}
-    {{- if and (eq $unit.role "hauler") (eq $s 0) }}
+    {{- if and (or (eq $unit.role "hauler") (eq $unit.role "shaft")) (eq $s 0) }}
     replaceitem block {{ index $c 0 }} 64 {{ index $c 1 }} slot.container 0 cobblestone 64
     {{- else }}
     replaceitem block {{ index $c 0 }} 64 {{ index $c 1 }} slot.container {{ $s }} air
