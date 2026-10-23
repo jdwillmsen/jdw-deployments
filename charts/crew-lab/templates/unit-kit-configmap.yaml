@@ -137,14 +137,30 @@ data:
   equip.mcfunction: |
     {{- range $unit := .Values.crew.units }}
     {{- $n := $unit.name | quote }}
-    {{- if not $unit.hard }}
+    {{- if and (not $unit.hard) (ne $unit.role "warrior") }}
     execute as @a[name={{ $n }},hasitem={item=iron_sword,quantity=0}] run replaceitem entity @s slot.hotbar 8 iron_sword 1
     execute as @a[name={{ $n }},hasitem={item=iron_helmet,location=slot.armor.head,quantity=0}] run replaceitem entity @s slot.armor.head 0 iron_helmet 1
     execute as @a[name={{ $n }},hasitem={item=iron_chestplate,location=slot.armor.chest,quantity=0}] run replaceitem entity @s slot.armor.chest 0 iron_chestplate 1
     execute as @a[name={{ $n }},hasitem={item=iron_leggings,location=slot.armor.legs,quantity=0}] run replaceitem entity @s slot.armor.legs 0 iron_leggings 1
     execute as @a[name={{ $n }},hasitem={item=iron_boots,location=slot.armor.feet,quantity=0}] run replaceitem entity @s slot.armor.feet 0 iron_boots 1
     {{- end }}
-    {{- if $unit.role }}
+    {{- if eq $unit.role "warrior" }}
+    {{- /* A warrior fights instead of working, so the combat kit replaces
+    everything the yard roles get here: no plot tp, no work tools, no bread.
+    Lines still only fire when that piece is spent (the same hasitem guard
+    as the yard kit) and sit in the same slots as the yard kit's (0 tool, 7
+    food, 8 weapon). The shield rides the offhand, the one hand a Bedrock
+    player keeps free while a sword is drawn. */}}
+    execute as @a[name={{ $n }},hasitem={item=diamond_sword,quantity=0}] run replaceitem entity @s slot.hotbar 8 diamond_sword 1
+    execute as @a[name={{ $n }},hasitem={item=bow,quantity=0}] run replaceitem entity @s slot.hotbar 0 bow 1
+    execute as @a[name={{ $n }},hasitem={item=arrow,quantity=0}] run replaceitem entity @s slot.hotbar 1 arrow 64
+    execute as @a[name={{ $n }},hasitem={item=golden_apple,quantity=0}] run replaceitem entity @s slot.hotbar 7 golden_apple 16
+    execute as @a[name={{ $n }},hasitem={item=shield,location=slot.weapon.offhand,quantity=0}] run replaceitem entity @s slot.weapon.offhand 0 shield 1
+    execute as @a[name={{ $n }},hasitem={item=diamond_helmet,location=slot.armor.head,quantity=0}] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1
+    execute as @a[name={{ $n }},hasitem={item=diamond_chestplate,location=slot.armor.chest,quantity=0}] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1
+    execute as @a[name={{ $n }},hasitem={item=diamond_leggings,location=slot.armor.legs,quantity=0}] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1
+    execute as @a[name={{ $n }},hasitem={item=diamond_boots,location=slot.armor.feet,quantity=0}] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1
+    {{- else if $unit.role }}
     {{- /* A unit with a role works in its own yard, far from the spawn it joins
     at (and respawns at), so anything still within the hub's reach is sent
     there. Its tool and bread are given too: an offline unit loses its
@@ -184,7 +200,9 @@ data:
   # their own tunnels ("no path to the chest").
   restock.mcfunction: |
     {{- range $unit := .Values.crew.units }}
-    {{- if $unit.role }}
+    {{- /* A warrior has no yard to supply: it never walks a plot, so building
+    and emptying chests there would be a structure nobody opens. */}}
+    {{- if and $unit.role (ne $unit.role "warrior") }}
     {{- $p := include "crew.plot" (dict "id" $unit.id "yards" $.Values.crew.yards) | fromJson }}
     {{- $x := int64 $p.x }}
     {{- $z := int64 $p.z }}

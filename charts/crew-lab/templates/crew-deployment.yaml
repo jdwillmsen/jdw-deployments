@@ -100,9 +100,20 @@ spec:
             - name: AUTH_CACHE_DIR
               value: {{ printf "/data/%s/auth" $unit.id | quote }}
             {{- end }}
-            {{- if $unit.role }}
+            {{- if and $unit.role (ne $unit.role "warrior") }}
+            {{- /* A warrior is off the idle rotation: WORK_PLAN is what a unit
+            mines and chops when idle, and squadRole would put it in its yard
+            instead of the arena. */}}
             - name: WORK_PLAN
               value: {{ include "crew.workPlan" (dict "unit" $unit "yards" $.Values.crew.yards) | quote }}
+            {{- end }}
+            {{- if $unit.squad }}
+            {{- /* The squad and the member's role inside it, so the unit joins
+            that squad's shared state. Only warriors carry a squad today. */}}
+            - name: CREW_ROLE
+              value: {{ $unit.squadRole | quote }}
+            - name: CREW_SQUAD
+              value: {{ $unit.squad | quote }}
             {{- end }}
             {{- with $.Values.crew.joinStaggerSeconds }}
             - name: JOIN_DELAY_S

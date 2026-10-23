@@ -69,6 +69,24 @@ needs the tenant quota raised, or a smaller limit for every unit.
 Set `replicas: 0` on one unit to stop it without deleting its volume;
 `crew.replicas` is the default for the rest.
 
+## Squads
+
+`crew-18`-`crew-20` (Rusty, Slate, Tinder) are not working units: they are
+squad `alpha`'s three warriors (`role: warrior` with `squadRole` vanguard,
+striker, ranger, in that order), built to fight side by side rather than work
+a plot. Rendering leaves them out of everything a working unit gets: no
+`WORK_PLAN` on the pod, no plot tp and no yard restocking from the unit-kit
+pack, so their plots in the yards grid stay unbuilt. What the pack keeps
+topped up for them is the combat kit — a diamond sword on 8, a bow on 0 with
+64 arrows on 1, 16 golden apples on 7 (the bread slot) and full diamond
+armour, with a shield in the offhand — re-armed piece by piece only when that
+piece is gone, like every unit's kit. Changes to that kit follow the pack
+rules above the init container in `values.yaml`: bump `UNIT_KIT_REV`, which
+restarts the lab server and disconnects its players.
+
+The pod carries `CREW_ROLE/<squadRole>` and `CREW_SQUAD/<squad>` on warriors
+only.
+
 - Probes: liveness `/healthz`, readiness `/readyz`. Readiness is false while
   the unit is dead or the server restarts, which can be long, so only liveness
   can restart the pod.

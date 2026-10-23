@@ -239,7 +239,13 @@ crew:
   # A unit may set `replicas: 0` to stop alone without losing its volume.
   #
   # `role` gives a unit standing work in its own plot of the yards below
-  # (miner, chopper, hauler or shaft; templates/_helpers.tpl). `sharedVolume`
+  # (miner, chopper, hauler or shaft; templates/_helpers.tpl). `warrior` is
+  # the exception, not a work role: a fighter. Its plot stays unused (the
+  # pack never tps it there or restocks its yard) and the unit-kit pack gives
+  # it a combat kit instead of work tools. A warrior also declares `squadRole`
+  # (vanguard, striker or ranger) within `squad`, rendered on its pod as
+  # CREW_ROLE and CREW_SQUAD.
+  # `sharedVolume`
   # puts a unit's files in its own directory on the one crew-shared claim; units
   # 01-03 predate it and keep their own claims, which cannot be merged without
   # losing the atlas they already built.
@@ -313,18 +319,21 @@ crew:
       sharedVolume: true
     - id: crew-18
       name: Rusty
-      role: hauler
-      hard: true
+      role: warrior
+      squadRole: vanguard
+      squad: alpha
       sharedVolume: true
     - id: crew-19
       name: Slate
-      role: miner
-      hard: true
+      role: warrior
+      squadRole: striker
+      squad: alpha
       sharedVolume: true
     - id: crew-20
       name: Tinder
-      role: chopper
-      hard: true
+      role: warrior
+      squadRole: ranger
+      squad: alpha
       sharedVolume: true
 
   # Default for every unit; a unit's own `replicas` wins. Set to 0 (not
