@@ -30,8 +30,13 @@ json.loads(cm["tick.json"])
 pack_id = manifest["header"]["uuid"]
 
 equip = cm["equip.mcfunction"]
-for name in ('Agate', 'Basalt', 'Cobble', 'Dusty', 'Ember', 'Flint', 'Gravel', 'Hazel', 'Ingot', 'Jasper', 'Kettle', 'Loam', 'Marble', 'Nugget', 'Onyx', 'Pebble', 'Quartz', 'Rusty', 'Slate', 'Tinder'):
+for name in ('Agate', 'Basalt', 'Cobble', 'Dusty', 'Ember', 'Flint', 'Gravel', 'Hazel', 'Ingot', 'Jasper', 'Kettle', 'Loam', 'Marble', 'Nugget', 'Onyx'):
     assert all(equip.count(f'name="{name}",hasitem={{item=iron_{p}') == 1 for p in ('sword', 'helmet', 'chestplate', 'leggings', 'boots')), name
+
+# Hard-mode units get no gear at all.
+for name in ('Pebble', 'Quartz', 'Rusty', 'Slate', 'Tinder'):
+    assert f'name="{name}",hasitem' not in equip, name
+    assert f'name="{name}",x=0' in equip, name
 
 # Yards are kept supplied: every plot gets two chests, and a unit is sent to its plot.
 assert restock.count("chest [] keep") == 40, restock.count("chest [] keep")

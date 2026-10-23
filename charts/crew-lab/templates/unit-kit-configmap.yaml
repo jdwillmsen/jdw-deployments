@@ -54,11 +54,13 @@ data:
   equip.mcfunction: |
     {{- range $unit := .Values.crew.units }}
     {{- $n := $unit.name | quote }}
+    {{- if not $unit.hard }}
     execute as @a[name={{ $n }},hasitem={item=iron_sword,quantity=0}] run replaceitem entity @s slot.hotbar 8 iron_sword 1
     execute as @a[name={{ $n }},hasitem={item=iron_helmet,location=slot.armor.head,quantity=0}] run replaceitem entity @s slot.armor.head 0 iron_helmet 1
     execute as @a[name={{ $n }},hasitem={item=iron_chestplate,location=slot.armor.chest,quantity=0}] run replaceitem entity @s slot.armor.chest 0 iron_chestplate 1
     execute as @a[name={{ $n }},hasitem={item=iron_leggings,location=slot.armor.legs,quantity=0}] run replaceitem entity @s slot.armor.legs 0 iron_leggings 1
     execute as @a[name={{ $n }},hasitem={item=iron_boots,location=slot.armor.feet,quantity=0}] run replaceitem entity @s slot.armor.feet 0 iron_boots 1
+    {{- end }}
     {{- if $unit.role }}
     {{- /* A unit with a role works in its own yard, far from the spawn it joins
     at (and respawns at), so anything still within the hub's reach is sent
@@ -66,12 +68,14 @@ data:
     inventory on every reconnect, and the kit chest is a long walk away. */}}
     {{- $p := include "crew.plot" (dict "id" $unit.id "yards" $.Values.crew.yards) | fromJson }}
     execute as @a[name={{ $n }},x=0,y=64,z=-400,r=200] run tp @s {{ add (int64 $p.x) 5 }} 64 {{ add (int64 $p.z) 6 }}
+    {{- if not $unit.hard }}
     {{- if or (eq $unit.role "miner") (eq $unit.role "shaft") }}
     execute as @a[name={{ $n }},hasitem={item=iron_pickaxe,quantity=0}] run replaceitem entity @s slot.hotbar 0 iron_pickaxe 1
     {{- else if eq $unit.role "chopper" }}
     execute as @a[name={{ $n }},hasitem={item=iron_axe,quantity=0}] run replaceitem entity @s slot.hotbar 0 iron_axe 1
     {{- end }}
     execute as @a[name={{ $n }},hasitem={item=bread,quantity=0}] run replaceitem entity @s slot.hotbar 7 bread 16
+    {{- end }}
     {{- end }}
     {{- end }}
     {{- with .Values.crew.kit.chest }}
