@@ -20,7 +20,12 @@ for kit in dota lightking; do
     || fail "charts/crew-lab/files/${kit}_kit.mcstructure is stale: rerun tools/crew-lab-dota-kit.py"
 done
 
-python3 - "$work/rendered.yaml" "$work/dota_kit.mcstructure" <<'PY' || fail "the unit kit is not rendered as expected"
+python3 "$here/tools/crew-lab-kits.py" "$work/kits.tar.gz" "$work/KITS.md"
+cmp -s "$work/kits.tar.gz" "$chart/files/kits.tar.gz" \
+  || fail "charts/crew-lab/files/kits.tar.gz is stale: rerun tools/crew-lab-kits.py"
+cmp -s "$work/KITS.md" "$chart/KITS.md" || fail "charts/crew-lab/KITS.md is stale: rerun tools/crew-lab-kits.py"
+
+python3 - "$work/rendered.yaml" "$work/dota_kit.mcstructure" "$work/kits.tar.gz" <<'PY' || fail "the unit kit is not rendered as expected"
 import base64, sys, json, yaml
 
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
@@ -46,15 +51,15 @@ for name in ('Pebble', 'Quartz'):
 # unbuilt somewhere else.
 for name in ('Rusty', 'Slate', 'Tinder'):
     got = [l.strip() for l in equip.splitlines() if f'name="{name}",hasitem' in l]
-    want = [f'execute as @a[name="{name}",hasitem={{item=diamond_sword,quantity=0}}] run replaceitem entity @s slot.hotbar 8 diamond_sword 1',
-            f'execute as @a[name="{name}",hasitem={{item=bow,quantity=0}}] run replaceitem entity @s slot.hotbar 0 bow 1',
-            f'execute as @a[name="{name}",hasitem={{item=arrow,quantity=0}}] run replaceitem entity @s slot.hotbar 1 arrow 64',
-            f'execute as @a[name="{name}",hasitem={{item=golden_apple,quantity=0}}] run replaceitem entity @s slot.hotbar 7 golden_apple 16',
-            f'execute as @a[name="{name}",hasitem={{item=shield,location=slot.weapon.offhand,quantity=0}}] run replaceitem entity @s slot.weapon.offhand 0 shield 1',
-            f'execute as @a[name="{name}",hasitem={{item=diamond_helmet,location=slot.armor.head,quantity=0}}] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1',
-            f'execute as @a[name="{name}",hasitem={{item=diamond_chestplate,location=slot.armor.chest,quantity=0}}] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1',
-            f'execute as @a[name="{name}",hasitem={{item=diamond_leggings,location=slot.armor.legs,quantity=0}}] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1',
-            f'execute as @a[name="{name}",hasitem={{item=diamond_boots,location=slot.armor.feet,quantity=0}}] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1']
+    want = [f'execute as @a[name="{name}",hasitem={{item=diamond_sword,quantity=0}},tag=!kitted] run replaceitem entity @s slot.hotbar 8 diamond_sword 1',
+            f'execute as @a[name="{name}",hasitem={{item=bow,quantity=0}},tag=!kitted] run replaceitem entity @s slot.hotbar 0 bow 1',
+            f'execute as @a[name="{name}",hasitem={{item=arrow,quantity=0}},tag=!kitted] run replaceitem entity @s slot.hotbar 1 arrow 64',
+            f'execute as @a[name="{name}",hasitem={{item=golden_apple,quantity=0}},tag=!kitted] run replaceitem entity @s slot.hotbar 7 golden_apple 16',
+            f'execute as @a[name="{name}",hasitem={{item=shield,location=slot.weapon.offhand,quantity=0}},tag=!kitted] run replaceitem entity @s slot.weapon.offhand 0 shield 1',
+            f'execute as @a[name="{name}",hasitem={{item=diamond_helmet,location=slot.armor.head,quantity=0}},tag=!kitted] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1',
+            f'execute as @a[name="{name}",hasitem={{item=diamond_chestplate,location=slot.armor.chest,quantity=0}},tag=!kitted] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1',
+            f'execute as @a[name="{name}",hasitem={{item=diamond_leggings,location=slot.armor.legs,quantity=0}},tag=!kitted] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1',
+            f'execute as @a[name="{name}",hasitem={{item=diamond_boots,location=slot.armor.feet,quantity=0}},tag=!kitted] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1']
     assert sorted(got) == sorted(want), (name, sorted(got))
     assert f'name="{name}",x=0' not in equip, name
     assert f'name="{name}"' not in restock, name
@@ -89,6 +94,38 @@ assert "structures/lightking_kit.mcstructure" in init["command"][2] and "functio
 assert "scriptevent kits:dog Cassie" in cm["lightking.mcfunction"] and "wolf_armor" in cm["main.js"]
 assert "structures/dota_kit.mcstructure" in init["command"][2] and "functions/kits/dota.mcfunction" in init["command"][2]
 assert "scripts/main.js" in init["command"][2]
+assert "tar -xzf /kit/kits.tar.gz" in init["command"][2]
+
+# The catalog ships whole, every kit function finishes and tags its kit, and
+# every roll covers its range exactly.
+import io, re, tarfile
+binary = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "crew-lab-unit-kit")["binaryData"]
+assert base64.b64decode(binary["kits.tar.gz"]) == open(sys.argv[3], "rb").read(), "rendered kit catalog differs"
+tar = tarfile.open(sys.argv[3])
+names = set(tar.getnames())
+assert len([n for n in names if n.startswith("structures/kit_")]) == 72
+assert len([n for n in names if n.startswith("structures/mob_")]) == 42
+for n in names:
+    body = tar.extractfile(n).read()
+    m = re.fullmatch(r"functions/kits/(\w+)/t(\d)\.mcfunction", n)
+    if m:
+        assert f"structures/kit_{m[1]}_t{m[2]}.mcstructure" in names and b"scriptevent kits:arrange" in body and b"tag @s add kitted" in body, n
+    m = re.fullmatch(r"functions/mobs/(\w+)/t(\d)\.mcfunction", n)
+    if m:
+        assert f"structures/mob_{m[1]}_t{m[2]}.mcstructure" in names, n
+    if n.endswith(("/roll.mcfunction", "/elite.mcfunction", "/random.mcfunction")):
+        lines = body.decode().splitlines()
+        top = int(lines[0].split()[-1])
+        hit = sorted(int(x) for l in lines[1:] for x in re.search(r"matches (\S+)", l)[1].split(".."))
+        assert hit[0] == 1 and hit[-1] == top, n
+        for l in lines[1:]:
+            assert l.split("run function ")[1] + ".mcfunction" in {x[len("functions/"):] for x in names}, l
+assert "scoreboard objectives add kitroll dummy" in cm["init.mcfunction"]
+for line in equip.splitlines():
+    if "run replaceitem" in line:
+        assert ("tag=!kitted]" in line) != any(f"item={x}," in line for x in ("bread", "cobblestone")), line
+assert "MOB_GEAR" in cm["main.js"] and "EquipmentSlot.Head" in cm["main.js"]
+
 assert any(v["name"] == "unit-kit" and v["configMap"]["name"] == "crew-lab-unit-kit" for v in sts["volumes"])
 PY
 

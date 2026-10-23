@@ -106,6 +106,15 @@ only.
 - The image tag in `values.yaml` must be a published `minecraft-crew` release.
   A tag that does not exist leaves the pods in `ImagePullBackOff`.
 
+## Kits
+
+[KITS.md](KITS.md) lists the kit catalog: 12 roles in 6 tiers for players and
+crew units, and 7 mob types in the same tiers, each handed out from the
+console or rolled at random (`function kits/random`, `function mobs/random`).
+`tools/crew-lab-kits.py` builds it into `files/kits.tar.gz`, which the pack's
+init container unpacks; a change ships like any pack edit, with a
+`UNIT_KIT_REV` bump.
+
 ## Reaching the console
 
 Open <https://crew.prd.jdwlabs.com>. It is the crew-control console: every unit's
