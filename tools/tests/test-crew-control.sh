@@ -148,4 +148,35 @@ for d in docs:
 assert not left, left
 PY
 
+# The save reader mounts the game server's data claim read-only and must run
+# on the game server's node, because the claim is ReadWriteOnce. Off, none of
+# it may render, so the route falls back to live state alone.
+world_check='
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+on = sys.argv[2] == "on"
+dep = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "crew-control")
+spec = dep["spec"]["template"]["spec"]
+c = spec["containers"][0]
+env = {e["name"]: e.get("value") for e in c["env"]}
+vols = {v["name"]: v for v in spec["volumes"]}
+mounts = {m["name"]: m for m in c["volumeMounts"]}
+if on:
+    assert env["CREW_WORLD_DB"] == "/world/worlds/crew-lab/db", env.get("CREW_WORLD_DB")
+    assert env["CREW_WORLD_WORK"] == "/world-work"
+    assert vols["world"]["persistentVolumeClaim"] == {"claimName": "datadir-crew-lab-minecraft-bedrock-0", "readOnly": True}, vols["world"]
+    assert mounts["world"]["readOnly"] is True and mounts["world"]["mountPath"] == "/world"
+    assert "emptyDir" in vols["world-work"] and not mounts["world-work"].get("readOnly")
+    term = spec["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+    assert term == [{"topologyKey": "kubernetes.io/hostname", "labelSelector": {"matchLabels": {"app": "crew-lab-minecraft-bedrock"}}}], term
+else:
+    assert not any(k.startswith("CREW_WORLD") for k in env), env
+    assert "world" not in vols and "world-work" not in vols and "world" not in mounts
+    assert "affinity" not in spec, spec.get("affinity")
+'
+render > "$work/world-on.yaml"
+python3 -c "$world_check" "$work/world-on.yaml" on || fail "the world save is not mounted as expected"
+render --set crew.control.world.enabled=false > "$work/world-off.yaml"
+python3 -c "$world_check" "$work/world-off.yaml" off || fail "the world save wiring renders while disabled"
+
 echo "PASS: crew-control renders as expected"
