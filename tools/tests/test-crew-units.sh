@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Renders the crew-lab chart and checks the crew units: one Deployment, Service
 # and PVC per unit, a shared task token, a kit chest to rearm from,
-# and a total CPU limit that leaves the namespace quota headroom for the
-# backup and recovery CronJobs.
+# the squad role and squad carried on the warriors' pods only, and a total CPU
+# limit that leaves the namespace quota headroom for the backup and recovery
+# CronJobs.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -28,6 +29,8 @@ crew = lambda kind: [d for d in of(kind)
                      if d["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "crew"]
 
 want = {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder"}
+# The squad members and the role each carries inside it; warriors only.
+squads = {"crew-18": "vanguard", "crew-19": "striker", "crew-20": "ranger"}
 own_claim = {"crew-01", "crew-02", "crew-03"}
 roles = {"miner", "chopper", "hauler", "shaft"}
 
@@ -56,11 +59,19 @@ for uid, name in want.items():
     assert e["CAMERA_ATLAS_DIR"]["value"] == "/data/atlas", uid
     if uid not in own_claim:
         assert e["AUTH_CACHE_DIR"]["value"] == f"/data/{uid}/auth", uid
-    plan = json.loads(e["WORK_PLAN"]["value"])
-    assert 1 <= len(plan) <= 8, (uid, plan)
-    mine = {json.dumps(c, sort_keys=True) for t in plan for c in [t.get("chest")] + [t.get("to")] + (t.get("from") or []) if c}
-    assert not (mine & chests), f"{uid} shares a chest with another unit"
-    chests |= mine
+    if uid in squads:
+        # A warrior fights, it does not work: no idle plan on the pod, and the
+        # squad env carries the in-squad role, not the yard role.
+        assert "WORK_PLAN" not in e, (uid, "warriors must have no WORK_PLAN")
+        assert e["CREW_ROLE"]["value"] == squads[uid], (uid, e["CREW_ROLE"])
+        assert e["CREW_SQUAD"]["value"] == "alpha", (uid, e["CREW_SQUAD"])
+    else:
+        assert "CREW_ROLE" not in e and "CREW_SQUAD" not in e, uid
+        plan = json.loads(e["WORK_PLAN"]["value"])
+        assert 1 <= len(plan) <= 8, (uid, plan)
+        mine = {json.dumps(c, sort_keys=True) for t in plan for c in [t.get("chest")] + [t.get("to")] + (t.get("from") or []) if c}
+        assert not (mine & chests), f"{uid} shares a chest with another unit"
+        chests |= mine
     assert int(e["JOIN_DELAY_S"]["value"] if "JOIN_DELAY_S" in e else 0) == (int(uid[5:]) - 1) * 6, uid
     ref = e["TASKS_TOKEN"]["valueFrom"]["secretKeyRef"]
     assert ref["name"] == "crew-tasks" and ref.get("optional") is True, (uid, ref)
@@ -79,7 +90,7 @@ total = sum(milli(d["spec"]["template"]["spec"]["containers"][0]["resources"]["l
 assert total <= 1000, f"crew limits.cpu totals {total}m, want <= 1000m"
 mem = sum(int(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"][:-2]) for d in deps.values())
 assert mem <= 20 * 384, f"crew limits.memory totals {mem}Mi, want <= 7680Mi"
-assert len(chests) >= len(want)
+assert len(chests) >= len(want) - len(squads)
 PY
 
 # A unit's replicas can be overridden alone, including to 0.
