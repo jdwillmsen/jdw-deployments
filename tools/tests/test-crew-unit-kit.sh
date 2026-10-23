@@ -81,6 +81,7 @@ for kit in ("dota", "lightking"):
     assert "\nscriptevent kits:arrange " + {"dota": "Dota's", "lightking": "Light King's"}[kit] + "\n" in fn
 assert any(m["type"] == "script" and m["entry"] == "scripts/main.js" for m in manifest["modules"])
 assert "kits:arrange" in cm["main.js"]
+assert 'Dotablaze: "dota"' in cm["main.js"] and "function kits/${kit}" in cm["main.js"]
 assert "armory_clean" in cm["tick.mcfunction"] and "kill @s" in cm["armory_clean.mcfunction"]
 
 sts = next(d for d in docs if d["kind"] == "StatefulSet")["spec"]["template"]["spec"]
