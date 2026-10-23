@@ -149,7 +149,7 @@ minecraft-bedrock:
       # annotations here. The restart disconnects players.
       env:
         - name: UNIT_KIT_REV
-          value: "5"
+          value: "6"
       command:
         - sh
         - -ec
@@ -226,6 +226,10 @@ crew:
   # 18 Rusty, 19 Slate, 20 Tinder, 21 Umber, 22 Vein, 23 Wick, 24 Xeno,
   # 25 Yarrow, 26 Zinc. Append, never renumber or rename.
   #
+  # `hard: true` takes a unit out of the unit-kit pack's gear top-ups, so it
+  # keeps only what it carries and has to recover its own drops after a death
+  # (the lab's keepInventory is off). Its plot tp and yard restocking stay.
+  #
   # A unit may set `replicas: 0` to stop alone without losing its volume.
   #
   # `role` gives a unit standing work in its own plot of the yards below
@@ -294,22 +298,27 @@ crew:
     - id: crew-16
       name: Pebble
       role: miner
+      hard: true
       sharedVolume: true
     - id: crew-17
       name: Quartz
       role: chopper
+      hard: true
       sharedVolume: true
     - id: crew-18
       name: Rusty
       role: hauler
+      hard: true
       sharedVolume: true
     - id: crew-19
       name: Slate
       role: miner
+      hard: true
       sharedVolume: true
     - id: crew-20
       name: Tinder
       role: chopper
+      hard: true
       sharedVolume: true
 
   # Default for every unit; a unit's own `replicas` wins. Set to 0 (not
