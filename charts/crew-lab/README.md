@@ -72,11 +72,19 @@ Set `replicas: 0` on one unit to stop it without deleting its volume;
 - Probes: liveness `/healthz`, readiness `/readyz`. Readiness is false while
   the unit is dead or the server restarts, which can be long, so only liveness
   can restart the pod.
-- `/data` (1Gi) holds the token cache (unused offline) and the texture atlas
-  cache, about 313 MB once the pack is extracted and the atlas built.
-- With the camera on, the first start fetches Mojang's sample resource pack from
-  github.com. The namespace allows egress. If the fetch fails the camera stays
-  on flat colours and retries on the next session; nothing else is affected.
+- `/data` holds the token cache (unused offline) and the texture atlas cache.
+  The atlas is a few MB: the pack it is built from is fetched into `/tmp` and
+  dropped after the build.
+- Units 01-03 each keep the atlas on their own claim. Units 04 and up share the
+  `crew-shared` claim and one atlas directory (`crew.camera.atlasDir`): the first
+  unit to need it fetches Mojang's sample resource pack from github.com and
+  builds it, the others wait and read it, and a restart finds it already built.
+  That claim is ReadWriteMany, so the storage driver does not hand its root to
+  the pod's group; the `share-owner` init container makes `/data` owned by
+  1000:1000 on each start, which changes only the root directory.
+- If the fetch fails the camera stays on flat colours and retries after 5 to 10
+  minutes; nothing else is affected. GitHub limits anonymous API calls to 60 an
+  hour per address, which a single shared build stays far inside.
 - The image tag in `values.yaml` must be a published `minecraft-crew` release.
   A tag that does not exist leaves the pods in `ImagePullBackOff`.
 

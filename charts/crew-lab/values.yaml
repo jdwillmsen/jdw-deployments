@@ -358,7 +358,9 @@ crew:
     # On the data volume below. The first start fetches Mojang's sample
     # resource pack from github.com (the namespace allows egress) and builds the
     # atlas from it. If the fetch fails the view stays flat-coloured and the
-    # build is retried on the next session, so it is not fatal.
+    # build is retried on the next session, so it is not fatal. Units on the
+    # shared claim all use this one directory: the first builds, the rest wait
+    # and read, so a rollout is one download and not one per unit.
     atlasDir: /data/atlas
 
   # A chest units rearm from when they have no sword or food on the hotbar.
@@ -528,11 +530,24 @@ crew:
   persistence:
     # File tier, not block: a few small token files plus the atlas cache.
     storageClass: truenas-nfs
-    # About 313 MB for the extracted pack plus the atlas, with room to grow.
+    # The built atlas is a few MB: the pack it is built from is fetched into
+    # /tmp and dropped. Room to grow.
     size: 1Gi
-    # The crew-shared claim holds one such directory for each unit that sets
-    # `sharedVolume`: 17 x 313 MB, with room to grow.
+    # The crew-shared claim holds the one atlas for every unit that sets
+    # `sharedVolume`, plus a small token directory for each.
     sharedSize: 8Gi
+    # Makes the shared claim's root writable for crew; see the share-owner
+    # init container. Its limits sit inside crew.resources, so the namespace
+    # quota does not change.
+    sharedInit:
+      image: alpine/k8s:1.37.1
+      resources:
+        requests:
+          memory: 16Mi
+          cpu: 5m
+        limits:
+          memory: 64Mi
+          cpu: 50m
 
 # Nightly rebuild of the lab's test fields (minecraft/crew/lab in gameops), so
 # a test starts from a clean state. Off here; the prd overlay turns it on.
