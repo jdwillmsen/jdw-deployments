@@ -173,6 +173,8 @@ data:
     scoreboard objectives add unitkit dummy
     scoreboard objectives add kitroll dummy
   # 40 ticks is about 2 s: the gear check does not need to run every tick.
+  # The lab world drops a dead unit's whole kit for anyone to take, so the
+  # rule is turned on once; the marker keeps a later manual change in force.
   tick.mcfunction: |
     scoreboard players add kit unitkit 1
     execute if score kit unitkit matches 40.. run function unit_kit/equip
@@ -180,6 +182,9 @@ data:
     scoreboard players add restock unitkit 1
     execute if score restock unitkit matches 1200.. run function unit_kit/restock
     execute if score restock unitkit matches 1200.. run scoreboard players set restock unitkit 0
+    scoreboard players add rules unitkit 0
+    execute if score rules unitkit matches 0 run gamerule keepinventory true
+    scoreboard players set rules unitkit 1
   # Each line runs only for a unit missing that piece, so nothing is replaced
   # while it is held; `execute as` keeps a no-match from counting as a failure.
   # A unit given a catalog kit is tagged `kitted` and keeps that kit's gear

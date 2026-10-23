@@ -72,6 +72,16 @@ assert equip.count("run tp @s") == 17
 assert restock.count("unless entity @a[name=") == 30, restock.count("unless entity @a[name=")
 assert "unit_kit/restock" in cm["tick.mcfunction"]
 
+# A dead unit keeps its kit: the world rule is set once, ever, and then left to
+# whoever changes it by hand.
+tick = [l.strip() for l in cm["tick.mcfunction"].splitlines()]
+guard = ["scoreboard players add rules unitkit 0",
+         "execute if score rules unitkit matches 0 run gamerule keepinventory true",
+         "scoreboard players set rules unitkit 1"]
+at = tick.index(guard[0])
+assert tick[at:at + 3] == guard, tick
+assert tick.count("scoreboard players set rules unitkit 1") == 1 and sum("keepinventory" in l for l in tick) == 1
+
 # The Dota kit ships byte-for-byte and the function loads it with its entities.
 kit = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "crew-lab-unit-kit")["binaryData"]["dota_kit.mcstructure"]
 assert base64.b64decode(kit) == open(sys.argv[2], "rb").read(), "rendered Dota kit differs from the generated one"
