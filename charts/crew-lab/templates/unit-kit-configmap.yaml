@@ -39,6 +39,13 @@ data:
   # the player's feet, so they land straight in the inventory.
   dota.mcfunction: |
     structure load dota_kit ~ ~ ~ 0_degrees none true false
+  # The Light King's kit, with his dog: Lumen is spawned beside him in armour
+  # unless one already exists. A wolf has no owner until its player feeds it a
+  # bone, so he is untamed on purpose; the name keeps him from despawning.
+  lightking.mcfunction: |
+    structure load lightking_kit ~ ~ ~ 0_degrees none true false
+    execute unless entity @e[type=wolf,name=Lumen] run summon wolf Lumen ~2 ~ ~
+    replaceitem entity @e[type=wolf,name=Lumen,r=6] slot.armor.body 0 wolf_armor 1
   init.mcfunction: |
     scoreboard objectives add unitkit dummy
   # 40 ticks is about 2 s: the gear check does not need to run every tick.
@@ -125,6 +132,7 @@ data:
     {{- end }}
     {{- end }}
 binaryData:
-  # Built by tools/crew-lab-dota-kit.py; a structure is the only way Bedrock
+  # Built by tools/crew-lab-dota-kit.py [path] [dota|lightking]; a structure is the only way Bedrock
   # loads named or trimmed items.
   dota_kit.mcstructure: {{ .Files.Get "files/dota_kit.mcstructure" | b64enc }}
+  lightking_kit.mcstructure: {{ .Files.Get "files/lightking_kit.mcstructure" | b64enc }}

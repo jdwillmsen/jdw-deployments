@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Writes charts/crew-lab/files/dota_kit.mcstructure: Dotablaze's named, enchanted
-and trimmed kit as dropped items, so loading it at a player's feet puts it
-straight into their inventory.
+"""Writes charts/crew-lab/files/<kit>_kit.mcstructure: a player's named, enchanted
+and trimmed kit as dropped items, so loading it at their feet puts it
+straight into their inventory. Kits: dota (Dotablaze), lightking (LightKing0221,
+with the name tag and bones for his dog).
 
 Bedrock has no command that names, trims or patterns an item, so a structure
 is the only way to hand out such items without a player at an anvil or loom.
 
-Usage: tools/crew-lab-dota-kit.py [output-path]
+Usage: tools/crew-lab-dota-kit.py [output-path [dota|lightking]]
 """
 import os
 import struct
@@ -71,23 +72,56 @@ LASTING = [("unbreaking", 3), ("mending", 1)]
 
 # § codes: l bold, k obfuscated, r reset, o italic; 4/6/c/e/b/7 are colours.
 SPARK = "§r§e§k!!§r"
-COLOUR = {"armor": "§6", "weapon": "§e", "tool": "§b"}
-LORE = {"armor": "Forged in the blaze", "weapon": "Burns with blaze fire", "tool": "Blaze-tempered"}
 
-# Banner colours are inverted dye ids: 0 black, 1 red, 11 yellow, 14 orange.
-FIRE_BANNER = {
-    "Base": int_(0),
-    "Type": int_(0),
-    "Patterns": list_(COMPOUND, [
-        {"Pattern": "gru", "Color": int_(1)},
-        {"Pattern": "bts", "Color": int_(14)},
-        {"Pattern": "mr", "Color": int_(14)},
-        {"Pattern": "flo", "Color": int_(11)},
-        {"Pattern": "tts", "Color": int_(0)},
-        {"Pattern": "bo", "Color": int_(0)},
-    ]),
+# Banner colours are inverted dye ids: 0 black, 1 red, 11 yellow, 14 orange,
+# 15 white.
+THEMES = {
+    "dota": {
+        "owner": "Dota's",
+        "title": "§l§c",
+        "colour": {"armor": "§6", "weapon": "§e", "tool": "§b"},
+        "lore": {"armor": "Forged in the blaze", "weapon": "Burns with blaze fire", "tool": "Blaze-tempered"},
+        "banner": {
+            "Base": int_(0),
+            "Type": int_(0),
+            "Patterns": list_(COMPOUND, [
+                {"Pattern": "gru", "Color": int_(1)},
+                {"Pattern": "bts", "Color": int_(14)},
+                {"Pattern": "mr", "Color": int_(14)},
+                {"Pattern": "flo", "Color": int_(11)},
+                {"Pattern": "tts", "Color": int_(0)},
+                {"Pattern": "bo", "Color": int_(0)},
+            ]),
+        },
+        "trim": {"Material": "gold", "Pattern": "silence"},
+        "uid": -0x0D07A000,
+        "extras": [],
+    },
+    "lightking": {
+        "owner": "Light King's",
+        "title": "§l§f",
+        "colour": {"armor": "§e", "weapon": "§f", "tool": "§b"},
+        "lore": {"armor": "Woven from daylight", "weapon": "Cuts like a sunbeam", "tool": "Sun-tempered"},
+        "banner": {
+            "Base": int_(15),
+            "Type": int_(0),
+            "Patterns": list_(COMPOUND, [
+                {"Pattern": "cr", "Color": int_(11)},
+                {"Pattern": "mc", "Color": int_(11)},
+                {"Pattern": "bo", "Color": int_(15)},
+            ]),
+        },
+        "trim": {"Material": "quartz", "Pattern": "sentry"},
+        "uid": -0x11C47000,
+        # The dog, Lumen, is spawned at the hub with armour already on; he
+        # tames it with a bone. The tag is for later dogs.
+        "extras": [
+            {"Name": "minecraft:bone", "Count": byte(16), "Damage": short(0), "WasPickedUp": byte(0)},
+            {"Name": "minecraft:name_tag", "Count": byte(1), "Damage": short(0), "WasPickedUp": byte(0),
+             "tag": {"display": {"Name": "Lumen"}}},
+        ],
+    },
 }
-TRIM = {"Material": "gold", "Pattern": "silence"}
 
 KIT = [
     ("netherite_helmet", "Helmet", "armor", [("protection", 4), ("respiration", 3), ("aqua_affinity", 1)]),
@@ -114,14 +148,14 @@ KIT = [
 ]
 
 
-def item(name, title, kind, enchants, count=1):
+def item(theme, name, title, kind, enchants, count=1):
     if name != "bow":
         enchants = enchants + LASTING
     extra = {}
     if name.startswith("netherite_") and kind == "armor":
-        extra["Trim"] = dict(TRIM)
+        extra["Trim"] = dict(theme["trim"])
     if name == "shield":
-        extra.update(FIRE_BANNER)
+        extra.update(theme["banner"])
     return {
         "Name": "minecraft:" + name,
         "Count": byte(count),
@@ -130,36 +164,38 @@ def item(name, title, kind, enchants, count=1):
         "tag": {
             "ench": list_(COMPOUND, [{"id": short(ENCHANT[e]), "lvl": short(lvl)} for e, lvl in enchants]),
             "display": {
-                "Name": f"{SPARK} §l§cDota's {COLOUR[kind]}{title} {SPARK}",
-                "Lore": list_(STRING, [f"§r§7§o{LORE[kind]}"]),
+                "Name": f"{SPARK} {theme['title']}{theme['owner']} {theme['colour'][kind]}{title} {SPARK}",
+                "Lore": list_(STRING, [f"§r§7§o{theme['lore'][kind]}"]),
             },
             **extra,
         },
     }
 
 
-def dropped(n, it):
+def dropped(theme, n, it):
     return {
         "identifier": "minecraft:item",
         "Pos": list_(FLOAT, [float_(0.5), float_(0.0), float_(0.5)]),
         "Motion": list_(FLOAT, [float_(0.0)] * 3),
         "Rotation": list_(FLOAT, [float_(0.0)] * 2),
-        "UniqueID": long_(-0x0D07A000 - n),
+        "UniqueID": long_(theme["uid"] - n),
         "Item": it,
     }
 
 
-def build():
-    items = [item(*k) for k in KIT]
+def build(kit="dota"):
+    theme = THEMES[kit]
+    items = [item(theme, *k) for k in KIT]
     # The bow's Infinity needs one arrow; a full stack also feeds the crossbow.
     items.append({"Name": "minecraft:arrow", "Count": byte(64), "Damage": short(0), "WasPickedUp": byte(0)})
+    items.extend(theme["extras"])
     root = {
         "format_version": int_(1),
         "size": list_(INT, [int_(1)] * 3),
         "structure_world_origin": list_(INT, [int_(0)] * 3),
         "structure": {
             "block_indices": list_(LIST, [list_(INT, [int_(-1)]), list_(INT, [int_(-1)])]),
-            "entities": list_(COMPOUND, [dropped(n, it) for n, it in enumerate(items)]),
+            "entities": list_(COMPOUND, [dropped(theme, n, it) for n, it in enumerate(items)]),
             "palette": {"default": {"block_palette": list_(COMPOUND, []), "block_position_data": {}}},
         },
     }
@@ -168,6 +204,7 @@ def build():
 
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
-    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "..", "charts", "crew-lab", "files", "dota_kit.mcstructure")
+    kit = sys.argv[2] if len(sys.argv) > 2 else "dota"
+    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "..", "charts", "crew-lab", "files", kit + "_kit.mcstructure")
     with open(out, "wb") as f:
-        f.write(build())
+        f.write(build(kit))
