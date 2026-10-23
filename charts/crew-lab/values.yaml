@@ -149,7 +149,7 @@ minecraft-bedrock:
       # annotations here. The restart disconnects players.
       env:
         - name: UNIT_KIT_REV
-          value: "6"
+          value: "7"
       command:
         - sh
         - -ec
@@ -166,6 +166,8 @@ minecraft-bedrock:
           mkdir -p "$world/behavior_packs/$pack/functions/kits" "$world/behavior_packs/$pack/structures"
           cp /kit/dota.mcfunction "$world/behavior_packs/$pack/functions/kits/dota.mcfunction"
           cp /kit/dota_kit.mcstructure "$world/behavior_packs/$pack/structures/dota_kit.mcstructure"
+          cp /kit/lightking.mcfunction "$world/behavior_packs/$pack/functions/kits/lightking.mcfunction"
+          cp /kit/lightking_kit.mcstructure "$world/behavior_packs/$pack/structures/lightking_kit.mcstructure"
           list="$world/world_behavior_packs.json"
           [ -s "$list" ] || echo '[]' > "$list"
           jq --arg id "$id" 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [1, 0, 0]}]' "$list" > "$list.new"

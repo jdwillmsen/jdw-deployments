@@ -14,9 +14,11 @@ fail() { echo "FAIL: $1"; exit 1; }
 helm template crew-lab "$chart" --namespace jdwillmsen-prd \
   -f "$chart/values.yaml" -f "$chart/values-prd.yaml" > "$work/rendered.yaml"
 
-python3 "$here/tools/crew-lab-dota-kit.py" "$work/dota_kit.mcstructure"
-cmp -s "$work/dota_kit.mcstructure" "$chart/files/dota_kit.mcstructure" \
-  || fail "charts/crew-lab/files/dota_kit.mcstructure is stale: rerun tools/crew-lab-dota-kit.py"
+for kit in dota lightking; do
+  python3 "$here/tools/crew-lab-dota-kit.py" "$work/${kit}_kit.mcstructure" "$kit"
+  cmp -s "$work/${kit}_kit.mcstructure" "$chart/files/${kit}_kit.mcstructure" \
+    || fail "charts/crew-lab/files/${kit}_kit.mcstructure is stale: rerun tools/crew-lab-dota-kit.py"
+done
 
 python3 - "$work/rendered.yaml" "$work/dota_kit.mcstructure" <<'PY' || fail "the unit kit is not rendered as expected"
 import base64, sys, json, yaml
@@ -53,6 +55,8 @@ assert cm["dota.mcfunction"].strip() == "structure load dota_kit ~ ~ ~ 0_degrees
 sts = next(d for d in docs if d["kind"] == "StatefulSet")["spec"]["template"]["spec"]
 init = next(c for c in sts["initContainers"] if c["name"] == "install-unit-kit")
 assert pack_id in init["command"][2], "init container registers a different pack id"
+assert "structures/lightking_kit.mcstructure" in init["command"][2] and "functions/kits/lightking.mcfunction" in init["command"][2]
+assert "summon wolf Lumen" in cm["lightking.mcfunction"] and "slot.armor.body" in cm["lightking.mcfunction"]
 assert "structures/dota_kit.mcstructure" in init["command"][2] and "functions/kits/dota.mcfunction" in init["command"][2]
 assert any(v["name"] == "unit-kit" and v["configMap"]["name"] == "crew-lab-unit-kit" for v in sts["volumes"])
 PY
