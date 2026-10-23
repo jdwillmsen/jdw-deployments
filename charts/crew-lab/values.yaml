@@ -169,6 +169,7 @@ minecraft-bedrock:
           cp /kit/lightking.mcfunction "$world/behavior_packs/$pack/functions/kits/lightking.mcfunction"
           cp /kit/lightking_kit.mcstructure "$world/behavior_packs/$pack/structures/lightking_kit.mcstructure"
           for r in vanguard striker ranger; do
+            cp "/kit/warrior_$r.mcfunction" "$world/behavior_packs/$pack/functions/kits/warrior_$r.mcfunction"
             cp "/kit/warrior_${r}_kit.mcstructure" "$world/behavior_packs/$pack/structures/warrior_${r}_kit.mcstructure"
           done
           mkdir -p "$world/behavior_packs/$pack/scripts"

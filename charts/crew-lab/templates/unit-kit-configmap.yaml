@@ -60,6 +60,19 @@ data:
     structure load lightking_kit ~ ~ ~ 0_degrees none true false
     scriptevent kits:arrange Light King's
     scriptevent kits:dog Cassie
+  # A squad warrior's enchanted kit, run by the equip tick for a warrior that
+  # lost a piece. Clearing first stops the reload stacking onto what is left;
+  # the script then wears the armour and sets the hotbar. The score holds the
+  # equip check off for the next few runs (about 10 s) while the drop is
+  # picked up.
+  {{- range $role := list "vanguard" "striker" "ranger" }}
+  warrior_{{ $role }}.mcfunction: |
+    tag @s remove kitneed
+    scoreboard players set @s kitwait 5
+    clear @s
+    structure load warrior_{{ $role }}_kit ~ ~ ~ 0_degrees none true false
+    scriptevent kits:warrior
+  {{- end }}
   # Commands cannot move a named or trimmed item without rebuilding it bare, so
   # a script wears the kit's armour, puts its weapons and pickaxes in the hotbar
   # and its shield in the off hand, swapping out what was there. The message is
@@ -105,7 +118,42 @@ data:
       // The dropped kit is picked up over the following ticks.
       if (id === "kits:arrange") system.runTimeout(() => arrange(sourceEntity, message.trim()), 40);
       if (id === "kits:dog") adopt(sourceEntity, message.trim());
+      if (id === "kits:warrior") system.runTimeout(() => equipWarrior(sourceEntity), 40);
     });
+
+    const WARRIOR_WORN = {
+      "minecraft:diamond_helmet": EquipmentSlot.Head,
+      "minecraft:diamond_chestplate": EquipmentSlot.Chest,
+      "minecraft:diamond_leggings": EquipmentSlot.Legs,
+      "minecraft:diamond_boots": EquipmentSlot.Feet,
+      "minecraft:shield": EquipmentSlot.Offhand,
+      "minecraft:totem_of_undying": EquipmentSlot.Offhand,
+    };
+    // The yard kit's hotbar slots: 0 tool, 1 ammo, 7 food, 8 weapon.
+    const WARRIOR_HOTBAR = { "minecraft:bow": 0, "minecraft:arrow": 1, "minecraft:golden_apple": 7, "minecraft:diamond_sword": 8 };
+
+    function equipWarrior(player) {
+      if (!player.isValid) return;
+      const inv = player.getComponent("inventory").container;
+      const worn = player.getComponent("equippable");
+      for (let i = 0; i < inv.size; i++) {
+        const item = inv.getItem(i);
+        const slot = item && WARRIOR_WORN[item.typeId];
+        if (!slot) continue;
+        const held = worn.getEquipment(slot);
+        // A piece already worn stays and the spare is dropped: the clear in
+        // the kit function may not reach worn armour.
+        if (held?.typeId !== item.typeId) worn.setEquipment(slot, item);
+        inv.setItem(i, held?.typeId === item.typeId ? undefined : held);
+      }
+      for (const [typeId, slot] of Object.entries(WARRIOR_HOTBAR)) {
+        for (let i = 0; i < inv.size; i++) {
+          if (inv.getItem(i)?.typeId !== typeId) continue;
+          if (i !== slot) inv.swapItems(slot, i, inv);
+          break;
+        }
+      }
+    }
 
     function adopt(player, name) {
       let dog = player.dimension.getEntities({ type: "minecraft:wolf", name })[0];
@@ -155,6 +203,7 @@ data:
     }
   init.mcfunction: |
     scoreboard objectives add unitkit dummy
+    scoreboard objectives add kitwait dummy
   # 40 ticks is about 2 s: the gear check does not need to run every tick.
   tick.mcfunction: |
     scoreboard players add kit unitkit 1
@@ -178,19 +227,28 @@ data:
     {{- if eq $unit.role "warrior" }}
     {{- /* A warrior fights instead of working, so the combat kit replaces
     everything the yard roles get here: no plot tp, no work tools, no bread.
-    Lines still only fire when that piece is spent (the same hasitem guard
-    as the yard kit) and sit in the same slots as the yard kit's (0 tool, 7
-    food, 8 weapon). The shield rides the offhand, the one hand a Bedrock
-    player keeps free while a sword is drawn. */}}
-    execute as @a[name={{ $n }},hasitem={item=diamond_sword,quantity=0}] run replaceitem entity @s slot.hotbar 8 diamond_sword 1
-    execute as @a[name={{ $n }},hasitem={item=bow,quantity=0}] run replaceitem entity @s slot.hotbar 0 bow 1
-    execute as @a[name={{ $n }},hasitem={item=arrow,quantity=0}] run replaceitem entity @s slot.hotbar 1 arrow 64
-    execute as @a[name={{ $n }},hasitem={item=golden_apple,quantity=0}] run replaceitem entity @s slot.hotbar 7 golden_apple 16
-    execute as @a[name={{ $n }},hasitem={item=shield,location=slot.weapon.offhand,quantity=0}] run replaceitem entity @s slot.weapon.offhand 0 shield 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_helmet,location=slot.armor.head,quantity=0}] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_chestplate,location=slot.armor.chest,quantity=0}] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_leggings,location=slot.armor.legs,quantity=0}] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_boots,location=slot.armor.feet,quantity=0}] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1
+    Each line tags the warrior when one piece is gone, with the same hasitem
+    guards as the yard kit: an enchanted piece is still the same item, so it
+    is never swapped for a plain one. A tagged warrior has its whole
+    enchanted kit reloaded in one go (kits/warrior_<role>); a plain
+    replaceitem cannot enchant. The kitwait score keeps the next check from
+    firing while the dropped kit is still being picked up and worn. */}}
+    {{- $role := required (printf "warrior %s has no squadRole" $unit.name) $unit.squadRole }}
+    {{- $pieces := list "diamond_helmet,location=slot.armor.head" "diamond_chestplate,location=slot.armor.chest" "diamond_leggings,location=slot.armor.legs" "diamond_boots,location=slot.armor.feet" "diamond_sword" "golden_apple" }}
+    {{- if eq $role "vanguard" }}
+    {{- $pieces = append $pieces "shield,location=slot.weapon.offhand" }}
+    {{- else }}
+    {{- $pieces = append $pieces "totem_of_undying,location=slot.weapon.offhand" }}
+    {{- end }}
+    {{- if eq $role "ranger" }}
+    {{- $pieces = concat $pieces (list "bow" "arrow") }}
+    {{- end }}
+    scoreboard players add @a[name={{ $n }}] kitwait 0
+    scoreboard players remove @a[name={{ $n }},scores={kitwait=1..}] kitwait 1
+    {{- range $pieces }}
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem={item={{ . }},quantity=0}] run tag @s add kitneed
+    {{- end }}
+    execute as @a[name={{ $n }},tag=kitneed] at @s run function kits/warrior_{{ $role }}
     {{- else if $unit.role }}
     {{- /* A unit with a role works in its own yard, far from the spawn it joins
     at (and respawns at), so anything still within the hub's reach is sent
