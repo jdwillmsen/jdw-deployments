@@ -121,9 +121,13 @@ for n in names:
         for l in lines[1:]:
             assert l.split("run function ")[1] + ".mcfunction" in {x[len("functions/"):] for x in names}, l
 assert "scoreboard objectives add kitroll dummy" in cm["init.mcfunction"]
+# A kitted unit's gear is left alone, and its supplies never overwrite a slot.
 for line in equip.splitlines():
     if "run replaceitem" in line:
-        assert ("tag=!kitted]" in line) != any(f"item={x}," in line for x in ("bread", "cobblestone")), line
+        assert "tag=!kitted]" in line, line
+    if "tag=kitted]" in line:
+        assert "run give @s " in line and any(f"item={x}," in line for x in ("bread", "cobblestone")), line
+assert 0 < equip.count("tag=kitted] run give @s bread") == equip.count("tag=!kitted] run replaceitem entity @s slot.hotbar 7 bread")
 assert "MOB_GEAR" in cm["main.js"] and "EquipmentSlot.Head" in cm["main.js"]
 
 assert any(v["name"] == "unit-kit" and v["configMap"]["name"] == "crew-lab-unit-kit" for v in sts["volumes"])
