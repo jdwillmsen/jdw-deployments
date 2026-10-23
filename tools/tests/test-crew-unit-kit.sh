@@ -58,6 +58,9 @@ for kit in ("dota", "lightking"):
     assert f"structure load {kit}_kit ~ ~ ~ 0_degrees none true false" in fn
     assert f"structure load {kit}_armoury ~-1 ~ ~-1 0_degrees none false true" in fn
     assert fn.count("redstone_block") == 4 and "armory_rig" in fn
+    assert "\nscriptevent kits:arrange " + {"dota": "Dota's", "lightking": "Light King's"}[kit] + "\n" in fn
+assert any(m["type"] == "script" and m["entry"] == "scripts/main.js" for m in manifest["modules"])
+assert "kits:arrange" in cm["main.js"]
 assert "armory_clean" in cm["tick.mcfunction"] and "kill @s" in cm["armory_clean.mcfunction"]
 
 sts = next(d for d in docs if d["kind"] == "StatefulSet")["spec"]["template"]["spec"]
@@ -67,6 +70,7 @@ assert "structures/lightking_armoury.mcstructure" in init["command"][2] and "arm
 assert "structures/lightking_kit.mcstructure" in init["command"][2] and "functions/kits/lightking.mcfunction" in init["command"][2]
 assert "summon wolf Lumen" in cm["lightking.mcfunction"] and "slot.armor.body" in cm["lightking.mcfunction"]
 assert "structures/dota_kit.mcstructure" in init["command"][2] and "functions/kits/dota.mcfunction" in init["command"][2]
+assert "scripts/main.js" in init["command"][2]
 assert any(v["name"] == "unit-kit" and v["configMap"]["name"] == "crew-lab-unit-kit" for v in sts["volumes"])
 PY
 
