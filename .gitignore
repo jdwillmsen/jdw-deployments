@@ -7,3 +7,5 @@
 # pulls from an external Helm repository, so leaving it unvendored would put an
 # upstream fetch in ArgoCD's render path — a failure mode that only shows up as
 # a broken sync. Vendoring keeps the chart self-contained and deterministic.
+__pycache__/
+*.pyc
