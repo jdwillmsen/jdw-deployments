@@ -431,7 +431,7 @@ crew:
     enabled: true
     image:
       repository: ghcr.io/jdwillmsen/minecraft-crew-control
-      tag: "1.4.0"
+      tag: "1.7.0"
       pullPolicy: IfNotPresent
     port: 8080
     logLevel: info
