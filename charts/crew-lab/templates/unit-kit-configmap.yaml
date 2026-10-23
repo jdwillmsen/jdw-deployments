@@ -25,6 +25,19 @@ data:
           "type": "data",
           "uuid": "d83ae7f5-7887-400b-bc90-451510d633e6",
           "version": [1, 0, 0]
+        },
+        {
+          "type": "script",
+          "language": "javascript",
+          "entry": "scripts/main.js",
+          "uuid": "f362af6c-504e-46c4-b8d5-1171d31ef0a6",
+          "version": [1, 0, 0]
+        }
+      ],
+      "dependencies": [
+        {
+          "module_name": "@minecraft/server",
+          "version": "2.0.0"
         }
       ]
     }
@@ -48,6 +61,7 @@ data:
     setblock ~-1 ~1 ~ redstone_block
     setblock ~ ~1 ~1 redstone_block
     setblock ~ ~1 ~-1 redstone_block
+    scriptevent kits:arrange Dota's
   # The Light King's kit, with his dog: Lumen is spawned beside him in armour
   # unless one already exists. A wolf has no owner until its player feeds it a
   # bone, so he is untamed on purpose; the name keeps him from despawning.
@@ -59,8 +73,47 @@ data:
     setblock ~-1 ~1 ~ redstone_block
     setblock ~ ~1 ~1 redstone_block
     setblock ~ ~1 ~-1 redstone_block
+    scriptevent kits:arrange Light King's
     execute unless entity @e[type=wolf,name=Lumen] run summon wolf Lumen ~2 ~ ~
     replaceitem entity @e[type=wolf,name=Lumen,r=6] slot.armor.body 0 wolf_armor 1
+  # Commands cannot move a named or trimmed item without rebuilding it bare, so
+  # a script puts a kit's weapons and pickaxes in the hotbar and its shield in
+  # the off hand, swapping out what was there. The message is the kit owner's
+  # name prefix, as in the item names.
+  main.js: |
+    import { system, EquipmentSlot } from "@minecraft/server";
+
+    const HOTBAR = ["Sword", "Axe", "Mace", "Spear", "Trident", "Bow", "Crossbow", "Fortune Pickaxe", "Silk Pickaxe"];
+
+    system.afterEvents.scriptEventReceive.subscribe(({ id, message, sourceEntity }) => {
+      if (id !== "kits:arrange" || sourceEntity?.typeId !== "minecraft:player") return;
+      // The dropped kit is picked up over the following ticks.
+      system.runTimeout(() => arrange(sourceEntity, message.trim()), 40);
+    });
+
+    function arrange(player, owner) {
+      if (!player.isValid) return;
+      const inv = player.getComponent("inventory").container;
+      // Names are "!! <owner> <title> !!" once the colour codes are gone.
+      const find = (title) => {
+        for (let i = 0; i < inv.size; i++) {
+          const name = inv.getItem(i)?.nameTag?.replace(/§./g, "");
+          if (name?.includes(`${owner} ${title} `)) return i;
+        }
+        return -1;
+      };
+      HOTBAR.forEach((title, slot) => {
+        const i = find(title);
+        if (i >= 0 && i !== slot) inv.swapItems(slot, i, inv);
+      });
+      const shield = find("Shield");
+      if (shield >= 0) {
+        const hands = player.getComponent("equippable");
+        const held = hands.getEquipment(EquipmentSlot.Offhand);
+        hands.setEquipment(EquipmentSlot.Offhand, inv.getItem(shield));
+        inv.setItem(shield, held);
+      }
+    }
   init.mcfunction: |
     scoreboard objectives add unitkit dummy
   # 40 ticks is about 2 s: the gear check does not need to run every tick.
