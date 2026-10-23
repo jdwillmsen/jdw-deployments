@@ -37,13 +37,28 @@ data:
   # Dotablaze's named, enchanted and trimmed kit, handed over from the console
   # with `execute as Dotablaze at @s run function kits/dota`. The items drop at
   # the player's feet, so they land straight in the inventory.
+  # The armour goes on through four dispensers set around the player (the
+  # armoury structure), which a redstone block fires; the marker stand at a
+  # corner, which no dispenser faces, times their removal (tick.mcfunction).
   dota.mcfunction: |
     structure load dota_kit ~ ~ ~ 0_degrees none true false
+    structure load dota_armoury ~-1 ~ ~-1 0_degrees none false true
+    summon armor_stand armory_rig ~-1 ~ ~-1
+    setblock ~1 ~1 ~ redstone_block
+    setblock ~-1 ~1 ~ redstone_block
+    setblock ~ ~1 ~1 redstone_block
+    setblock ~ ~1 ~-1 redstone_block
   # The Light King's kit, with his dog: Lumen is spawned beside him in armour
   # unless one already exists. A wolf has no owner until its player feeds it a
   # bone, so he is untamed on purpose; the name keeps him from despawning.
   lightking.mcfunction: |
     structure load lightking_kit ~ ~ ~ 0_degrees none true false
+    structure load lightking_armoury ~-1 ~ ~-1 0_degrees none false true
+    summon armor_stand armory_rig ~-1 ~ ~-1
+    setblock ~1 ~1 ~ redstone_block
+    setblock ~-1 ~1 ~ redstone_block
+    setblock ~ ~1 ~1 redstone_block
+    setblock ~ ~1 ~-1 redstone_block
     execute unless entity @e[type=wolf,name=Lumen] run summon wolf Lumen ~2 ~ ~
     replaceitem entity @e[type=wolf,name=Lumen,r=6] slot.armor.body 0 wolf_armor 1
   init.mcfunction: |
@@ -53,9 +68,17 @@ data:
     scoreboard players add kit unitkit 1
     execute if score kit unitkit matches 40.. run function unit_kit/equip
     execute if score kit unitkit matches 40.. run scoreboard players set kit unitkit 0
+    scoreboard players add @e[type=armor_stand,name=armory_rig] unitkit 1
+    execute as @e[type=armor_stand,name=armory_rig,scores={unitkit=20..}] at @s run function unit_kit/armory_clean
     scoreboard players add restock unitkit 1
     execute if score restock unitkit matches 1200.. run function unit_kit/restock
     execute if score restock unitkit matches 1200.. run scoreboard players set restock unitkit 0
+  # A second after the dispensers fired, takes the rig down; the marker stand
+  # stands at its corner.
+  armory_clean.mcfunction: |
+    fill ~ ~ ~ ~2 ~ ~2 air replace dispenser
+    fill ~ ~1 ~ ~2 ~1 ~2 air replace redstone_block
+    kill @s
   # Each line runs only for a unit missing that piece, so nothing is replaced
   # while it is held; `execute as` keeps a no-match from counting as a failure.
   equip.mcfunction: |
@@ -136,3 +159,5 @@ binaryData:
   # loads named or trimmed items.
   dota_kit.mcstructure: {{ .Files.Get "files/dota_kit.mcstructure" | b64enc }}
   lightking_kit.mcstructure: {{ .Files.Get "files/lightking_kit.mcstructure" | b64enc }}
+  dota_armoury.mcstructure: {{ .Files.Get "files/dota_armoury.mcstructure" | b64enc }}
+  lightking_armoury.mcstructure: {{ .Files.Get "files/lightking_armoury.mcstructure" | b64enc }}
