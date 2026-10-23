@@ -53,8 +53,9 @@ for uid, name in want.items():
     assert dep["spec"]["template"]["metadata"]["labels"]["app"] == uid, uid
     claim = dep["spec"]["template"]["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"]
     assert claim == (uid if uid in own_claim else "crew-shared"), (uid, claim)
+    assert e["CAMERA_ATLAS_DIR"]["value"] == "/data/atlas", uid
     if uid not in own_claim:
-        assert e["CAMERA_ATLAS_DIR"]["value"] == f"/data/{uid}/atlas", uid
+        assert e["AUTH_CACHE_DIR"]["value"] == f"/data/{uid}/auth", uid
     plan = json.loads(e["WORK_PLAN"]["value"])
     assert 1 <= len(plan) <= 8, (uid, plan)
     mine = {json.dumps(c, sort_keys=True) for t in plan for c in [t.get("chest")] + [t.get("to")] + (t.get("from") or []) if c}

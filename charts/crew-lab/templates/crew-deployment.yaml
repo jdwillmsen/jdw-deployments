@@ -36,6 +36,32 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
+      {{- if $unit.sharedVolume }}
+      initContainers:
+        # A ReadWriteMany volume gets no fsGroup ownership change from the
+        # storage driver, so the claim's root stays root-owned and crew, which
+        # runs as 1000, cannot make its directories there. Only the root
+        # directory is changed, and only once.
+        - name: share-owner
+          image: {{ $.Values.crew.persistence.sharedInit.image }}
+          command:
+            - sh
+            - -c
+            - '[ "$(stat -c %u:%g /data)" = 1000:1000 ] || chown 1000:1000 /data'
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN"]
+          resources:
+            {{- toYaml $.Values.crew.persistence.sharedInit.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- end }}
       containers:
         - name: crew
           image: "{{ $.Values.crew.image.repository }}:{{ $.Values.crew.image.tag }}"
@@ -64,15 +90,15 @@ spec:
               value: {{ $.Values.crew.camera.enabled | quote }}
             - name: CAMERA_MAX_VIEWERS
               value: {{ $.Values.crew.camera.maxViewers | quote }}
-            {{- if $unit.sharedVolume }}
-            # Units on the shared claim each keep to their own directory.
-            - name: CAMERA_ATLAS_DIR
-              value: {{ printf "/data/%s/atlas" $unit.id | quote }}
-            - name: AUTH_CACHE_DIR
-              value: {{ printf "/data/%s/auth" $unit.id | quote }}
-            {{- else }}
+            # The atlas depends only on the server version, so units on the
+            # shared claim use one directory and the first to need it builds
+            # it for all; a per-unit directory would be a download each.
             - name: CAMERA_ATLAS_DIR
               value: {{ $.Values.crew.camera.atlasDir | quote }}
+            {{- if $unit.sharedVolume }}
+            # Sign-in tokens are per account, so each unit keeps its own.
+            - name: AUTH_CACHE_DIR
+              value: {{ printf "/data/%s/auth" $unit.id | quote }}
             {{- end }}
             {{- if $unit.role }}
             - name: WORK_PLAN
