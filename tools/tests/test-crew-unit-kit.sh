@@ -39,15 +39,35 @@ for name in ('Agate', 'Basalt', 'Cobble', 'Dusty', 'Ember', 'Flint', 'Gravel', '
     assert all(equip.count(f'name="{name}",hasitem={{item=iron_{p}') == 1 for p in ('sword', 'helmet', 'chestplate', 'leggings', 'boots')), name
 
 # Hard-mode units get no gear at all.
-for name in ('Pebble', 'Quartz', 'Rusty', 'Slate', 'Tinder'):
+for name in ('Pebble', 'Quartz'):
     assert f'name="{name}",hasitem' not in equip, name
     assert f'name="{name}",x=0' in equip, name
 
-# Yards are kept supplied: every plot gets two chests, and a unit is sent to its plot.
-assert restock.count("chest [] keep") == 40, restock.count("chest [] keep")
-assert equip.count("run tp @s") == 20
+# The squad trades the yard kit for the combat one: diamond and a bow in the
+# yard kit's slots, one line per piece to top it up, no iron anywhere and no
+# bread. Nothing sends a warrior to its plot, so its yard and chest stay
+# unbuilt somewhere else.
+for name in ('Rusty', 'Slate', 'Tinder'):
+    got = [l.strip() for l in equip.splitlines() if f'name="{name}",hasitem' in l]
+    want = [f'execute as @a[name="{name}",hasitem={{item=diamond_sword,quantity=0}}] run replaceitem entity @s slot.hotbar 8 diamond_sword 1',
+            f'execute as @a[name="{name}",hasitem={{item=bow,quantity=0}}] run replaceitem entity @s slot.hotbar 0 bow 1',
+            f'execute as @a[name="{name}",hasitem={{item=arrow,quantity=0}}] run replaceitem entity @s slot.hotbar 1 arrow 64',
+            f'execute as @a[name="{name}",hasitem={{item=golden_apple,quantity=0}}] run replaceitem entity @s slot.hotbar 7 golden_apple 16',
+            f'execute as @a[name="{name}",hasitem={{item=shield,location=slot.weapon.offhand,quantity=0}}] run replaceitem entity @s slot.weapon.offhand 0 shield 1',
+            f'execute as @a[name="{name}",hasitem={{item=diamond_helmet,location=slot.armor.head,quantity=0}}] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1',
+            f'execute as @a[name="{name}",hasitem={{item=diamond_chestplate,location=slot.armor.chest,quantity=0}}] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1',
+            f'execute as @a[name="{name}",hasitem={{item=diamond_leggings,location=slot.armor.legs,quantity=0}}] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1',
+            f'execute as @a[name="{name}",hasitem={{item=diamond_boots,location=slot.armor.feet,quantity=0}}] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1']
+    assert sorted(got) == sorted(want), (name, sorted(got))
+    assert f'name="{name}",x=0' not in equip, name
+    assert f'name="{name}"' not in restock, name
+
+# Yards are kept supplied: every working plot gets two chests, and a working
+# unit is sent to its plot (17 units; the three warriors get neither).
+assert restock.count("chest [] keep") == 34, restock.count("chest [] keep")
+assert equip.count("run tp @s") == 17
 # A miner's quarry is refilled row by row, skipping rows its unit is in or beside.
-assert restock.count("unless entity @a[name=") == 36, restock.count("unless entity @a[name=")
+assert restock.count("unless entity @a[name=") == 30, restock.count("unless entity @a[name=")
 assert "unit_kit/restock" in cm["tick.mcfunction"]
 
 # The Dota kit ships byte-for-byte and the function loads it with its entities.
