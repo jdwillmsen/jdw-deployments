@@ -212,6 +212,9 @@ data:
     scoreboard players add restock unitkit 1
     execute if score restock unitkit matches 1200.. run function unit_kit/restock
     execute if score restock unitkit matches 1200.. run scoreboard players set restock unitkit 0
+    scoreboard players add rules unitkit 0
+    execute if score rules unitkit matches 0 run gamerule keepinventory true
+    scoreboard players set rules unitkit 1
   # Each line runs only for a unit missing that piece, so nothing is replaced
   # while it is held; `execute as` keeps a no-match from counting as a failure.
   equip.mcfunction: |
@@ -234,6 +237,7 @@ data:
     replaceitem cannot enchant. The kitwait score keeps the next check from
     firing while the dropped kit is still being picked up and worn. */}}
     {{- $role := required (printf "warrior %s has no squadRole" $unit.name) $unit.squadRole }}
+    {{- if not (has $role (list "vanguard" "striker" "ranger")) }}{{ fail (printf "warrior %s has squadRole %q: want vanguard, striker or ranger" $unit.name $role) }}{{ end }}
     {{- $pieces := list "diamond_helmet,location=slot.armor.head" "diamond_chestplate,location=slot.armor.chest" "diamond_leggings,location=slot.armor.legs" "diamond_boots,location=slot.armor.feet" "diamond_sword" "golden_apple" }}
     {{- if eq $role "vanguard" }}
     {{- $pieces = append $pieces "shield,location=slot.weapon.offhand" }}

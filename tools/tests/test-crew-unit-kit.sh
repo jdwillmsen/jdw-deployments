@@ -78,6 +78,9 @@ assert equip.count("run tp @s") == 17
 # A miner's quarry is refilled row by row, skipping rows its unit is in or beside.
 assert restock.count("unless entity @a[name=") == 30, restock.count("unless entity @a[name=")
 assert "unit_kit/restock" in cm["tick.mcfunction"]
+# Death must not drop the enchanted kit for anyone to pick up, so the pack sets keepinventory once.
+assert cm["tick.mcfunction"].count("gamerule keepinventory true") == 1
+assert "execute if score rules unitkit matches 0 run gamerule keepinventory true" in cm["tick.mcfunction"]
 
 # The Dota kit ships byte-for-byte and the function loads it with its entities.
 docs_kit = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "crew-lab-unit-kit")["binaryData"]
