@@ -37,6 +37,11 @@ spec:
         - path:
             type: Exact
             value: /v1/units/stream
+        # The console's redacted squad snapshot. Exact: /v1/squads and each
+        # squad's hello, status and orders are for the units and operators.
+        - path:
+            type: Exact
+            value: /v1/squads/stream
         - path:
             type: Exact
             value: /signin
