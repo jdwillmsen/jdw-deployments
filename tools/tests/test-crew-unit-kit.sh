@@ -50,12 +50,27 @@ for name in ('Pebble', 'Quartz'):
 # top-up of golden apples. No plain diamond or iron line is left, nothing sends
 # a warrior to its plot, and its yard and chest stay unbuilt.
 squad_kit = {"Rusty": "vanguard", "Slate": "duelist", "Tinder": "ranger"}
+WORN = "{item=netherite_chestplate,location=slot.armor.chest,quantity=0}"
 for name, role in squad_kit.items():
     got = [l.strip() for l in equip.splitlines() if f'name="{name}"' in l]
-    want = [f'execute as @a[name="{name}",hasitem={{item=netherite_chestplate,quantity=0}}] at @s run function kits/{role}/t5',
-            f'execute as @a[name="{name}",hasitem={{item=golden_apple,quantity=0}}] run give @s golden_apple 16']
+    sel = f'@a[name="{name}",scores={{kitwait=..0}},hasitem=['
+    nowhere = sel + '{item=netherite_chestplate,quantity=0},' + WORN + ']]'
+    carried = sel + '{item=netherite_chestplate,quantity=1..},' + WORN + ']]'
+    want = [f'scoreboard players add @a[name="{name}"] kitwait 0',
+            f'scoreboard players remove @a[name="{name}",scores={{kitwait=1..}}] kitwait 1',
+            f'execute as {nowhere} at @s run function kits/{role}/t5',
+            f'execute as {nowhere} run scoreboard players set @s kitwait 8',
+            f'execute as {carried} run scriptevent kits:arrange Legendary {role.title()}',
+            f'execute as {carried} run scoreboard players set @s kitwait 4',
+            f'execute as @a[name="{name}",scores={{kitwait=..0}},hasitem={{item=golden_apple,quantity=0}}] run give @s golden_apple 16']
     assert got == want, (name, got)
     assert f'name="{name}"' not in restock, name
+# Every hand-out is gated on the cooldown, so a slow pickup or a full inventory
+# cannot hand out a second kit or loop the apples.
+assert "objectives add kitwait" in cm["init.mcfunction"]
+for l in equip.splitlines():
+    if any(f'name="{n}"' in l for n in squad_kit) and ("function kits/" in l or "give @s" in l or "scriptevent" in l):
+        assert "kitwait=..0" in l, l
 assert "diamond_" not in equip and "slot.weapon.offhand" not in equip
 
 # Yards are kept supplied: every working plot gets two chests, and a working
