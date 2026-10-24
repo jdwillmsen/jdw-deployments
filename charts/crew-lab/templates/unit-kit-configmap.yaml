@@ -217,7 +217,8 @@ data:
     not worn, as after a death inside that window, gets the wearing step
     again instead of another kit. The kits carry fewer golden apples than the
     plain kit did, so they are topped up outside the cooldown, by give because
-    the kit's items own the hotbar. */}}
+    the kit's items own the hotbar. A top-up that did not land (a full
+    inventory) starts the cooldown too, so it is retried every 16 s, not 2 s. */}}
     {{- $worn := "{item=netherite_chestplate,location=slot.armor.chest,quantity=0}" }}
     scoreboard players add @a[name={{ $n }}] kitwait 0
     scoreboard players remove @a[name={{ $n }},scores={kitwait=1..}] kitwait 1
@@ -226,6 +227,7 @@ data:
     execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=1..},{{ $worn }}]] run scriptevent kits:arrange Legendary {{ title $kit }}
     execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=1..},{{ $worn }}]] run scoreboard players set @s kitwait 4
     execute as @a[name={{ $n }},scores={kitwait=..0},hasitem={item=golden_apple,quantity=0}] run give @s golden_apple 16
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem={item=golden_apple,quantity=0}] run scoreboard players set @s kitwait 8
     {{- else if $unit.role }}
     {{- /* A unit with a role works in its own yard, far from the spawn it joins
     at (and respawns at), so anything still within the hub's reach is sent

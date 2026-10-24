@@ -62,7 +62,8 @@ for name, role in squad_kit.items():
             f'execute as {nowhere} run scoreboard players set @s kitwait 8',
             f'execute as {carried} run scriptevent kits:arrange Legendary {role.title()}',
             f'execute as {carried} run scoreboard players set @s kitwait 4',
-            f'execute as @a[name="{name}",scores={{kitwait=..0}},hasitem={{item=golden_apple,quantity=0}}] run give @s golden_apple 16']
+            f'execute as @a[name="{name}",scores={{kitwait=..0}},hasitem={{item=golden_apple,quantity=0}}] run give @s golden_apple 16',
+            f'execute as @a[name="{name}",scores={{kitwait=..0}},hasitem={{item=golden_apple,quantity=0}}] run scoreboard players set @s kitwait 8']
     assert got == want, (name, got)
     assert f'name="{name}"' not in restock, name
 # Every hand-out is gated on the cooldown, so a slow pickup or a full inventory
