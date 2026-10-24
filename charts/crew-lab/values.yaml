@@ -455,7 +455,7 @@ crew:
       enabled: true
       # The series are counters and per-poll gauges, so a coarse interval loses
       # nothing a rate() over a few minutes would show.
-      interval: 30s
+      interval: 60s
     # Two people today. An id is fixed for life: it names the invite file, the
     # passkeys and the work each operator queues. Ids match
     # ^[a-z][a-z0-9-]{1,15}$. Rendered inline into the Deployment, never a
