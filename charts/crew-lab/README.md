@@ -76,11 +76,19 @@ squad `alpha`'s three warriors (`role: warrior` with `squadRole` vanguard,
 striker, ranger, in that order), built to fight side by side rather than work
 a plot. Rendering leaves them out of everything a working unit gets: no
 `WORK_PLAN` on the pod, no plot tp and no yard restocking from the unit-kit
-pack, so their plots in the yards grid stay unbuilt. What the pack keeps
-topped up for them is the combat kit — a diamond sword on 8, a bow on 0 with
-64 arrows on 1, 16 golden apples on 7 (the bread slot) and full diamond
-armour, with a shield in the offhand — re-armed piece by piece only when that
-piece is gone, like every unit's kit. Changes to that kit follow the pack
+pack, so their plots in the yards grid stay unbuilt. What the pack
+gives them is a catalog kit at tier 5 (netherite, maxed enchantments;
+[KITS.md](KITS.md)): `kits/vanguard/t5` for the vanguard, `kits/duelist/t5` for
+the striker and `kits/ranger/t5` for the ranger. The pack hands it over whole
+when no netherite chestplate is worn or carried, so it is given on join and
+again after a death or a restart. Each hand-out starts a 16 s cooldown, so a
+slow pickup or a full inventory cannot produce a second kit; a chestplate that
+is carried but not worn gets the wearing step again instead. Golden apples are
+topped up to 16 when none are left. The world's `keepinventory` rule is
+switched on once by the pack, so a dead warrior keeps its kit; the rule is
+world-wide, so it also applies to real players and yard units. An unknown
+`squadRole` fails the render.
+Changes to that kit follow the pack
 rules above the init container in `values.yaml`: bump `UNIT_KIT_REV`, which
 restarts the lab server and disconnects its players.
 

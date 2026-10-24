@@ -172,7 +172,10 @@ data:
   init.mcfunction: |
     scoreboard objectives add unitkit dummy
     scoreboard objectives add kitroll dummy
+    scoreboard objectives add kitwait dummy
   # 40 ticks is about 2 s: the gear check does not need to run every tick.
+  # The lab world drops a dead unit's whole kit for anyone to take, so the
+  # rule is turned on once; the marker keeps a later manual change in force.
   tick.mcfunction: |
     scoreboard players add kit unitkit 1
     execute if score kit unitkit matches 40.. run function unit_kit/equip
@@ -180,6 +183,9 @@ data:
     scoreboard players add restock unitkit 1
     execute if score restock unitkit matches 1200.. run function unit_kit/restock
     execute if score restock unitkit matches 1200.. run scoreboard players set restock unitkit 0
+    scoreboard players add rules unitkit 0
+    execute if score rules unitkit matches 0 run gamerule keepinventory true
+    scoreboard players set rules unitkit 1
   # Each line runs only for a unit missing that piece, so nothing is replaced
   # while it is held; `execute as` keeps a no-match from counting as a failure.
   # A unit given a catalog kit is tagged `kitted` and keeps that kit's gear
@@ -196,21 +202,32 @@ data:
     execute as @a[name={{ $n }},hasitem={item=iron_boots,location=slot.armor.feet,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.feet 0 iron_boots 1
     {{- end }}
     {{- if eq $unit.role "warrior" }}
-    {{- /* A warrior fights instead of working, so the combat kit replaces
-    everything the yard roles get here: no plot tp, no work tools, no bread.
-    Lines still only fire when that piece is spent (the same hasitem guard
-    as the yard kit) and sit in the same slots as the yard kit's (0 tool, 7
-    food, 8 weapon). The shield rides the offhand, the one hand a Bedrock
-    player keeps free while a sword is drawn. */}}
-    execute as @a[name={{ $n }},hasitem={item=diamond_sword,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 8 diamond_sword 1
-    execute as @a[name={{ $n }},hasitem={item=bow,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 0 bow 1
-    execute as @a[name={{ $n }},hasitem={item=arrow,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 1 arrow 64
-    execute as @a[name={{ $n }},hasitem={item=golden_apple,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 7 golden_apple 16
-    execute as @a[name={{ $n }},hasitem={item=shield,location=slot.weapon.offhand,quantity=0},tag=!kitted] run replaceitem entity @s slot.weapon.offhand 0 shield 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_helmet,location=slot.armor.head,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.head 0 diamond_helmet 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_chestplate,location=slot.armor.chest,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.chest 0 diamond_chestplate 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_leggings,location=slot.armor.legs,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.legs 0 diamond_leggings 1
-    execute as @a[name={{ $n }},hasitem={item=diamond_boots,location=slot.armor.feet,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.feet 0 diamond_boots 1
+    {{- $kits := dict "vanguard" "vanguard" "striker" "duelist" "ranger" "ranger" }}
+    {{- $kit := get $kits (default "" $unit.squadRole) }}
+    {{- if not $kit }}
+    {{- fail (printf "unit %s: squadRole %q must be vanguard, striker or ranger" $unit.id (toString $unit.squadRole)) }}
+    {{- end }}
+    {{- /* A warrior fights instead of working, so it gets a catalog kit and none
+    of what the yard roles get: no plot tp, no work tools, no bread. Each
+    hand-out starts a cooldown (kitwait, one step per 2 s tick) that covers
+    the kit's pickup and the script that wears it about 2 s later, so a slow
+    pickup never produces a second kit and a full inventory cannot loop. The
+    kit is handed over whole only when there is no netherite chestplate worn
+    or carried (a join, a death, a restart). A chestplate that is carried but
+    not worn, as after a death inside that window, gets the wearing step
+    again instead of another kit. The kits carry fewer golden apples than the
+    plain kit did, so they are topped up outside the cooldown, by give because
+    the kit's items own the hotbar. A top-up that did not land (a full
+    inventory) starts the cooldown too, so it is retried every 16 s, not 2 s. */}}
+    {{- $worn := "{item=netherite_chestplate,location=slot.armor.chest,quantity=0}" }}
+    scoreboard players add @a[name={{ $n }}] kitwait 0
+    scoreboard players remove @a[name={{ $n }},scores={kitwait=1..}] kitwait 1
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=0},{{ $worn }}]] at @s run function kits/{{ $kit }}/t5
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=0},{{ $worn }}]] run scoreboard players set @s kitwait 8
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=1..},{{ $worn }}]] run scriptevent kits:arrange Legendary {{ title $kit }}
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=1..},{{ $worn }}]] run scoreboard players set @s kitwait 4
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem={item=golden_apple,quantity=0}] run give @s golden_apple 16
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem={item=golden_apple,quantity=0}] run scoreboard players set @s kitwait 8
     {{- else if $unit.role }}
     {{- /* A unit with a role works in its own yard, far from the spawn it joins
     at (and respawns at), so anything still within the hub's reach is sent
