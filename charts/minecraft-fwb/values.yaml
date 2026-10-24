@@ -102,7 +102,7 @@ minecraft-bedrock:
     # default rolling tag, which upgrades the server binary underneath a live
     # world; for a GitOps workload whose state is the whole point, that is a
     # silent-change hazard rather than a convenience.
-    tag: "2026.9.2"
+    tag: "2026.10.1"
     pullPolicy: IfNotPresent
 
   # RollingUpdate never runs two writers: a StatefulSet terminates its pod and
@@ -1383,7 +1383,7 @@ agent:
     # 0.33.3 respawns a dead bot in the order 1.26.52 servers require, and
     # answers !map with a passkey's fingerprint or name by pointing at
     # !map passkey.
-    tag: "0.33.3"
+    tag: "0.35.2"
     pullPolicy: IfNotPresent
 
   # Drops and re-establishes the agent's own Bedrock session this often.
@@ -2153,7 +2153,7 @@ map:
     # makes the mob pictures again from the volume's pin, serving the old
     # ones until then. 1.49.1 adds a Copy button for !map passkey and
     # tightens the account panel.
-    tag: "1.49.1"
+    tag: "1.50.3"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
