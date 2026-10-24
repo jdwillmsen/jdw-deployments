@@ -80,10 +80,14 @@ pack, so their plots in the yards grid stay unbuilt. What the pack
 gives them is a catalog kit at tier 5 (netherite, maxed enchantments;
 [KITS.md](KITS.md)): `kits/vanguard/t5` for the vanguard, `kits/duelist/t5` for
 the striker and `kits/ranger/t5` for the ranger. The pack hands it over whole
-whenever the unit has no netherite chestplate anywhere, so it is given on join
-and again after a death or a restart, and tops up golden apples to 16 when none
-are left. The world's `keepinventory` rule is switched on once by the pack, so
-a dead warrior keeps its kit. An unknown `squadRole` fails the render.
+when no netherite chestplate is worn or carried, so it is given on join and
+again after a death or a restart. Each hand-out starts a 16 s cooldown, so a
+slow pickup or a full inventory cannot produce a second kit; a chestplate that
+is carried but not worn gets the wearing step again instead. Golden apples are
+topped up to 16 when none are left. The world's `keepinventory` rule is
+switched on once by the pack, so a dead warrior keeps its kit; the rule is
+world-wide, so it also applies to real players and yard units. An unknown
+`squadRole` fails the render.
 Changes to that kit follow the pack
 rules above the init container in `values.yaml`: bump `UNIT_KIT_REV`, which
 restarts the lab server and disconnects its players.

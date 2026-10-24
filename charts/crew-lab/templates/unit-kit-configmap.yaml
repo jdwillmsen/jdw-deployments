@@ -172,6 +172,7 @@ data:
   init.mcfunction: |
     scoreboard objectives add unitkit dummy
     scoreboard objectives add kitroll dummy
+    scoreboard objectives add kitwait dummy
   # 40 ticks is about 2 s: the gear check does not need to run every tick.
   # The lab world drops a dead unit's whole kit for anyone to take, so the
   # rule is turned on once; the marker keeps a later manual change in force.
@@ -207,15 +208,24 @@ data:
     {{- fail (printf "unit %s: squadRole %q must be vanguard, striker or ranger" $unit.id (toString $unit.squadRole)) }}
     {{- end }}
     {{- /* A warrior fights instead of working, so it gets a catalog kit and none
-    of what the yard roles get: no plot tp, no work tools, no bread. The kit is
-    handed over whole whenever there is no netherite chestplate anywhere on the
-    unit, which covers a join, a death and a restart alike. The check is not
-    limited to the chest slot: the kit lands in the inventory and is worn about
-    2 s later, so a slot check would hand over a second kit before that. The
-    kits carry fewer golden apples than the plain kit did, so they are topped
-    up here, by give because the kit's items own the hotbar. */}}
-    execute as @a[name={{ $n }},hasitem={item=netherite_chestplate,quantity=0}] at @s run function kits/{{ $kit }}/t5
-    execute as @a[name={{ $n }},hasitem={item=golden_apple,quantity=0}] run give @s golden_apple 16
+    of what the yard roles get: no plot tp, no work tools, no bread. Each
+    hand-out starts a cooldown (kitwait, one step per 2 s tick) that covers
+    the kit's pickup and the script that wears it about 2 s later, so a slow
+    pickup never produces a second kit and a full inventory cannot loop. The
+    kit is handed over whole only when there is no netherite chestplate worn
+    or carried (a join, a death, a restart). A chestplate that is carried but
+    not worn, as after a death inside that window, gets the wearing step
+    again instead of another kit. The kits carry fewer golden apples than the
+    plain kit did, so they are topped up outside the cooldown, by give because
+    the kit's items own the hotbar. */}}
+    {{- $worn := "{item=netherite_chestplate,location=slot.armor.chest,quantity=0}" }}
+    scoreboard players add @a[name={{ $n }}] kitwait 0
+    scoreboard players remove @a[name={{ $n }},scores={kitwait=1..}] kitwait 1
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=0},{{ $worn }}]] at @s run function kits/{{ $kit }}/t5
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=0},{{ $worn }}]] run scoreboard players set @s kitwait 8
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=1..},{{ $worn }}]] run scriptevent kits:arrange Legendary {{ title $kit }}
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=1..},{{ $worn }}]] run scoreboard players set @s kitwait 4
+    execute as @a[name={{ $n }},scores={kitwait=..0},hasitem={item=golden_apple,quantity=0}] run give @s golden_apple 16
     {{- else if $unit.role }}
     {{- /* A unit with a role works in its own yard, far from the spawn it joins
     at (and respawns at), so anything still within the hub's reach is sent
