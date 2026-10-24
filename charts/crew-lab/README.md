@@ -140,6 +140,10 @@ becomes reachable. For those, use a port-forward:
 kubectl -n jdwillmsen-prd port-forward deploy/crew-01 8080:8080
 ```
 
+crew-control's fleet series are scraped from `/metrics` by a ServiceMonitor
+(`crew.control.metrics`), which reaches the Service directly; the metric
+catalogue is in the crew-control README in gameops.
+
 The image tag in `values.yaml` must be a published `minecraft-crew-control`
 release.
 

@@ -1,0 +1,24 @@
+{{- if and .Values.crew.enabled .Values.crew.control.enabled .Values.crew.control.metrics.enabled }}
+# Scrapes crew-control through its own ClusterIP Service, which is how the
+# cluster reaches /metrics. The public HTTPRoute allow-lists paths and does not
+# list /metrics (tools/tests/test-crew-route.sh), so this is the only way in.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: crew-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: crew-control
+    app.kubernetes.io/component: crew-control
+spec:
+  selector:
+    matchLabels:
+      app: crew-control
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.crew.control.metrics.interval }}
+{{- end }}

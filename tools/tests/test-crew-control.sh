@@ -179,4 +179,28 @@ python3 -c "$world_check" "$work/world-on.yaml" on || fail "the world save is no
 render --set crew.control.world.enabled=false > "$work/world-off.yaml"
 python3 -c "$world_check" "$work/world-off.yaml" off || fail "the world save wiring renders while disabled"
 
+# The cluster scrapes crew-control through its Service; the public route does
+# not carry /metrics (test-crew-route.sh), so this is the only path to it.
+monitor_check='
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+mons = [d for d in docs if d["kind"] == "ServiceMonitor"]
+if sys.argv[2] == "off":
+    assert not mons, [m["metadata"]["name"] for m in mons]
+    sys.exit(0)
+assert len(mons) == 1, [m["metadata"]["name"] for m in mons]
+m = mons[0]
+assert m["metadata"]["name"] == "crew-control" and m["metadata"]["namespace"] == "jdwillmsen-prd"
+assert m["spec"]["selector"] == {"matchLabels": {"app": "crew-control"}}
+assert m["spec"]["namespaceSelector"] == {"matchNames": ["jdwillmsen-prd"]}
+assert m["spec"]["endpoints"] == [{"port": "http", "path": "/metrics", "interval": "30s"}], m["spec"]["endpoints"]
+svc = next(d for d in docs if d["kind"] == "Service" and d["metadata"]["name"] == "crew-control")
+assert svc["metadata"]["labels"]["app"] == "crew-control"
+assert [p["name"] for p in svc["spec"]["ports"]] == ["http"]
+'
+python3 -c "$monitor_check" "$work/rendered.yaml" on || fail "crew-control is not scraped as expected"
+render --set crew.control.metrics.enabled=false > "$work/metrics-off.yaml"
+python3 -c "$monitor_check" "$work/metrics-off.yaml" off || fail "crew.control.metrics.enabled=false still renders a ServiceMonitor"
+python3 -c "$monitor_check" "$work/off.yaml" off || fail "crew.control.enabled=false still renders a ServiceMonitor"
+
 echo "PASS: crew-control renders as expected"

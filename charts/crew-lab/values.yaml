@@ -447,6 +447,15 @@ crew:
       pullPolicy: IfNotPresent
     port: 8080
     logLevel: info
+    # Fleet series (throughput, failures by reason, time in state) on /metrics.
+    # The ServiceMonitor is how the cluster Prometheus finds it; the path stays
+    # off the public route. Needs a crew-control image that serves /metrics:
+    # until then the target reads as down.
+    metrics:
+      enabled: true
+      # The series are counters and per-poll gauges, so a coarse interval loses
+      # nothing a rate() over a few minutes would show.
+      interval: 30s
     # Two people today. An id is fixed for life: it names the invite file, the
     # passkeys and the work each operator queues. Ids match
     # ^[a-z][a-z0-9-]{1,15}$. Rendered inline into the Deployment, never a
