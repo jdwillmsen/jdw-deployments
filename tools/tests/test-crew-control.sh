@@ -193,7 +193,7 @@ m = mons[0]
 assert m["metadata"]["name"] == "crew-control" and m["metadata"]["namespace"] == "jdwillmsen-prd"
 assert m["spec"]["selector"] == {"matchLabels": {"app": "crew-control"}}
 assert m["spec"]["namespaceSelector"] == {"matchNames": ["jdwillmsen-prd"]}
-assert m["spec"]["endpoints"] == [{"port": "http", "path": "/metrics", "interval": "30s"}], m["spec"]["endpoints"]
+assert m["spec"]["endpoints"] == [{"port": "http", "path": "/metrics", "interval": "60s"}], m["spec"]["endpoints"]
 svc = next(d for d in docs if d["kind"] == "Service" and d["metadata"]["name"] == "crew-control")
 assert svc["metadata"]["labels"]["app"] == "crew-control"
 assert [p["name"] for p in svc["spec"]["ports"]] == ["http"]
