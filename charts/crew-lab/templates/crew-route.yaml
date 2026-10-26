@@ -42,6 +42,17 @@ spec:
         - path:
             type: Exact
             value: /v1/squads/stream
+        # Read-only analytics. Exact and anchored: /v1/units/{id}/work and
+        # /events are for the units and must stay unrouted.
+        - path:
+            type: Exact
+            value: /v1/insights
+        - path:
+            type: Exact
+            value: /v1/capacity
+        - path:
+            type: RegularExpression
+            value: /v1/units/[^/]+/explain
         - path:
             type: Exact
             value: /signin
