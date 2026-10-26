@@ -102,7 +102,7 @@ minecraft-bedrock:
     # default rolling tag, which upgrades the server binary underneath a live
     # world; for a GitOps workload whose state is the whole point, that is a
     # silent-change hazard rather than a convenience.
-    tag: "2026.9.2"
+    tag: "2026.10.2"
     pullPolicy: IfNotPresent
 
   # RollingUpdate never runs two writers: a StatefulSet terminates its pod and
@@ -1386,7 +1386,7 @@ agent:
     #
     # 0.36.0 adds presenceControllers below: !park and !unpark for named
     # players who are not operators.
-    tag: "0.36.0"
+    tag: "0.36.1"
     pullPolicy: IfNotPresent
 
   # XUIDs allowed to run !park and !unpark without being server operators,
@@ -2165,7 +2165,7 @@ map:
     # makes the mob pictures again from the volume's pin, serving the old
     # ones until then. 1.49.1 adds a Copy button for !map passkey and
     # tightens the account panel.
-    tag: "1.49.1"
+    tag: "1.50.5"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
