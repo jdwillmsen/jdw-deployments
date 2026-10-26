@@ -170,6 +170,34 @@ player list cannot be read, the job fails, the sync fails and nothing is
 restarted; run the sync again once the lab is empty. Set
 `unitKitGate.enabled=false` to skip the check.
 
+## Colosseum
+
+The lab's arena stands on the flat ground centred on x 0, z -758: an ellipse
+with a 100 x 72 sand floor, three tiers of seating, a three-storey arcaded
+outer wall with an attic, four portcullis gates on the axes, eight spawn pens
+under the stands and a paved plaza. It is built into the world, not the pack,
+so no restart is involved. `tools/crew-lab-colosseum.py` generates the build
+as `fill` commands and writes `arena.json`, the layout the arena director reads
+(pens, gate boxes, squad start gate, boss point):
+
+```
+tools/crew-lab-colosseum.py /tmp/colo --save=/tmp/colo/vox.npy
+tools/crew-lab-colosseum.py /tmp/colo --feed=jdwillmsen-prd/jdwillmsen-crew-lab-prd-minecraft-bedrock-0
+minecraft/crew/lab/arena.sh run k8s:jdwillmsen-prd/<pod> --layout /tmp/colo/arena.json ...
+```
+
+The console runs about 20 commands a second, so a full build takes about 15
+minutes. The build only places blocks: clear the footprint (x -112..111, z
+-860..-637, y 64..113) and load it first, with four ticking areas of at most
+100 chunks each, and remove them afterwards. Save the area in 56-block tiles
+with `structure save` before a rebuild so it can be put back with `structure
+load`. To change a built Colosseum, save the voxels with `--save` and later
+pass `--against` to emit only the difference.
+
+Each pen gate is a straight 3 x 3 box of iron bars the director opens with
+`fill ... air` and shuts with `fill ... iron_bars`. The generator refuses to
+write a build in which a pen could reach the arena with its gate shut.
+
 ## Reaching the console
 
 Open <https://crew.prd.jdwlabs.com>. It is the crew-control console: every unit's
