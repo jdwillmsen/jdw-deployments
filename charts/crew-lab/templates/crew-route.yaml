@@ -57,6 +57,10 @@ spec:
         - path:
             type: PathPrefix
             value: /v1/places
+        # Exact: the density route is signed-in only inside crew-control.
+        - path:
+            type: Exact
+            value: /v1/heatmap
         - path:
             type: PathPrefix
             value: /static
