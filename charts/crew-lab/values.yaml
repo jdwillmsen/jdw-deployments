@@ -5,7 +5,7 @@ minecraft-bedrock:
     # silent change underneath a running world is a hazard even in a lab. The
     # server binary itself is chosen by minecraftServer.version below, so the
     # two move independently.
-    tag: "2026.9.2"
+    tag: "2026.10.2"
     pullPolicy: IfNotPresent
 
   # A StatefulSet terminates its pod and waits for it to go before creating the
@@ -141,7 +141,7 @@ minecraft-bedrock:
   #
   initContainers:
     - name: install-unit-kit
-      image: "itzg/minecraft-bedrock-server:2026.9.2"
+      image: "itzg/minecraft-bedrock-server:2026.10.2"
       # The pack is copied only at pod start and the server reads functions
       # only at startup, so a changed pack needs a restart: bump this with any
       # edit to templates/unit-kit-configmap.yaml. It is an env var and not a
@@ -344,7 +344,7 @@ crew:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-crew
-    tag: "1.47.1"
+    tag: "1.49.0"
     pullPolicy: IfNotPresent
 
   # Lab only: skip Microsoft sign-in. The lab server runs offline, so a signed
