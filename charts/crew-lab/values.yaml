@@ -443,7 +443,7 @@ crew:
     enabled: true
     image:
       repository: ghcr.io/jdwillmsen/minecraft-crew-control
-      tag: "1.24.0"
+      tag: "1.25.0"
       pullPolicy: IfNotPresent
     port: 8080
     logLevel: info
