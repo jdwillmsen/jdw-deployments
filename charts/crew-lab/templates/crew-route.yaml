@@ -54,6 +54,9 @@ spec:
             type: RegularExpression
             value: /v1/units/[^/]+/explain$
         - path:
+            type: RegularExpression
+            value: /v1/units/[^/]+/inventory/changes$
+        - path:
             type: Exact
             value: /signin
         - path:
