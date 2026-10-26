@@ -171,6 +171,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "presence.secret.name" . }}
                   key: presence_tokens
+            {{- with .Values.agent.presenceControllers }}
+            - name: PRESENCE_CONTROLLERS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- end }}
           ports:
             - name: metrics

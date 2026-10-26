@@ -1383,8 +1383,20 @@ agent:
     # 0.33.3 respawns a dead bot in the order 1.26.52 servers require, and
     # answers !map with a passkey's fingerprint or name by pointing at
     # !map passkey.
-    tag: "0.33.3"
+    #
+    # 0.36.0 adds presenceControllers below: !park and !unpark for named
+    # players who are not operators.
+    tag: "0.36.0"
     pullPolicy: IfNotPresent
+
+  # XUIDs allowed to run !park and !unpark without being server operators,
+  # so the AFK bots can be switched by someone who has no other operator
+  # power. Those two commands only: !leave stays operator-only, and for these
+  # players !park all and !park agent leave the agent in the world. A gamertag
+  # here fails the agent's startup rather than granting nothing.
+  # The first entry is tommy1234516.
+  presenceControllers:
+    - "2535428238413680"
 
   # Drops and re-establishes the agent's own Bedrock session this often.
   #
