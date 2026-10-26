@@ -15,7 +15,7 @@ helm template crew-lab "$chart" --namespace jdwillmsen-prd \
   -f "$chart/values.yaml" -f "$chart/values-prd.yaml" > "$work/rendered.yaml"
 
 python3 - "$work/rendered.yaml" <<'PY' || fail "the crew route is not view-only"
-import sys, yaml
+import re, sys, yaml
 
 routes = [d for d in yaml.safe_load_all(open(sys.argv[1]))
           if d and d.get("kind") == "HTTPRoute"]
@@ -39,13 +39,15 @@ def reachable(path):
                 return True
             if p["type"] == "PathPrefix" and (path == v or path.startswith(v.rstrip("/") + "/")):
                 return True
-            if p["type"] not in ("Exact", "PathPrefix"):
+            if p["type"] == "RegularExpression" and re.fullmatch(v, path):
+                return True
+            if p["type"] not in ("Exact", "PathPrefix", "RegularExpression"):
                 raise AssertionError(f"unexpected match type {p['type']}")
     return False
 
-for path in ["/", "/camera", "/units/crew-01/camera", "/units/crew-01/v1/state", "/units/crew-01/v1/camera/ws", "/v1/units/stream", "/v1/squads/stream", "/signin", "/auth/login/options", "/v1/work/crew-01/stop", "/v1/jobs", "/v1/jobs/abc/cancel", "/v1/places", "/v1/heatmap", "/static/console.js"]:
+for path in ["/", "/camera", "/units/crew-01/camera", "/units/crew-01/v1/state", "/units/crew-01/v1/camera/ws", "/v1/units/stream", "/v1/squads/stream", "/signin", "/auth/login/options", "/v1/work/crew-01/stop", "/v1/jobs", "/v1/jobs/abc/cancel", "/v1/places", "/v1/heatmap", "/static/console.js", "/v1/insights", "/v1/capacity", "/v1/units/crew-01/explain"]:
     assert reachable(path), f"{path} should be routed"
-for path in ["/v1/tasks", "/v1/units/crew-01/work", "/v1/units/crew-01/events", "/v1/squads", "/v1/squads/alpha", "/v1/squads/alpha/orders", "/v1/squads/alpha/hello", "/v1/squadsx", "/v1/units", "/signinx", "/v1/workx", "/v1/jobsx", "/v1/placesx", "/v1/heatmapx", "/v1/heatmap/x", "/v1/tasks/abc/cancel", "/metrics", "/metrics/", "/metrics/fleet", "/healthz", "/readyz", "/v1/state", "/v1/camera/ws", "/unitsx", "/v1/unitsx", "/staticx"]:
+for path in ["/v1/tasks", "/v1/units/crew-01/work", "/v1/units/crew-01/events", "/v1/squads", "/v1/squads/alpha", "/v1/squads/alpha/orders", "/v1/squads/alpha/hello", "/v1/squadsx", "/v1/units", "/signinx", "/v1/workx", "/v1/jobsx", "/v1/placesx", "/v1/insightsx", "/v1/capacityx", "/v1/capacity/x", "/v1/units/crew-01/explainx", "/v1/units/crew-01/x/explain", "/v1/units//explain", "/v1/units/crew-01/explain/work", "/v1/heatmapx", "/v1/heatmap/x", "/v1/tasks/abc/cancel", "/metrics", "/metrics/", "/metrics/fleet", "/healthz", "/readyz", "/v1/state", "/v1/camera/ws", "/unitsx", "/v1/unitsx", "/staticx"]:
     assert not reachable(path), f"{path} must not be routed"
 PY
 
