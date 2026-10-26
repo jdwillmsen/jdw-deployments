@@ -52,7 +52,7 @@ spec:
             value: /v1/capacity
         - path:
             type: RegularExpression
-            value: /v1/units/[^/]+/explain
+            value: /v1/units/[^/]+/explain$
         - path:
             type: Exact
             value: /signin
