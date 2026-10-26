@@ -73,6 +73,8 @@ spec:
               value: {{ .Values.crew.control.operators | toJson | quote }}
             - name: CREW_PLACES
               value: {{ .Values.crew.control.places | toJson | quote }}
+            - name: CREW_ALERTS
+              value: {{ .Values.crew.control.alerts | toJson | quote }}
             - name: CREW_INVITES_DIR
               value: /invites
             - name: DATA_DIR

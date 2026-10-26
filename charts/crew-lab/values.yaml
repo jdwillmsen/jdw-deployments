@@ -456,6 +456,23 @@ crew:
       # The series are counters and per-poll gauges, so a coarse interval loses
       # nothing a rate() over a few minutes would show.
       interval: 60s
+    # Alert rule thresholds, rendered into CREW_ALERTS. crew-control refuses to
+    # start on an unknown key or an out-of-range value, so a typo here fails the
+    # rollout rather than leaving a rule at its default. Values below are the
+    # service defaults, written out so tuning is a values change.
+    #  - stuck_for: extra time in the stuck state before alerting; the poller
+    #    already waits 90 s without progress, so 0s alerts on the poll that
+    #    flags it.
+    #  - failures: consecutive failed tasks.
+    #  - hunger_below: hunger value, 0 to 20.
+    #  - silent_for: unreachable time before a unit counts as silent.
+    #  - mute_max: longest single mute.
+    alerts:
+      stuck_for: 0s
+      failures: 3
+      hunger_below: 6
+      silent_for: 2m
+      mute_max: 24h
     # Two people today. An id is fixed for life: it names the invite file, the
     # passkeys and the work each operator queues. Ids match
     # ^[a-z][a-z0-9-]{1,15}$. Rendered inline into the Deployment, never a
