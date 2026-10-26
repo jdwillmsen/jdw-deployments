@@ -56,6 +56,13 @@ spec:
         - path:
             type: RegularExpression
             value: /v1/units/[^/]+/inventory/changes$
+        # Exact: POST /v1/events/prune is an operator write and stays unrouted.
+        - path:
+            type: Exact
+            value: /v1/events
+        - path:
+            type: Exact
+            value: /v1/replay/positions
         - path:
             type: Exact
             value: /signin
