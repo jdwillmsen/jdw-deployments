@@ -137,9 +137,9 @@ crew-control (`crew.control`) renders its unit list from `crew.units`, skipping
 any with `replicas: 0`, and proxies only each unit's camera routes. The route
 allow-lists `/`, `/camera`, `/units`, `/v1/units/stream`, `/static`, `/signin`,
 `/auth`, `/v1/work`, `/v1/jobs`, `/v1/places`, `/v1/heatmap`, `/v1/insights`, `/v1/capacity` and
-`/v1/units/{id}/explain` and `/v1/units/{id}/inventory/changes`, all served by crew-control.
+`/v1/units/{id}/explain`, `/v1/units/{id}/inventory/changes`, `/v1/events` and `/v1/replay/positions`, all served by crew-control.
 Viewing needs no sign-in. Every request to `/v1/work`, `/v1/jobs` and
-`/v1/places`, reads included, needs a passkey session, and so does `/v1/heatmap`; `/auth` is the sign-in
+`/v1/places`, reads included, needs a passkey session, and so do `/v1/heatmap`, `/v1/events` and `/v1/replay/positions`; `/auth` is the sign-in
 itself. The task API, `/metrics`, the
 probes and the units' own `/v1/units/{id}/work` and `/events` stay
 cluster-only; `tools/tests/test-crew-route.sh` fails if any of them
