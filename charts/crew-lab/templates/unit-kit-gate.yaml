@@ -1,0 +1,128 @@
+{{- if .Values.unitKitGate.enabled }}
+{{- $name := "unit-kit-gate" }}
+{{- $serverPod := printf "%s-minecraft-bedrock-0" .Release.Name }}
+{{- $rev := "" }}
+{{- range (index .Values "minecraft-bedrock").initContainers }}
+{{- if eq .name "install-unit-kit" }}
+{{- range .env }}
+{{- if eq .name "UNIT_KIT_REV" }}{{ $rev = .value }}{{ end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $rev }}{{ fail "unitKitGate needs UNIT_KIT_REV on the install-unit-kit init container" }}{{ end }}
+{{- $nonHuman := list }}
+{{- range .Values.crew.units }}{{ $nonHuman = append $nonHuman .name }}{{ end }}
+{{- range .Values.labRebuild.nonHumanPlayerPatterns }}{{ $nonHuman = append $nonHuman . }}{{ end }}
+# Holds a sync that would restart the lab server (a changed UNIT_KIT_REV) until
+# no human is online. The hook and its RBAC are PreSync resources so the
+# permissions exist before the first sync that needs them.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    # A failed gate stays for its log until the next sync replaces it.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ add .Values.unitKitGate.waitSeconds 120 }}
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $name }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gate
+          image: {{ .Values.labRebuild.image }}
+          command: ["bash", "-c"]
+          args:
+            - |
+{{ .Files.Get "files/unit-kit-gate.sh" | indent 14 }}
+          env:
+            - name: HOME
+              value: /tmp
+            - name: SERVER_POD
+              value: "{{ .Release.Namespace }}/{{ $serverPod }}"
+            - name: WANT_REV
+              value: {{ $rev | quote }}
+            - name: NON_HUMAN
+              value: {{ join " " $nonHuman | quote }}
+            - name: WAIT_S
+              value: {{ .Values.unitKitGate.waitSeconds | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 10m
+            limits:
+              memory: 64Mi
+              cpu: 100m
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 8Mi
+{{- end }}

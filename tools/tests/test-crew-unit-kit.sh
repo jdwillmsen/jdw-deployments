@@ -25,6 +25,10 @@ cmp -s "$work/kits.tar.gz" "$chart/files/kits.tar.gz" \
   || fail "charts/crew-lab/files/kits.tar.gz is stale: rerun tools/crew-lab-kits.py"
 cmp -s "$work/KITS.md" "$chart/KITS.md" || fail "charts/crew-lab/KITS.md is stale: rerun tools/crew-lab-kits.py"
 
+want_rev="$(python3 "$here/tools/crew-lab-kit-rev.py")"
+grep -qF "value: \"$want_rev\"" "$chart/values.yaml" \
+  || fail "UNIT_KIT_REV is stale: run tools/crew-lab-kit-rev.py --write (it should be $want_rev)"
+
 python3 - "$work/rendered.yaml" "$work/dota_kit.mcstructure" "$work/kits.tar.gz" <<'PY' || fail "the unit kit is not rendered as expected"
 import base64, sys, json, yaml
 

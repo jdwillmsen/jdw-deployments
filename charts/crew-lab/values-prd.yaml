@@ -5,3 +5,6 @@
 
 labRebuild:
   enabled: true
+
+unitKitGate:
+  enabled: true

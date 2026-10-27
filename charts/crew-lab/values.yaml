@@ -143,13 +143,15 @@ minecraft-bedrock:
     - name: install-unit-kit
       image: "itzg/minecraft-bedrock-server:2026.10.2"
       # The pack is copied only at pod start and the server reads functions
-      # only at startup, so a changed pack needs a restart: bump this with any
-      # edit to templates/unit-kit-configmap.yaml. It is an env var and not a
-      # pod annotation because Argo CD ignores StatefulSet template
-      # annotations here. The restart disconnects players.
+      # only at startup, so a changed pack needs a restart. This value is a
+      # checksum of the pack and of this container, written by
+      # tools/crew-lab-kit-rev.py --write; the chart test fails while it is
+      # stale. It is an env var and not a pod annotation because Argo CD
+      # ignores StatefulSet template annotations here. The restart disconnects
+      # players, so unitKitGate holds the sync until none are online.
       env:
         - name: UNIT_KIT_REV
-          value: "14"
+          value: "50eaec55acff"
       command:
         - sh
         - -ec
@@ -394,10 +396,10 @@ crew:
     periodSeconds: 10
     # Generous so a busy unit is not killed for one slow answer.
     livenessFailureThreshold: 6
-
-  # Per unit. Steady state is a single UDP session and a small HTTP server
     # Five minutes for the status server to answer the first time.
     startupFailureThreshold: 30
+
+  # Per unit. Steady state is a single UDP session and a small HTTP server
   # (2-4m CPU idle, 176-257Mi measured on 2026-10-20 with the camera on). The
   # memory limit leaves a third over the peak for building the atlas from the
   # extracted pack and for camera viewers' sub-chunk replay. Both limits count
@@ -649,3 +651,13 @@ labRebuild:
     limits:
       memory: 64Mi
       cpu: 50m
+
+# Argo CD PreSync gate for the unit-kit pack. A changed UNIT_KIT_REV restarts
+# the lab server, which disconnects everyone on it, so the sync waits here for
+# the human players to leave. Crew units and the load-test bots do not count.
+# After waitSeconds the sync fails (nothing is restarted) and is run again by
+# hand once the lab is empty. A sync that leaves the revision alone passes at
+# once. The job uses labRebuild.image.
+unitKitGate:
+  enabled: false
+  waitSeconds: 600

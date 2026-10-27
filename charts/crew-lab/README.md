@@ -89,13 +89,16 @@ switched on once by the pack, so a dead warrior keeps its kit; the rule is
 world-wide, so it also applies to real players and yard units. An unknown
 `squadRole` fails the render.
 Changes to that kit follow the pack
-rules above the init container in `values.yaml`: bump `UNIT_KIT_REV`, which
-restarts the lab server and disconnects its players.
+rules above the init container in `values.yaml`: rerun
+`tools/crew-lab-kit-rev.py --write` to update `UNIT_KIT_REV` (the chart test
+fails while it is stale), which restarts the lab server and disconnects its
+players. The `unitKitGate` PreSync job holds that sync until no human is online
+(crew units and `load-*` bots do not count); see Kit rollouts below.
 
 The pod carries `CREW_ROLE/<squadRole>` and `CREW_SQUAD/<squad>` on warriors
 only.
 
-- Probes: liveness `/healthz`, readiness `/readyz`. Readiness is false while
+- Probes: a startup probe on `/healthz` (five minutes), then liveness `/healthz`, readiness `/readyz`. Readiness is false while
   the unit is dead or the server restarts, which can be long, so only liveness
   can restart the pod.
 - `/data` holds the token cache (unused offline) and the texture atlas cache.
@@ -121,7 +124,21 @@ crew units, and 7 mob types in the same tiers, each handed out from the
 console or rolled at random (`function kits/random`, `function mobs/random`).
 `tools/crew-lab-kits.py` builds it into `files/kits.tar.gz`, which the pack's
 init container unpacks; a change ships like any pack edit, with a
-`UNIT_KIT_REV` bump.
+`UNIT_KIT_REV` refresh.
+
+### Kit rollouts
+
+`UNIT_KIT_REV` is a checksum of the rendered pack and the install container,
+so a kit change cannot merge without a new revision. With `unitKitGate.enabled`
+(on in `values-prd.yaml`) every sync first runs the `unit-kit-gate` PreSync
+job. It passes at once when the server pod already runs the new revision or
+does not exist, and otherwise waits up to `unitKitGate.waitSeconds` (600) for
+the human players to leave, checking every 30 s. A player counts as human
+unless named by `crew.units`, matching `labRebuild.nonHumanPlayerPatterns`, or
+signed in with an empty XUID. If someone is still on after the wait, or the
+player list cannot be read, the job fails, the sync fails and nothing is
+restarted; run the sync again once the lab is empty. Set
+`unitKitGate.enabled=false` to skip the check.
 
 ## Reaching the console
 
