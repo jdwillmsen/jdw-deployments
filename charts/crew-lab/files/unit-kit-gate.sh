@@ -41,10 +41,18 @@ fi
 say "kit revision $running -> $WANT_REV restarts the lab server"
 
 # Sets $humans to the names of people online; returns 1 when that cannot be
-# read and 2 when the server is not accepting commands (not up, so nobody on).
+# read and 2 when the pod is confirmed not running (so nobody is on it).
 check() {
   humans=
-  kubectl -n "$ns" exec "$pod" -- send-command list >/dev/null 2>&1 || return 2
+  if ! kubectl -n "$ns" exec "$pod" -- send-command list >/dev/null 2>&1; then
+    # A failed exec alone proves nothing: a dropped stream or API timeout looks
+    # the same while players are on. Only a pod read that succeeds and shows the
+    # pod is not Running lets the sync through.
+    local phase
+    phase=$(kubectl -n "$ns" get pod "$pod" -o jsonpath='{.status.phase}' 2>/dev/null) || return 1
+    [[ -n $phase && $phase != Running ]] && return 2
+    return 1
+  fi
   sleep "${SETTLE_S:-2}"
   local out block name pattern known connected line xuid
   out=$(kubectl -n "$ns" logs "$pod" --since=30s 2>/dev/null) || return 1
@@ -74,7 +82,7 @@ while :; do
   check
   rc=$?
   if [[ $rc == 2 ]]; then
-    say "the server is not accepting commands, so nobody is on it"
+    say "the server pod is not running, so nobody is on it"
     exit 0
   fi
   if [[ $rc == 0 && -z $humans ]]; then
