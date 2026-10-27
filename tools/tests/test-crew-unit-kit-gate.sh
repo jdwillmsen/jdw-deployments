@@ -66,10 +66,17 @@ case "$1" in
   get)
     if [[ ${FAKE_GET:-ok} == notfound ]]; then echo 'Error from server (NotFound): pods "x" not found' >&2; exit 1; fi
     if [[ ${FAKE_GET:-ok} == denied ]]; then echo 'Error from server (Forbidden): nope' >&2; exit 1; fi
+    if [[ "$*" == *"status.phase"* ]]; then
+      [[ ${FAKE_PHASE:-Running} == unreadable ]] && exit 1
+      printf '%s' "${FAKE_PHASE:-Running}"
+      exit 0
+    fi
     printf '%s' "${FAKE_REV:-old}"
     ;;
   exec)
     [[ ${FAKE_EXEC:-ok} == down ]] && exit 2
+    # flaky: the first list works, every later one fails like a dropped stream.
+    [[ ${FAKE_EXEC:-ok} == flaky && -s $STATE_DIR/calls ]] && exit 1
     echo "__LIST__" >> "$STATE_DIR/calls"
     ;;
   logs)
@@ -111,6 +118,10 @@ expect "a player with no connect line counts as human" 1 "waiting for: Mia" FAKE
 expect "an offline bot with an empty xuid does not" 0 "no human players" FAKE_COUNT=1/20 FAKE_PLAYERS=Probe \
   FAKE_CONNECTED="Player connected: Probe, xuid: "
 expect "an unreadable list fails" 1 "could not read the player list" FAKE_LIST=garbled
-expect "a server that is not up passes" 0 "not accepting commands" FAKE_EXEC=down
+expect "a pod that is not running passes" 0 "not running" FAKE_EXEC=down FAKE_PHASE=Pending
+expect "a failed exec on a running pod fails" 1 "could not read the player list" FAKE_EXEC=down
+expect "a failed exec with an unreadable pod fails" 1 "could not read the player list" FAKE_EXEC=down FAKE_PHASE=unreadable
+expect "humans seen once then a failed exec still fails" 1 "waiting for: Jake" FAKE_EXEC=flaky FAKE_COUNT=1/20 \
+  FAKE_PLAYERS=Jake FAKE_CONNECTED="Player connected: Jake, xuid: 2535400000000000"
 
 echo "PASS: crew unit-kit gate"
