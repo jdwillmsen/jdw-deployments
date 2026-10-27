@@ -216,6 +216,16 @@ operator from `crew.control.operators` also means deleting their passkeys the
 same way. Work is queued in the shared Postgres (`crew.control.database`), whose
 credentials arrive through the `crew-control-db` ExternalSecret.
 
+### Signing in with Xbox
+
+Off by default (`crew.control.xbox.enabled: false`). On, set `clientId` (the
+Entra application ID) and `accounts` (`operator` and `xuid` pairs; every
+operator must be in `crew.control.operators`). The client secret is read from
+key `client-secret` of Secret `crew-control-xbox`, mounted at `/xbox`; the chart
+never creates it. The public route already forwards `/auth`, which covers the
+sign-in paths. Set-up and rollback steps are in the gameops runbook
+`docs/runbooks/crew-xbox-signin.md`.
+
 ## Tasks
 
 Each unit takes work over `POST /v1/tasks` once `TASKS_TOKEN` is set. All units

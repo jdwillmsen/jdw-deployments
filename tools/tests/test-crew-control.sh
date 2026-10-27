@@ -203,4 +203,40 @@ render --set crew.control.metrics.enabled=false > "$work/metrics-off.yaml"
 python3 -c "$monitor_check" "$work/metrics-off.yaml" off || fail "crew.control.metrics.enabled=false still renders a ServiceMonitor"
 python3 -c "$monitor_check" "$work/off.yaml" off || fail "crew.control.enabled=false still renders a ServiceMonitor"
 
+# Xbox sign-in ships off: no secret mount, no client id, and the flag says so
+# explicitly. On, the secret is read from a mounted file and never from env.
+xbox_check='
+import json, sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+on = sys.argv[2] == "on"
+dep = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "crew-control")
+spec = dep["spec"]["template"]["spec"]
+c = spec["containers"][0]
+env = {e["name"]: e.get("value") for e in c["env"]}
+vols = {v["name"]: v for v in spec["volumes"]}
+mounts = {m["name"]: m for m in c["volumeMounts"]}
+if not on:
+    assert env["XBOX_LOGIN_ENABLED"] == "false", env["XBOX_LOGIN_ENABLED"]
+    assert not any(k in env for k in ("XBOX_CLIENT_ID", "CREW_XBOX_ACCOUNTS", "XBOX_CLIENT_SECRET_FILE", "XBOX_CLIENT_SECRET")), env
+    assert "xbox" not in vols and "xbox" not in mounts
+    assert not [d for d in docs if d["kind"] == "Secret"], "the chart must not create the Xbox secret"
+    sys.exit(0)
+assert env["XBOX_LOGIN_ENABLED"] == "true"
+assert env["XBOX_CLIENT_ID"] == "11111111-2222-3333-4444-555555555555"
+assert json.loads(env["CREW_XBOX_ACCOUNTS"]) == [{"operator": "owner", "xuid": "2535000000000001"}]
+assert env["XBOX_CLIENT_SECRET_FILE"] == "/xbox/client-secret"
+assert "XBOX_CLIENT_SECRET" not in env
+assert vols["xbox"]["secret"] == {"secretName": "crew-control-xbox", "optional": True}, vols["xbox"]
+assert mounts["xbox"]["mountPath"] == "/xbox" and mounts["xbox"]["readOnly"] is True
+'
+python3 -c "$xbox_check" "$work/rendered.yaml" off || fail "Xbox sign-in is not off by default"
+render --set crew.control.xbox.enabled=true \
+  --set crew.control.xbox.clientId=11111111-2222-3333-4444-555555555555 \
+  --set 'crew.control.xbox.accounts[0].operator=owner' \
+  --set-string 'crew.control.xbox.accounts[0].xuid=2535000000000001' > "$work/xbox-on.yaml"
+python3 -c "$xbox_check" "$work/xbox-on.yaml" on || fail "Xbox sign-in does not render as expected when on"
+if render --set crew.control.xbox.enabled=true > /dev/null 2>&1; then
+  fail "Xbox sign-in rendered on without a client id"
+fi
+
 echo "PASS: crew-control renders as expected"

@@ -75,6 +75,16 @@ spec:
               value: {{ .Values.crew.control.places | toJson | quote }}
             - name: CREW_ALERTS
               value: {{ .Values.crew.control.alerts | toJson | quote }}
+            - name: XBOX_LOGIN_ENABLED
+              value: {{ .Values.crew.control.xbox.enabled | quote }}
+            {{- if .Values.crew.control.xbox.enabled }}
+            - name: XBOX_CLIENT_ID
+              value: {{ required "crew.control.xbox.clientId is required when Xbox sign-in is enabled" .Values.crew.control.xbox.clientId | quote }}
+            - name: CREW_XBOX_ACCOUNTS
+              value: {{ .Values.crew.control.xbox.accounts | toJson | quote }}
+            - name: XBOX_CLIENT_SECRET_FILE
+              value: {{ printf "/xbox/%s" .Values.crew.control.xbox.clientSecretKey | quote }}
+            {{- end }}
             - name: CREW_INVITES_DIR
               value: /invites
             - name: DATA_DIR
@@ -138,6 +148,11 @@ spec:
             - name: invites
               mountPath: /invites
               readOnly: true
+            {{- if .Values.crew.control.xbox.enabled }}
+            - name: xbox
+              mountPath: /xbox
+              readOnly: true
+            {{- end }}
             {{- if .Values.crew.control.world.enabled }}
             - name: world
               mountPath: /world
@@ -155,6 +170,14 @@ spec:
           secret:
             secretName: {{ .Values.crew.control.invitesSecretName }}
             optional: true
+        {{- if .Values.crew.control.xbox.enabled }}
+        # Optional so a missing Secret fails crew-control's own check, which
+        # names the variable, instead of leaving the pod in ContainerCreating.
+        - name: xbox
+          secret:
+            secretName: {{ .Values.crew.control.xbox.clientSecretName }}
+            optional: true
+        {{- end }}
         {{- if .Values.crew.control.world.enabled }}
         - name: world
           persistentVolumeClaim:
