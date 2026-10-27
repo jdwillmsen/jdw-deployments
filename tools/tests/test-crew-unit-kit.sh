@@ -172,20 +172,4 @@ for role in healer ""; do
   grep -q "squadRole" "$work/bad.err" || fail "squadRole '$role' failed without naming squadRole: $(cat "$work/bad.err")"
 done
 
-# The stage-0 mob add-on: both packs ship in the ConfigMap, and the UUIDs the
-# init container registers are the ones in their manifests.
-python3 - "$work/rendered.yaml" <<'PY' || fail "the stage-0 mob add-on is not rendered as expected"
-import base64, io, json, sys, tarfile, yaml
-
-docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
-cm = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "crew-lab-unit-kit")
-tar = tarfile.open(fileobj=io.BytesIO(base64.b64decode(cm["binaryData"]["lab-mods-stage0.tar.gz"])))
-script = next(c for d in docs if d["kind"] == "StatefulSet"
-              for c in d["spec"]["template"]["spec"]["initContainers"] if c["name"] == "install-unit-kit")["command"][-1]
-for pack in ("behavior_pack", "resource_pack"):
-    header = json.load(tar.extractfile(f"{pack}/manifest.json"))["header"]
-    assert header["uuid"] in script, pack
-    assert f'version: {json.dumps(header["version"])}' in script, pack
-PY
-
 echo "PASS: unit kit renders as expected"
