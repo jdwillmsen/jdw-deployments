@@ -75,11 +75,11 @@ minecraft-bedrock:
 
   minecraftServer:
     eula: "TRUE"
-    # LATEST: Bedrock clients only connect within a narrow protocol window of
-    # their own build, and the image checks for the current server on every
-    # container start, independently of image.tag above. Left unreviewed here
-    # because the world is disposable.
-    version: "LATEST"
+    # Pinned because LATEST silently moved the server to 1.26.60.6 on a restart,
+    # whose StartGame packet the crew bots (gophertunnel 1.62) cannot decode, so
+    # no unit could spawn. Bedrock clients only connect within a narrow protocol
+    # window of their own build; unpin once crew supports the newer protocol.
+    version: "1.26.52.3"
     difficulty: normal
     gameMode: survival
     levelName: crew-lab
