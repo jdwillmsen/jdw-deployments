@@ -548,6 +548,20 @@ crew:
         box:
           min: {x: 164, "y": 64, z: -440}
           max: {x: 164, "y": 64, z: -440}
+    # Sign in with Xbox beside the passkey (README, "Signing in with Xbox").
+    # Off: crew-control registers no Xbox route and the mount is not rendered.
+    # accounts is rendered into CREW_XBOX_ACCOUNTS, and crew-control refuses to
+    # start if an operator is not listed above, an xuid is not a number, or
+    # the list is empty while this is on. The client secret is only read from
+    # the Secret named here, which the chart never creates.
+    xbox:
+      enabled: false
+      clientId: ""
+      accounts: []
+      #  - operator: owner
+      #    xuid: "2535000000000000"
+      clientSecretName: crew-control-xbox
+      clientSecretKey: client-secret
     # Secrets the chart only references (README, "Signing in"). crew-control
     # treats both as optional: with no invites nobody can enrol, with no work
     # token the work API is shut. The units need the work token to start.
