@@ -308,8 +308,3 @@ binaryData:
   # over a hundred structures would not fit a ConfigMap unpacked.
   kits.tar.gz: {{ .Files.Get "files/kits.tar.gz" | b64enc }}
   lightking_kit.mcstructure: {{ .Files.Get "files/lightking_kit.mcstructure" | b64enc }}
-  # Stage-0 custom mob add-on (gameops packs/lab-mods-stage0): a behaviour and
-  # a resource pack, a few KB. Rebuild it from that directory with
-  # `tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=gnu
-  # -cf - behavior_pack resource_pack | gzip -9n`, so the bytes are stable.
-  lab-mods-stage0.tar.gz: {{ .Files.Get "files/lab-mods-stage0.tar.gz" | b64enc }}

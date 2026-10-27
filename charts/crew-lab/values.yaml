@@ -126,8 +126,6 @@ minecraft-bedrock:
     # no RakNet listener. crew dials RakNet only, and so do the probes this
     # subchart renders, so the transport is pinned.
     TRANSPORT: raknet
-    # Lets the boot be checked for add-on errors (ContentLog files in /data/logs).
-    CONTENT_LOG_FILE_ENABLED: "true"
 
   # Gear for the crew units, from the unit-kit ConfigMap (templates/). An
   # offline-mode player has no XUID, so the server cannot persist its
@@ -153,7 +151,7 @@ minecraft-bedrock:
       # players, so unitKitGate holds the sync until none are online.
       env:
         - name: UNIT_KIT_REV
-          value: "d31c5af246ef"
+          value: "4fbb583e2e23"
       command:
         - sh
         - -ec
@@ -181,23 +179,15 @@ minecraft-bedrock:
           [ -s "$list" ] || echo '[]' > "$list"
           jq --arg id "$id" 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [1, 0, 0]}]' "$list" > "$list.new"
           mv "$list.new" "$list"
-          # Stage-0 mob add-on. Replaced wholesale on every start, so the image's
-          # copy-if-absent pack handling (FORCE_PACK_COPY) is not involved. Bump
-          # both manifest versions on any change: clients cache by UUID+version.
-          mods=/data/.lab-mods-stage0
-          rm -rf "$mods" && mkdir -p "$mods"
-          tar -xzf /kit/lab-mods-stage0.tar.gz -C "$mods"
-          mkdir -p "$world/behavior_packs" "$world/resource_packs"
-          rm -rf "$world/behavior_packs/gameops-lab-mods-stage0" "$world/resource_packs/gameops-lab-mods-stage0"
-          mv "$mods/behavior_pack" "$world/behavior_packs/gameops-lab-mods-stage0"
-          mv "$mods/resource_pack" "$world/resource_packs/gameops-lab-mods-stage0"
-          rm -rf "$mods"
-          rlist="$world/world_resource_packs.json"
-          [ -s "$rlist" ] || echo '[]' > "$rlist"
-          jq --arg id c8b7905a-b5e3-45a6-a10e-488507337eea 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [0, 0, 1]}]' "$rlist" > "$rlist.new"
-          mv "$rlist.new" "$rlist"
-          jq --arg id 900b5811-de7d-4aea-9a87-7398d78673db 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [0, 0, 1]}]' "$list" > "$list.new"
-          mv "$list.new" "$list"
+          # The stage-0 mob add-on is withdrawn: a world resource pack keeps the
+          # crew units from spawning, and the volume keeps what an earlier start
+          # installed, so remove the files and their pack-list entries.
+          rm -rf "$world/behavior_packs/gameops-lab-mods-stage0" "$world/resource_packs/gameops-lab-mods-stage0" /data/.lab-mods-stage0
+          for l in "$world/world_behavior_packs.json" "$world/world_resource_packs.json"; do
+            [ -s "$l" ] || continue
+            jq 'map(select(.pack_id != "900b5811-de7d-4aea-9a87-7398d78673db" and .pack_id != "c8b7905a-b5e3-45a6-a10e-488507337eea"))' "$l" > "$l.new"
+            mv "$l.new" "$l"
+          done
       # Below the server's own, so the pod's quota charge is unchanged: an
       # init container counts only where it exceeds the main containers.
       resources:
