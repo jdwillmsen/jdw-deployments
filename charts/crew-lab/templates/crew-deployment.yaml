@@ -161,6 +161,17 @@ spec:
           # the unit's state in the world and is false for long stretches
           # (dead, server restarting). Nothing may restart the pod on
           # readiness, and the liveness budget below outlasts a slow start.
+          # The status server starts before sign-in, but a pod whose first
+          # lookups stall (cluster DNS timing out) can still take minutes to
+          # bind, and liveness would restart it in a loop. Liveness only
+          # begins once this has passed.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: status
+            periodSeconds: {{ $.Values.crew.probes.periodSeconds }}
+            timeoutSeconds: 3
+            failureThreshold: {{ $.Values.crew.probes.startupFailureThreshold }}
           livenessProbe:
             httpGet:
               path: /healthz
