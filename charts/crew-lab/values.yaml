@@ -396,6 +396,8 @@ crew:
     livenessFailureThreshold: 6
 
   # Per unit. Steady state is a single UDP session and a small HTTP server
+    # Five minutes for the status server to answer the first time.
+    startupFailureThreshold: 30
   # (2-4m CPU idle, 176-257Mi measured on 2026-10-20 with the camera on). The
   # memory limit leaves a third over the peak for building the atlas from the
   # extracted pack and for camera viewers' sub-chunk replay. Both limits count

@@ -91,6 +91,14 @@ assert total <= 1000, f"crew limits.cpu totals {total}m, want <= 1000m"
 mem = sum(int(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"][:-2]) for d in deps.values())
 assert mem <= 20 * 384, f"crew limits.memory totals {mem}Mi, want <= 7680Mi"
 assert len(chests) >= len(want) - len(squads)
+
+# A unit whose first lookups stall must get minutes to answer /healthz once
+# before liveness may restart it.
+for uid, dep in deps.items():
+    c = dep["spec"]["template"]["spec"]["containers"][0]
+    sp = c["startupProbe"]
+    assert sp["httpGet"]["path"] == "/healthz", uid
+    assert sp["periodSeconds"] * sp["failureThreshold"] >= 300, uid
 PY
 
 # A unit's replicas can be overridden alone, including to 0.
