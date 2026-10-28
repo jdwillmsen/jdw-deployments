@@ -1,0 +1,324 @@
+{{- if .Values.versionCheck.enabled }}
+{{- $serverPod := printf "%s-minecraft-bedrock-0" .Release.Name }}
+{{- $candidate := include "versionCheck.candidatePod" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "versionCheck.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "versionCheck.name" . }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # `create` cannot be scoped by resourceName; everything else is limited to
+  # the one candidate name and to the lab's own server pod.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: [{{ $candidate | quote }}]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames: [{{ $candidate | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "versionCheck.name" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "versionCheck.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "versionCheck.name" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "versionCheck.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.versionCheck.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: {{ .Values.versionCheck.ttlSecondsAfterFinished }}
+      activeDeadlineSeconds: {{ .Values.versionCheck.timeoutSeconds }}
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "versionCheck.name" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: version-check
+              image: {{ .Values.versionCheck.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: 64Mi
+                  cpu: 50m
+                limits:
+                  memory: 256Mi
+                  cpu: 500m
+              env:
+                - name: CANDIDATE_POD
+                  value: {{ $candidate | quote }}
+                - name: SERVER_POD
+                  value: {{ $serverPod | quote }}
+                - name: SERVER_CONTAINER
+                  value: "{{ .Release.Name }}-minecraft-bedrock"
+                - name: CANDIDATE_IMAGE
+                  value: "{{ index .Values "minecraft-bedrock" "image" "repository" }}:{{ index .Values "minecraft-bedrock" "image" "tag" }}"
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+
+                  emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
+
+                  # Read from the running binary's command line: the image runs
+                  # it under its own version name, so this cannot disagree with
+                  # what is serving. Not the log, which rotates past its startup.
+                  current="$(timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- \
+                    sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\0" "\n" | grep -m1 "^\./bedrock_server-"' 2>/dev/null \
+                    | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true)"
+                  if [[ -z "$current" ]]; then
+                    emit failed "could not read the running version from $SERVER_POD"
+                    exit 1
+                  fi
+
+                  # --wait=false: this role has no list verb, which kubectl's
+                  # default wait polls with, so waiting would hang, not error.
+                  remove_candidate() {
+                    timeout 15s kubectl delete pod -n "$NS" "$CANDIDATE_POD" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+                  }
+                  trap remove_candidate EXIT
+
+                  # The candidate's only witness is its log, and cleanup deletes
+                  # the pod; quotes are stripped because this lands inside emit's JSON.
+                  candidate_log() {
+                    local out
+                    out="$(timeout 10s kubectl logs -n "$NS" "$CANDIDATE_POD" --tail=3 2>/dev/null | tr -d '"\\' | tr '\n' ' ' || true)"
+                    printf '%s' "${out:-<none>}"
+                  }
+
+                  # A throwaway copy of the server image with no volume and
+                  # VERSION left at LATEST: booting it is the only way to learn
+                  # what LATEST resolves to. Held as text because a heredoc
+                  # terminator cannot be indented into the loop below.
+                  podspec="$(cat <<-PODSPEC
+                  apiVersion: v1
+                  kind: Pod
+                  metadata:
+                    name: $CANDIDATE_POD
+                    namespace: $NS
+                  spec:
+                    restartPolicy: Never
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: 1000
+                      runAsGroup: 3000
+                      fsGroup: 2000
+                      seccompProfile:
+                        type: RuntimeDefault
+                    affinity:
+                      nodeAffinity:
+{{- toYaml (index .Values "minecraft-bedrock" "affinity" "nodeAffinity") | nindent 24 }}
+                    containers:
+                      - name: candidate
+                        image: "$CANDIDATE_IMAGE"
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          readOnlyRootFilesystem: true
+                          capabilities:
+                            drop: ["ALL"]
+                        env:
+                          - name: EULA
+                            value: "TRUE"
+                        volumeMounts:
+                          - name: tmp
+                            mountPath: /tmp
+                          - name: datadir
+                            mountPath: /data
+                        resources:
+                          requests:
+                            memory: 1Gi
+                            cpu: 250m
+                          limits:
+                            memory: 2Gi
+                            cpu: "1"
+                    volumes:
+                      - name: tmp
+                        emptyDir: {}
+                      - name: datadir
+                        emptyDir: {}
+                  PODSPEC
+                  )"
+
+                  # Two attempts: the entrypoint gives up on a failed version
+                  # lookup instead of retrying, so a candidate that loses one
+                  # DNS query is dead in seconds and no deadline reaches it.
+                  # Every wait is bounded by wall clock, not iteration count;
+                  # versionCheck.timeoutSeconds is the sum of their ceilings.
+                  latest=""
+                  reason="candidate was never attempted"
+                  for attempt in 1 2; do
+                    # A run killed at its deadline skips the trap and leaves a
+                    # candidate that has no patch verb to replace: remove, then
+                    # confirm gone, since `create` needs the name free.
+                    remove_candidate
+                    gone=""
+                    gone_deadline=$(( SECONDS + 45 ))
+                    while (( SECONDS < gone_deadline )); do
+                      if [[ -z "$(timeout 10s kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.metadata.name}' 2>/dev/null || true)" ]]; then
+                        gone="yes"
+                        break
+                      fi
+                      sleep 2
+                    done
+                    if [[ -z "$gone" ]]; then
+                      reason="a previous candidate pod was still terminating"
+                      emit candidate_failed "attempt $attempt: $reason"
+                      continue
+                    fi
+
+                    if ! printf '%s\n' "$podspec" | timeout 15s kubectl create -f - >/dev/null; then
+                      reason="candidate pod could not be created"
+                      emit candidate_failed "attempt $attempt: $reason"
+                      continue
+                    fi
+
+                    ready=""
+                    ready_deadline=$(( SECONDS + 60 ))
+                    while (( SECONDS < ready_deadline )); do
+                      phase="$(timeout 10s kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                      if [[ "$phase" == "Running" ]]; then
+                        ready="yes"
+                        break
+                      fi
+                      if [[ "$phase" == "Failed" || "$phase" == "Succeeded" ]]; then
+                        break
+                      fi
+                      sleep 2
+                    done
+                    if [[ -z "$ready" ]]; then
+                      reason="candidate pod never reached Running (phase: ${phase:-unknown}); candidate log: $(candidate_log)"
+                      emit candidate_failed "attempt $attempt: $reason"
+                      continue
+                    fi
+
+                    # The version comes from the candidate's log, not a ping:
+                    # a NetherNet server opens no RakNet listener, so a ping
+                    # would fail whatever transport Mojang defaults to.
+                    poll_deadline=$(( SECONDS + 60 ))
+                    while (( SECONDS < poll_deadline )); do
+                      out="$(timeout 15s kubectl logs -n "$NS" "$CANDIDATE_POD" 2>/dev/null || true)"
+                      # `|| true`: no version yet is this loop's normal state,
+                      # and a non-matching grep would end the run under pipefail.
+                      latest="$(grep -oE '(Downloading Bedrock server version|Version:) [0-9]+(\.[0-9]+)+' <<<"$out" \
+                        | head -1 | awk '{print $NF}' || true)"
+                      if [[ -n "$latest" ]]; then
+                        break
+                      fi
+                      phase="$(timeout 10s kubectl get pod -n "$NS" "$CANDIDATE_POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                      if [[ "$phase" != "Running" ]]; then
+                        break
+                      fi
+                      sleep 2
+                    done
+                    if [[ -n "$latest" ]]; then
+                      break
+                    fi
+
+                    reason="candidate never named a version in its log (phase: ${phase:-unknown}); candidate log: $(candidate_log)"
+                    emit candidate_failed "attempt $attempt: $reason"
+                  done
+
+                  if [[ -z "$latest" ]]; then
+                    emit failed "$reason"
+                    exit 1
+                  fi
+
+                  # The prefix match stops an hourly restart loop if either
+                  # source ever names three components instead of four.
+                  if [[ "$current" == "$latest" || "$latest" == "$current."* ]]; then
+                    emit current "lab already on $current"
+                    exit 0
+                  fi
+
+                  emit restarting "lab on $current, latest is $latest"
+
+                  # Best-effort: send-command exits 0 even when the server
+                  # rejects the command, and `say` rejects square brackets.
+                  timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -- \
+                    send-command say "Server updating to $latest, restarting in 30 seconds" >/dev/null 2>&1 \
+                    || emit announce_failed "restart notice"
+                  sleep 30
+
+                  # Stop over the console and let the kubelet restart the
+                  # container in place. Deleting the pod would move the world
+                  # volume, which on democratic-csi has cost world files; the
+                  # entrypoint re-resolves LATEST on the in-place restart.
+                  # Unlike `say`, send-command exits 2 when the stop was never
+                  # delivered, which must fail the run.
+                  server_state() {
+                    timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" \
+                      -o jsonpath="{.metadata.uid} {.status.containerStatuses[?(@.name=='$SERVER_CONTAINER')].restartCount}" 2>/dev/null || true
+                  }
+
+                  before="$(server_state)"
+                  if ! timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -- send-command stop >/dev/null 2>&1; then
+                    emit failed "could not deliver stop to $SERVER_POD"
+                    exit 1
+                  fi
+
+                  # The pod UID is paired with the restart count so a recreated
+                  # pod (count reset to 0) still reads as restarted.
+                  restarted=""
+                  restart_deadline=$(( SECONDS + 120 ))
+                  while (( SECONDS < restart_deadline )); do
+                    now="$(server_state)"
+                    if [[ -n "$now" && "$now" != "$before" ]]; then
+                      restarted="yes"
+                      break
+                    fi
+                    sleep 3
+                  done
+                  if [[ -z "$restarted" ]]; then
+                    emit failed "stop was delivered but $SERVER_POD never restarted"
+                    exit 1
+                  fi
+
+                  # Does not wait for the new version to serve: the next run
+                  # re-reads it and retries if the upgrade did not take.
+                  emit restarted "restarted in place, $current -> $latest"
+{{- end }}
