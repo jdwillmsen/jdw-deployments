@@ -875,7 +875,7 @@ bot:
     # go-raknet moves to the v1.15.2 the agent already runs on this server.
     # 1.6.1 is the first build on gophertunnel v1.63 (protocol 2225); 1.5.x
     # cannot decode the StartGame of Bedrock 1.26.60 and never spawns.
-    tag: "1.6.1"
+    tag: "1.6.2"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -987,7 +987,7 @@ bot2:
     # 1.2.1 (the presence release, first built from gameops), the same as bot
     # above and for the same reason. 1.2.2 and 1.5.2 likewise.
     # 1.6.1: gophertunnel v1.63 for Bedrock 1.26.60, as for bot above.
-    tag: "1.6.1"
+    tag: "1.6.2"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
