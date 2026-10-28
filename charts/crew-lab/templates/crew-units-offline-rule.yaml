@@ -14,9 +14,7 @@ spec:
     - name: crew-units-offline
       rules:
         - alert: JdwillmsenCrewUnitsOffline
-          # A ratio, not a count, so adding units needs no edit here. Replayed
-          # over the 24 h to 2026-10-28 it fires through the 2026-10-27 hang and
-          # stays quiet through an ordinary server restart.
+          # A ratio, not a count, so adding units needs no edit here.
           expr: |
             sum(crew_fleet_unit_state{namespace="{{ .Release.Namespace }}",state="offline"})
               / count(crew_fleet_unit_state{namespace="{{ .Release.Namespace }}",state="offline"})
