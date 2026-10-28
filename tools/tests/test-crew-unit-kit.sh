@@ -78,10 +78,21 @@ for l in equip.splitlines():
         assert "kitwait=..0" in l, l
 assert "diamond_" not in equip and "slot.weapon.offhand" not in equip
 
+# Menders and builders: creative whenever a unit is not, no gear and no yard.
+# Only the mender is moved, to the arena home, when it joins near the hub.
+for name in ("Umber", "Vein"):
+    got = [l.strip() for l in equip.splitlines() if f'name="{name}"' in l]
+    want = [f'execute as @a[name="{name}",m=!creative] run gamemode creative @s']
+    if name == "Umber":
+        want.append('execute as @a[name="Umber",x=0,y=64,z=-400,r=200] run tp @s -300 66 -758')
+    assert got == want, (name, got)
+    assert f'name="{name}"' not in restock, name
+
 # Yards are kept supplied: every working plot gets two chests, and a working
 # unit is sent to its plot (17 units; the three warriors get neither).
 assert restock.count("chest [] keep") == 34, restock.count("chest [] keep")
-assert equip.count("run tp @s") == 17
+# The mender is sent to its home from the hub too, so 18 tps in all.
+assert equip.count("run tp @s") == 18
 # A miner's quarry is refilled row by row, skipping rows its unit is in or beside.
 assert restock.count("unless entity @a[name=") == 30, restock.count("unless entity @a[name=")
 assert "unit_kit/restock" in cm["tick.mcfunction"]

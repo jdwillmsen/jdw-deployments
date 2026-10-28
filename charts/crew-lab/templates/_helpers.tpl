@@ -58,9 +58,40 @@ the structures the unit-kit restock function builds (unit-kit-configmap.yaml):
 {{- $plan = append $plan (dict "template" "mine_shaft" "entrance" (dict "x" (add $x $dx) "y" 64 "z" (add $z 27)) "facing" "east" "depth" 8 "branches" 3 "branch_length" 3 "area" $area "to" $c1) -}}
 {{- end -}}
 {{- else -}}
-{{- fail (printf "unit %s: unknown role %q (miner, chopper, hauler, shaft)" .unit.id .unit.role) -}}
+{{- fail (printf "unit %s: unknown role %q (miner, chopper, hauler, shaft, warrior, mender, builder)" .unit.id .unit.role) -}}
 {{- end -}}
 {{- $plan | toJson -}}
+{{- end -}}
+
+{{/*
+Whether a unit is a mender or builder: a lab-only unit that works in creative
+mode on a task and never in a yard. Takes the unit and renders "true" or
+nothing, so it reads as a condition through `include`. It also refuses a role
+that no template knows, and a squad on a lab role, because crew never lets such
+a unit join one.
+*/}}
+{{- define "crew.labRole" -}}
+{{- if and .role (not (has .role (list "miner" "chopper" "hauler" "shaft" "warrior" "mender" "builder"))) -}}
+{{- fail (printf "unit %s: unknown role %q (miner, chopper, hauler, shaft, warrior, mender, builder)" .id .role) -}}
+{{- end -}}
+{{- if has .role (list "mender" "builder") -}}
+{{- if .squad -}}
+{{- fail (printf "unit %s: a %s never joins a squad, remove squad" .id .role) -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+Where a mender is put when it joins, as "x y z". The unit's own `home` wins
+over crew.menderHome. A mender with neither fails the render.
+*/}}
+{{- define "crew.menderHome" -}}
+{{- $h := .unit.home | default .default -}}
+{{- if not (and $h (hasKey $h "x") (hasKey $h "y") (hasKey $h "z")) -}}
+{{- fail (printf "unit %s: a mender needs a home with x, y and z (crew.menderHome or the unit's own home)" .unit.id) -}}
+{{- end -}}
+{{- printf "%d %d %d" (int64 $h.x) (int64 $h.y) (int64 $h.z) -}}
 {{- end -}}
 
 {{- define "versionCheck.name" -}}

@@ -153,7 +153,7 @@ minecraft-bedrock:
       # players, so unitKitGate holds the sync until none are online.
       env:
         - name: UNIT_KIT_REV
-          value: "fb1e4703e8b6"
+          value: "50480618f73e"
       command:
         - sh
         - -ec
@@ -257,6 +257,12 @@ crew:
   # `hard: true` takes a unit out of the unit-kit pack's gear top-ups, so it
   # keeps only what it carries and has to recover its own drops after a death
   # (the lab's keepInventory is off). Its plot tp and yard restocking stay.
+  # A `mender` or `builder` is a lab-only unit that works in creative mode on
+  # a task and never in a yard (README, "Menders and builders"). Like a
+  # warrior it gets no plot tp, no yard restock and no work tools, and no
+  # WORK_PLAN: it idles until tasked. It never joins a squad. The pack sets its
+  # creative mode whenever it is missing. A mender is also sent to `menderHome`
+  # (below), or to its own `home` (x, "y", z), when it joins near the hub.
   #
   # A unit may set `replicas: 0` to stop alone without losing its volume.
   #
@@ -357,6 +363,25 @@ crew:
       squadRole: ranger
       squad: alpha
       sharedVolume: true
+    - id: crew-21
+      name: Umber
+      role: mender
+      sharedVolume: true
+    - id: crew-22
+      name: Vein
+      role: builder
+      sharedVolume: true
+
+  # Where a mender stands after it joins: the open floor at the centre of the
+  # Colosseum (centre -300 64 -758, floor at y 63), two blocks up so it lands
+  # on the floor. Repair work needs the mender on loaded chunks inside the
+  # arena, and a task may only walk within x, z -500..499, so the pack puts it
+  # here. Creative mode takes no fall damage. A unit's own `home` wins.
+  # `y` is quoted because Helm reads a bare y as true.
+  menderHome:
+    x: -300
+    "y": 66
+    z: -758
 
   # Default for every unit; a unit's own `replicas` wins. Set to 0 (not
   # `enabled: false`) to stop units without deleting their volumes. Explicit
@@ -422,15 +447,15 @@ crew:
   # (2-4m CPU idle, 176-257Mi measured on 2026-10-20 with the camera on). The
   # memory limit leaves a third over the peak for building the atlas from the
   # extracted pack and for camera viewers' sub-chunk replay. Both limits count
-  # against the namespace quota, and the 20 units together are what
+  # against the namespace quota, and the 22 units together are what
   # decides what is left for the CronJobs:
-  #   limits.cpu     7100m now - 1000m (server) + 2000m + 17 x 50m = 8950m of
-  #                  12000m, so 3050m remain for the backup (1000m) beside the
-  #                  version-check and volume-recovery jobs (500m each)
-  #   limits.memory  15104Mi + 17 x 384Mi + 3 x (384 - 512)Mi = 21248Mi of
-  #                  24576Mi, so 3328Mi remain for the jobs (about 1Gi at once)
-  #   requests.cpu   2570m + 17 x 20m + 300m (server) = 3210m of 6000m
-  #   requests.memory 6544Mi + 17 x 128Mi = 8720Mi of 12288Mi
+  #   limits.cpu     8950m + 2 x 50m = 9050m of 12000m, so 2950m remain for
+  #                  the backup (1000m) beside the version-check and
+  #                  volume-recovery jobs (500m each)
+  #   limits.memory  21248Mi + 2 x 384Mi = 22016Mi of 24576Mi, so 2560Mi remain
+  #                  for the jobs (about 1Gi at once)
+  #   requests.cpu   3210m + 2 x 20m = 3250m of 6000m
+  #   requests.memory 8720Mi + 2 x 128Mi = 8976Mi of 12288Mi
   # Raise the quota before raising any of these.
   resources:
     requests:

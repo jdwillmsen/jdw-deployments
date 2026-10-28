@@ -60,7 +60,7 @@ env = {e["name"]: e["value"] for e in main["env"]}
 assert env["FIELDS"] == "grounds courses trees works"
 assert env["LAB"] == f"k8s:jdwillmsen-prd/{server}", env["LAB"]
 units = {e["value"] for d in crew for e in d["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"] == "MC_USERNAME"}
-assert set(env["NON_HUMAN"].split()) == units | {"load-*"} and len(units) == 20, env["NON_HUMAN"]
+assert set(env["NON_HUMAN"].split()) == units | {"load-*"} and len(units) == 22, env["NON_HUMAN"]
 assert main["command"] == ["/work/nightly.sh"]
 
 for c in (init, main):
