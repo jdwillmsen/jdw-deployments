@@ -283,7 +283,8 @@ data:
   equip.mcfunction: |
     {{- range $unit := .Values.crew.units }}
     {{- $n := $unit.name | quote }}
-    {{- if and (not $unit.hard) (ne $unit.role "warrior") }}
+    {{- $lab := include "crew.labRole" $unit }}
+    {{- if and (not $unit.hard) (ne $unit.role "warrior") (not $lab) }}
     execute as @a[name={{ $n }},hasitem={item=iron_sword,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 8 iron_sword 1
     execute as @a[name={{ $n }},hasitem={item=iron_helmet,location=slot.armor.head,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.head 0 iron_helmet 1
     execute as @a[name={{ $n }},hasitem={item=iron_chestplate,location=slot.armor.chest,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.chest 0 iron_chestplate 1
@@ -317,6 +318,16 @@ data:
     execute as @a[name={{ $n }},scores={kitwait=..0},hasitem=[{item=netherite_chestplate,quantity=1..},{{ $worn }}]] run scoreboard players set @s kitwait 4
     execute as @a[name={{ $n }},scores={kitwait=..0},hasitem={item=golden_apple,quantity=0}] run give @s golden_apple 16
     execute as @a[name={{ $n }},scores={kitwait=..0},hasitem={item=golden_apple,quantity=0}] run scoreboard players set @s kitwait 8
+    {{- else if $lab }}
+    {{- /* A mender or builder works in creative mode, which only the console
+    can set and an offline unit loses on every join, so it is set here
+    whenever it is missing. It gets no gear, no bread and no yard. A mender
+    must stand on the loaded chunks of the arena it repairs, which are far
+    outside the range a task may walk, so it is sent there from the hub. */}}
+    execute as @a[name={{ $n }},m=!creative] run gamemode creative @s
+    {{- if eq $unit.role "mender" }}
+    execute as @a[name={{ $n }},x=0,y=64,z=-400,r=200] run tp @s {{ include "crew.menderHome" (dict "unit" $unit "default" $.Values.crew.menderHome) }}
+    {{- end }}
     {{- else if $unit.role }}
     {{- /* A unit with a role works in its own yard, far from the spawn it joins
     at (and respawns at), so anything still within the hub's reach is sent
@@ -361,7 +372,7 @@ data:
     {{- range $unit := .Values.crew.units }}
     {{- /* A warrior has no yard to supply: it never walks a plot, so building
     and emptying chests there would be a structure nobody opens. */}}
-    {{- if and $unit.role (ne $unit.role "warrior") }}
+    {{- if and $unit.role (ne $unit.role "warrior") (not (include "crew.labRole" $unit)) }}
     {{- $p := include "crew.plot" (dict "id" $unit.id "yards" $.Values.crew.yards) | fromJson }}
     {{- $x := int64 $p.x }}
     {{- $z := int64 $p.z }}

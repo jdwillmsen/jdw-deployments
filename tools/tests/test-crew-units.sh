@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Renders the crew-lab chart and checks the crew units: one Deployment, Service
 # and PVC per unit, a shared task token, a kit chest to rearm from,
-# the squad role and squad carried on the warriors' pods only, and a total CPU
+# the squad role and squad carried on the warriors' pods only, the lab-only
+# mender and builder with no squad and no standing work, and a total CPU
 # limit that leaves the namespace quota headroom for the backup and recovery
 # CronJobs.
 set -euo pipefail
@@ -28,9 +29,11 @@ def of(kind):
 crew = lambda kind: [d for d in of(kind)
                      if d["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "crew"]
 
-want = {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder"}
+want = {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein"}
 # The squad members and the role each carries inside it; warriors only.
 squads = {"crew-18": "vanguard", "crew-19": "striker", "crew-20": "ranger"}
+# Lab-only units: crew refuses them without CREW_LAB and they never join a squad.
+lab_units = {"crew-21": "mender", "crew-22": "builder"}
 own_claim = {"crew-01", "crew-02", "crew-03"}
 roles = {"miner", "chopper", "hauler", "shaft"}
 
@@ -65,8 +68,13 @@ for uid, name in want.items():
         assert "WORK_PLAN" not in e, (uid, "warriors must have no WORK_PLAN")
         assert e["CREW_ROLE"]["value"] == squads[uid], (uid, e["CREW_ROLE"])
         assert e["CREW_SQUAD"]["value"] == "alpha", (uid, e["CREW_SQUAD"])
+    elif uid in lab_units:
+        assert e["CREW_ROLE"]["value"] == lab_units[uid], (uid, e["CREW_ROLE"])
+        assert e["CREW_LAB"]["value"] == "true", (uid, e["CREW_LAB"])
+        assert "WORK_PLAN" not in e and "CREW_SQUAD" not in e and "CREW_UNIT_ROLE" not in e, (uid, sorted(e))
+        assert claim == "crew-shared", uid
     else:
-        assert "CREW_ROLE" not in e and "CREW_SQUAD" not in e, uid
+        assert "CREW_ROLE" not in e and "CREW_SQUAD" not in e and "CREW_LAB" not in e, uid
         plan = json.loads(e["WORK_PLAN"]["value"])
         assert 1 <= len(plan) <= 8, (uid, plan)
         mine = {json.dumps(c, sort_keys=True) for t in plan for c in [t.get("chest")] + [t.get("to")] + (t.get("from") or []) if c}
@@ -86,11 +94,11 @@ def milli(v):
 
 total = sum(milli(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["cpu"])
             for d in deps.values())
-# 20 units at 50m; the namespace sum is worked out in values.yaml.
-assert total <= 1000, f"crew limits.cpu totals {total}m, want <= 1000m"
+# 22 units at 50m; the namespace sum is worked out in values.yaml.
+assert total <= 1100, f"crew limits.cpu totals {total}m, want <= 1100m"
 mem = sum(int(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"][:-2]) for d in deps.values())
-assert mem <= 20 * 384, f"crew limits.memory totals {mem}Mi, want <= 7680Mi"
-assert len(chests) >= len(want) - len(squads)
+assert mem <= 22 * 384, f"crew limits.memory totals {mem}Mi, want <= 8448Mi"
+assert len(chests) >= len(want) - len(squads) - len(lab_units)
 
 # A unit whose first lookups stall must get minutes to answer /healthz once
 # before liveness may restart it.
@@ -101,6 +109,27 @@ for uid, dep in deps.items():
     assert sp["periodSeconds"] * sp["failureThreshold"] >= 300, uid
 PY
 
+# The two lab units use the shared claim, so they add no PVC.
+# (Asserted above: the claims are exactly crew-01..03 and crew-shared.)
+
+# A role no template knows fails the render and names every valid role; a lab
+# unit given a squad fails too, and so does a mender with no home.
+for bad in "role=healer" "squad=alpha"; do
+  if helm template crew-lab "$chart" --namespace jdwillmsen-prd -f "$chart/values.yaml" \
+      -f "$chart/values-prd.yaml" --set "crew.units[20].$bad" > "$work/bad.yaml" 2> "$work/bad.err"; then
+    fail "crew-21 with $bad rendered"
+  fi
+done
+helm template crew-lab "$chart" --namespace jdwillmsen-prd -f "$chart/values.yaml" \
+  --set crew.units[20].role=healer > /dev/null 2> "$work/bad.err" || true
+grep -q "miner, chopper, hauler, shaft, warrior, mender, builder" "$work/bad.err" \
+  || fail "an unknown role did not list the valid roles: $(cat "$work/bad.err")"
+if helm template crew-lab "$chart" --namespace jdwillmsen-prd -f "$chart/values.yaml" \
+    --set crew.menderHome=null > "$work/bad.yaml" 2> "$work/bad.err"; then
+  fail "a mender with no home rendered"
+fi
+grep -q "needs a home" "$work/bad.err" || fail "a homeless mender failed without saying so: $(cat "$work/bad.err")"
+
 # A unit's replicas can be overridden alone, including to 0.
 helm template crew-lab "$chart" --namespace jdwillmsen-prd \
   -f "$chart/values.yaml" -f "$chart/values-prd.yaml" \
@@ -110,7 +139,7 @@ import sys, yaml
 reps = {d["metadata"]["name"]: d["spec"]["replicas"]
         for d in yaml.safe_load_all(open(sys.argv[1]))
         if d and d.get("kind") == "Deployment" and d["metadata"]["labels"].get("app.kubernetes.io/component") == "crew"}
-assert reps == {k: (0 if k == "crew-02" else 1) for k in {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder"}}, reps
+assert reps == {k: (0 if k == "crew-02" else 1) for k in {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein"}}, reps
 PY
 
 echo "PASS: crew units render as expected"

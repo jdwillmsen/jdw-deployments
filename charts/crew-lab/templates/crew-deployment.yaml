@@ -100,17 +100,29 @@ spec:
             - name: AUTH_CACHE_DIR
               value: {{ printf "/data/%s/auth" $unit.id | quote }}
             {{- end }}
-            {{- if and $unit.role (ne $unit.role "warrior") }}
+            {{- $lab := include "crew.labRole" $unit }}
+            {{- if and $unit.role (ne $unit.role "warrior") (not $lab) }}
             {{- /* A warrior is off the idle rotation: WORK_PLAN is what a unit
             mines and chops when idle, and squadRole would put it in its yard
-            instead of the arena. */}}
+            instead of the arena. A mender or builder idles until tasked. */}}
             - name: WORK_PLAN
               value: {{ include "crew.workPlan" (dict "unit" $unit "yards" $.Values.crew.yards) | quote }}
             {{- end }}
-            {{- with $unit.role }}
-            {{- /* Picks the unit's outfit; a warrior's follows CREW_ROLE. */}}
+            {{- if and $unit.role (not $lab) }}
+            {{- /* Picks the unit's outfit; a warrior's follows CREW_ROLE. A
+            mender or builder has none, so it keeps the plain name-coloured
+            skin. */}}
             - name: CREW_UNIT_ROLE
-              value: {{ . | quote }}
+              value: {{ $unit.role | quote }}
+            {{- end }}
+            {{- if $lab }}
+            {{- /* No CREW_SQUAD: crew treats these as non-warriors, and
+            refuses to start without CREW_LAB. Creative mode comes from the
+            unit-kit pack. */}}
+            - name: CREW_ROLE
+              value: {{ $unit.role | quote }}
+            - name: CREW_LAB
+              value: "true"
             {{- end }}
             {{- if $unit.squad }}
             {{- /* The squad and the member's role inside it, so the unit joins
