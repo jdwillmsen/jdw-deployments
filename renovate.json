@@ -22,7 +22,7 @@
       "automerge": true
     },
     {
-      "description": "The agent and its console-bridge sidecar. Both live in the agent Deployment, not the game StatefulSet, so a bump recreates the agent pod and never touches the server players are connected to. That Deployment is RollingUpdate with maxSurge 1 / maxUnavailable 0, and /readyz reports a standby as ready while a still-authenticating pod reports 503 -- so the replacement is in the game before the incumbent leaves, and a release costs a handover rather than an absence. That handover is what makes these safe to merge unattended; the game-server and utility images below have no equivalent and stay PR-only.",
+      "description": "The agent and its console-bridge sidecar. Both live in the agent Deployment, not the game StatefulSet, so a bump recreates the agent pod and never touches the server players are connected to. That Deployment is RollingUpdate with maxSurge 1 / maxUnavailable 0, and /readyz reports a standby as ready while a still-authenticating pod reports 503 -- so the replacement is in the game before the incumbent leaves, and a release costs a handover rather than an absence. That handover is what makes these safe to merge unattended; the game-server and utility images below have no equivalent and stay PR-only. Not held to the weekly window: the agent must follow a server protocol bump within the hour, because the server updates itself and a stale agent is offline.",
       "matchPackageNames": [
         "ghcr.io/jdwillmsen/minecraft-server-agent",
         "ghcr.io/jdwillmsen/mc-console-bridge"
@@ -32,7 +32,10 @@
         "patch",
         "digest"
       ],
-      "automerge": true
+      "automerge": true,
+      "schedule": [
+        "at any time"
+      ]
     },
     {
       "description": "PR-only, not auto-merged. The original reasoning was that clients need a current server, with RollingUpdate and the nightly backup as the safety net -- but image.tag only versions itzg's tooling, not the server binary, so this never delivered a game version at all. What kept the server current was the pod restart it happened to cause, and versionCheck now does that deliberately every hour with player notice. Meanwhile RollingUpdate is the mechanism that recreates the pod, and an unattended recreation is what migrated the world PVC and cost ~29 MB on 2026-08-30 -- so the cited safety net was the hazard, and a backup is a recovery path rather than a guard. Merging these by hand costs nothing in client connectivity and keeps pod recreations attended. See docs/incidents/2026-08-30-fwb-world-data-loss.md.",
@@ -75,11 +78,19 @@
       "automerge": true
     },
     {
-      "description": "AFK bot image bakes in protocol data for exactly one Bedrock version and must move in lockstep with a deliberate, hand-reviewed server bump -- never on its own.",
+      "description": "The AFK bots. They are Deployments, not the game StatefulSet, so a bump recreates a bot pod and never touches the server or its volume; a bot reconnects on its own. This used to be off because the image bakes in one Bedrock version's protocol data and was meant to move with a hand-reviewed server bump. The server now updates itself hourly, so a bot that waits for a human is offline after every Mojang release (2026-10-27: both bots down ~8.5 h). Not held to the weekly window for the same reason as the agent.",
       "matchPackageNames": [
         "ghcr.io/jdwillmsen/minecraft-afk-bot"
       ],
-      "enabled": false
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "automerge": true,
+      "schedule": [
+        "at any time"
+      ]
     },
     {
       "description": "The game server's init step, which installs the map's script pack, carries the map's image. Every update to that file is off: the map rule above merges unattended because a map bump restarts only the map pod, and an init container on the game server pod is the one place that is not true. On 2026-10-06 the same update moved this tag and restarted the world with nobody watching. The tag there moves by hand, when the pack changes. This rule is last so that it wins.",
