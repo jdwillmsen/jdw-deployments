@@ -119,7 +119,7 @@ data:
       // The dropped kit is picked up over the following ticks.
       if (id === "kits:arrange") system.runTimeout(() => arrange(sourceEntity, message.trim()), 40);
       if (id === "kits:dog") adopt(sourceEntity, message.trim());
-      if (id === "kits:cats") keepCats(sourceEntity);
+      if (id === "kits:cats" && sourceEntity.name === PETS_OWNER) keepCats(sourceEntity);
     });
 
     // A cat's coat and age are rolled by its spawn event and no command or event
@@ -132,41 +132,66 @@ data:
       { name: "Ellie", variant: 2, baby: false },
       { name: "Melly", variant: 9, baby: true },
     ];
-    const MAX_ROLLS = 300;
+    const MAX_ROLLS = 100;
+    // After a roll gives up, the next one waits this many keeper passes.
+    const COOLDOWN = 5;
     const rolling = new Set();
+    const cooldown = new Map();
 
     function keepCats(player) {
+      // Pets are only found in the owner's loaded chunks, so away from the
+      // overworld a keeper pass would spawn duplicates.
+      if (player.dimension.id !== "minecraft:overworld") return;
       for (const pet of PETS) {
         const cats = player.dimension.getEntities({ type: "minecraft:cat", name: pet.name });
+        for (const cat of cats) {
+          const tame = cat.getComponent("tameable");
+          if (tame && !tame.isTamed) tame.tame(player);
+        }
         const good = cats.filter((c) => !pet.baby || c.getComponent("minecraft:is_baby"));
         // A second cat of the same name is a leftover of an interrupted roll.
-        for (const extra of cats.filter((c) => c !== good[0])) extra.remove();
-        if (good.length === 0 && !rolling.has(pet.name)) {
-          rolling.add(pet.name);
-          roll(player, pet, MAX_ROLLS);
+        for (const extra of cats.filter((c) => c.id !== good[0]?.id)) extra.remove();
+        if (good.length > 0 || rolling.has(pet.name)) continue;
+        const wait = cooldown.get(pet.name) ?? 0;
+        if (wait > 0) {
+          cooldown.set(pet.name, wait - 1);
+          continue;
         }
+        rolling.add(pet.name);
+        roll(player, pet, MAX_ROLLS);
       }
     }
 
     function roll(player, pet, left) {
-      if (!player.isValid || left === 0) {
+      const stop = (rolls) => {
         rolling.delete(pet.name);
-        return;
+        if (rolls === 0) cooldown.set(pet.name, COOLDOWN);
+      };
+      if (!player.isValid || left === 0) return stop(left);
+      let cat;
+      try {
+        cat = player.dimension.spawnEntity("minecraft:cat", player.location);
+      } catch {
+        return stop(-1);
       }
-      const cat = player.dimension.spawnEntity("minecraft:cat", player.location);
       // The spawn event's component groups apply a tick after the entity exists.
       system.runTimeout(() => {
-        if (!cat.isValid) return roll(player, pet, left - 1);
-        const variant = cat.getComponent("minecraft:variant")?.value;
-        const baby = !!cat.getComponent("minecraft:is_baby");
-        if (variant !== pet.variant || baby !== pet.baby) {
-          cat.remove();
-          return roll(player, pet, left - 1);
+        try {
+          if (!cat.isValid) return roll(player, pet, left - 1);
+          const variant = cat.getComponent("minecraft:variant")?.value;
+          const baby = !!cat.getComponent("minecraft:is_baby");
+          if (variant !== pet.variant || baby !== pet.baby) {
+            cat.remove();
+            return roll(player, pet, left - 1);
+          }
+          cat.nameTag = pet.name;
+          const tame = cat.getComponent("tameable");
+          if (tame && !tame.isTamed && player.isValid) tame.tame(player);
+          stop(-1);
+        } catch (e) {
+          stop(-1);
+          throw e;
         }
-        cat.nameTag = pet.name;
-        const tame = cat.getComponent("tameable");
-        if (tame && !tame.isTamed) tame.tame(player);
-        rolling.delete(pet.name);
       }, 2);
     }
 
@@ -174,7 +199,7 @@ data:
     // cat that died, or a baby that grew up, is replaced within a minute.
     system.runInterval(() => {
       const owner = world.getPlayers({ name: PETS_OWNER })[0];
-      if (!owner) return;
+      if (!owner || owner.dimension.id !== "minecraft:overworld") return;
       keepCats(owner);
       adopt(owner, "Cassy");
     }, 1200);
@@ -192,7 +217,9 @@ data:
       // Only a wild wolf carries the component; a tamed one has swapped it away.
       const tame = dog.getComponent("tameable");
       if (tame && !tame.isTamed) tame.tame(player);
-      dog.runCommand("replaceitem entity @s slot.armor.body 0 wolf_armor 1");
+      if (!dog.getComponent("minecraft:equippable")?.getEquipment(EquipmentSlot.Body)) {
+        dog.runCommand("replaceitem entity @s slot.armor.body 0 wolf_armor 1");
+      }
     }
 
     function arrange(player, owner) {
