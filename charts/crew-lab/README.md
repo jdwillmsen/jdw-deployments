@@ -53,6 +53,8 @@ Service and PVC named by its `id`, and joins the server under its `name`.
 | `crew-01` | Agate |
 | `crew-02` | Basalt |
 | `crew-03` | Cobble |
+| `crew-21` | Umber (mender) |
+| `crew-22` | Vein (builder) |
 
 The id is fixed for life (volumes, logs, metrics and the task API's identity use
 it); the name is what players see in-game, 16 characters at most. Every crew
@@ -97,6 +99,34 @@ players. The `unitKitGate` PreSync job holds that sync until no human is online
 
 The pod carries `CREW_ROLE/<squadRole>` and `CREW_SQUAD/<squad>` on warriors
 only.
+
+## Menders and builders
+
+`crew-21` Umber (`role: mender`) and `crew-22` Vein (`role: builder`) work in
+creative mode on a task and never in a yard. The pod carries `CREW_ROLE=<role>`
+and `CREW_LAB=true`, which crew requires of these roles and sets nowhere else;
+it carries no `CREW_SQUAD`, `WORK_PLAN` or `CREW_UNIT_ROLE` (no outfit, so the
+plain name-coloured skin). They idle until tasked and take one task template
+each through crew-control: `repair_build` for a mender, `build_blueprint` for a
+builder. Both are on the shared claim, so they add no PVC.
+
+- **Creative:** only the server console can set it, and an offline unit is a
+  fresh survival player on every join. The unit-kit pack's equip function runs
+  `gamemode creative` for each of them whenever it is not creative, about every
+  2 s, so no `labcreative` process is needed.
+- **Home:** repair needs the mender on loaded chunks inside the Colosseum, but
+  a task may only `goto` within x, z -500..499. So when the mender joins within
+  200 blocks of the hub the pack teleports it to `crew.menderHome` (the arena
+  floor at the centre, two blocks up; creative takes no fall damage), or to
+  its own `home` (`x`, `"y"`, `z`; quote `y`, YAML reads a bare one as true).
+  The builder has no home: it is tasked with a `goto` inside the bound.
+- **Gear:** none. They get no plot tp, yard restock, work tools or bread.
+
+To add another, append the next id and name from the ordered list in
+`values.yaml` with `role: mender` or `builder` and `sharedVolume: true`, then
+rerun `tools/crew-lab-kit-rev.py --write`. A role no template knows, a squad on
+one of these units, or a mender with no home fails the render. Like any pack
+change it restarts the lab server (see Kit rollouts).
 
 - Probes: a startup probe on `/healthz` (five minutes), then liveness `/healthz`, readiness `/readyz`. Readiness is false while
   the unit is dead or the server restarts, which can be long, so only liveness
