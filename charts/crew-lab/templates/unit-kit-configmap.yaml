@@ -54,12 +54,14 @@ data:
   dota.mcfunction: |
     structure load dota_kit ~ ~ ~ 0_degrees none true false
     scriptevent kits:arrange Dota's
-  # The Light King's kit, with his dog: the script spawns Cassie beside him,
-  # tamed to him and armoured, unless one already exists.
+  # The Light King's kit, with his pets: the script spawns Cassie beside him,
+  # tamed to him and armoured, unless one already exists, and keeps his cats
+  # (see PETS below).
   lightking.mcfunction: |
     structure load lightking_kit ~ ~ ~ 0_degrees none true false
     scriptevent kits:arrange Light King's
     scriptevent kits:dog Cassie
+    scriptevent kits:cats
   # Commands cannot move a named or trimmed item without rebuilding it bare, so
   # a script wears the kit's armour, puts its weapons and pickaxes in the hotbar
   # and its shield in the off hand, swapping out what was there. The message is
@@ -117,7 +119,65 @@ data:
       // The dropped kit is picked up over the following ticks.
       if (id === "kits:arrange") system.runTimeout(() => arrange(sourceEntity, message.trim()), 40);
       if (id === "kits:dog") adopt(sourceEntity, message.trim());
+      if (id === "kits:cats") keepCats(sourceEntity);
     });
+
+    // A cat's coat and age are rolled by its spawn event and no command or event
+    // picks them, so each cat is spawned again until the roll matches. Variant
+    // 2 is the orange (red) coat, 9 the black one. A cat's growing up cannot be
+    // undone, so a baby that has grown is replaced by a fresh one.
+    const PETS_OWNER = "LightKing0221";
+    const PETS = [
+      { name: "Ollie", variant: 2, baby: false },
+      { name: "Ellie", variant: 2, baby: false },
+      { name: "Melly", variant: 9, baby: true },
+    ];
+    const MAX_ROLLS = 300;
+    const rolling = new Set();
+
+    function keepCats(player) {
+      for (const pet of PETS) {
+        const cats = player.dimension.getEntities({ type: "minecraft:cat", name: pet.name });
+        const good = cats.filter((c) => !pet.baby || c.getComponent("minecraft:is_baby"));
+        // A second cat of the same name is a leftover of an interrupted roll.
+        for (const extra of cats.filter((c) => c !== good[0])) extra.remove();
+        if (good.length === 0 && !rolling.has(pet.name)) {
+          rolling.add(pet.name);
+          roll(player, pet, MAX_ROLLS);
+        }
+      }
+    }
+
+    function roll(player, pet, left) {
+      if (!player.isValid || left === 0) {
+        rolling.delete(pet.name);
+        return;
+      }
+      const cat = player.dimension.spawnEntity("minecraft:cat", player.location);
+      // The spawn event's component groups apply a tick after the entity exists.
+      system.runTimeout(() => {
+        if (!cat.isValid) return roll(player, pet, left - 1);
+        const variant = cat.getComponent("minecraft:variant")?.value;
+        const baby = !!cat.getComponent("minecraft:is_baby");
+        if (variant !== pet.variant || baby !== pet.baby) {
+          cat.remove();
+          return roll(player, pet, left - 1);
+        }
+        cat.nameTag = pet.name;
+        const tame = cat.getComponent("tameable");
+        if (tame && !tame.isTamed) tame.tame(player);
+        rolling.delete(pet.name);
+      }, 2);
+    }
+
+    // Cats and the dog are kept for their owner while he is on the lab, so a
+    // cat that died, or a baby that grew up, is replaced within a minute.
+    system.runInterval(() => {
+      const owner = world.getPlayers({ name: PETS_OWNER })[0];
+      if (!owner) return;
+      keepCats(owner);
+      adopt(owner, "Cassie");
+    }, 1200);
 
     function adopt(player, name) {
       let dog = player.dimension.getEntities({ type: "minecraft:wolf", name })[0];

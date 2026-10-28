@@ -116,6 +116,7 @@ assert pack_id in init["command"][2], "init container registers a different pack
 assert "armoury" not in init["command"][2] and "armory_clean" not in init["command"][2]
 assert "structures/lightking_kit.mcstructure" in init["command"][2] and "functions/kits/lightking.mcfunction" in init["command"][2]
 assert "scriptevent kits:dog Cassie" in cm["lightking.mcfunction"] and "wolf_armor" in cm["main.js"]
+assert "scriptevent kits:cats" in cm["lightking.mcfunction"] and all(f'name: "{n}"' in cm["main.js"] for n in ("Ollie", "Ellie", "Melly"))
 assert "structures/dota_kit.mcstructure" in init["command"][2] and "functions/kits/dota.mcfunction" in init["command"][2]
 assert "scripts/main.js" in init["command"][2]
 assert "tar -xzf /kit/kits.tar.gz" in init["command"][2]
