@@ -107,6 +107,11 @@ spec:
             - name: WORK_PLAN
               value: {{ include "crew.workPlan" (dict "unit" $unit "yards" $.Values.crew.yards) | quote }}
             {{- end }}
+            {{- with $unit.role }}
+            {{- /* Picks the unit's outfit; a warrior's follows CREW_ROLE. */}}
+            - name: CREW_UNIT_ROLE
+              value: {{ . | quote }}
+            {{- end }}
             {{- if $unit.squad }}
             {{- /* The squad and the member's role inside it, so the unit joins
             that squad's shared state. Only warriors carry a squad today. */}}
