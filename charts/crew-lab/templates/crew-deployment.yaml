@@ -108,12 +108,10 @@ spec:
             - name: WORK_PLAN
               value: {{ include "crew.workPlan" (dict "unit" $unit "yards" $.Values.crew.yards) | quote }}
             {{- end }}
-            {{- if and $unit.role (not $lab) }}
-            {{- /* Picks the unit's outfit; a warrior's follows CREW_ROLE. A
-            mender or builder has none, so it keeps the plain name-coloured
-            skin. */}}
+            {{- with $unit.role }}
+            {{- /* Picks the unit's outfit; a warrior's follows CREW_ROLE. */}}
             - name: CREW_UNIT_ROLE
-              value: {{ $unit.role | quote }}
+              value: {{ . | quote }}
             {{- end }}
             {{- if $lab }}
             {{- /* No CREW_SQUAD: crew treats these as non-warriors, and
