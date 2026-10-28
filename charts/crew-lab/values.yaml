@@ -75,11 +75,11 @@ minecraft-bedrock:
 
   minecraftServer:
     eula: "TRUE"
-    # Pinned because LATEST silently moved the server to 1.26.60.6 on a restart,
-    # whose StartGame packet the crew bots (gophertunnel 1.62) cannot decode, so
-    # no unit could spawn. Bedrock clients only connect within a narrow protocol
-    # window of their own build; unpin once crew supports the newer protocol.
-    version: "1.26.52.3"
+    # LATEST: Bedrock clients only connect within a narrow protocol window of
+    # their own build, so a pinned server strands players as soon as their
+    # client updates. versionCheck below restarts the server when LATEST moves,
+    # and the crew units' gophertunnel has to keep up with the protocol.
+    version: "LATEST"
     difficulty: normal
     gameMode: survival
     levelName: crew-lab
@@ -365,7 +365,7 @@ crew:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-crew
-    tag: "1.55.1"
+    tag: "1.58.0"
     pullPolicy: IfNotPresent
 
   # Lab only: skip Microsoft sign-in. The lab server runs offline, so a signed
@@ -694,3 +694,21 @@ labRebuild:
 unitKitGate:
   enabled: false
   waitSeconds: 600
+
+versionCheck:
+  # Hourly, boots a throwaway copy of the server image to see what LATEST
+  # resolves to, and restarts the lab in place only when that differs from the
+  # running binary. Without it LATEST is re-read only when something else
+  # happens to restart the pod. Players online are fine (the lab is
+  # disposable); the units reconnect on their own.
+  enabled: true
+  # Half past, so the candidate pod does not coincide with the main server's
+  # hourly check: the namespace has about 3 cores and 3Gi of limits to spare.
+  schedule: "30 * * * *"
+  image: alpine/k8s:1.37.1
+  # Per candidate attempt (two): gone 57 + create 15 + ready 72 + version
+  # poll 87 + log 10 = 241s, so 482s. Then 30s notice, 173s to stop and
+  # confirm the restart, 20s slack: ~705s of ceiling against 900.
+  timeoutSeconds: 900
+  # Long enough for an overnight failure's log to still be there in the morning.
+  ttlSecondsAfterFinished: 21600

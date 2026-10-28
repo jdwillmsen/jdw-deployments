@@ -62,3 +62,11 @@ the structures the unit-kit restock function builds (unit-kit-configmap.yaml):
 {{- end -}}
 {{- $plan | toJson -}}
 {{- end -}}
+
+{{- define "versionCheck.name" -}}
+{{ .Release.Name }}-version-check
+{{- end -}}
+
+{{- define "versionCheck.candidatePod" -}}
+{{ .Release.Name }}-version-check-candidate
+{{- end -}}
