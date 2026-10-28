@@ -496,6 +496,13 @@ crew:
       hunger_below: 6
       silent_for: 2m
       mute_max: 24h
+    # Pages when most units are offline together, which is what a server
+    # version the units cannot decode looks like. `for` is longer than a normal
+    # server restart plus the join stagger, so a restart alone stays quiet.
+    offlineAlert:
+      enabled: true
+      fraction: 0.5
+      for: 10m
     # Two people today. An id is fixed for life: it names the invite file, the
     # passkeys and the work each operator queues. Ids match
     # ^[a-z][a-z0-9-]{1,15}$. Rendered inline into the Deployment, never a
