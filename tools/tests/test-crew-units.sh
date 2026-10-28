@@ -71,7 +71,9 @@ for uid, name in want.items():
     elif uid in lab_units:
         assert e["CREW_ROLE"]["value"] == lab_units[uid], (uid, e["CREW_ROLE"])
         assert e["CREW_LAB"]["value"] == "true", (uid, e["CREW_LAB"])
-        assert "WORK_PLAN" not in e and "CREW_SQUAD" not in e and "CREW_UNIT_ROLE" not in e, (uid, sorted(e))
+        assert "WORK_PLAN" not in e and "CREW_SQUAD" not in e, (uid, sorted(e))
+        # The outfit follows CREW_UNIT_ROLE, so a lab unit needs it too.
+        assert e["CREW_UNIT_ROLE"]["value"] == lab_units[uid], (uid, e.get("CREW_UNIT_ROLE"))
         assert claim == "crew-shared", uid
     else:
         assert "CREW_ROLE" not in e and "CREW_SQUAD" not in e and "CREW_LAB" not in e, uid
