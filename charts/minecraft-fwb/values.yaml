@@ -833,8 +833,9 @@ bot:
   image:
     repository: ghcr.io/jdwillmsen/minecraft-afk-bot
     # This image bakes in the protocol data for exactly one Bedrock version,
-    # so it needs a re-bump whenever that data goes stale. Renovate now merges
-    # those bumps unattended, as soon as a release exists.
+    # so it needs a re-bump whenever that data goes stale. Renovate merges
+    # minor and patch bumps in their own group as soon as a release exists;
+    # a major still waits for a human.
     #
     # minecraftServer.version above tracks LATEST and can move on any pod
     # restart -- there is no longer a single reviewed commit that bumps both
