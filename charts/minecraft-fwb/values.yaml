@@ -1393,7 +1393,7 @@ agent:
     # players who are not operators.
     # 0.37.1: gophertunnel v1.63 for Bedrock 1.26.60. 0.36.x cannot decode its
     # StartGame, so the agent never spawns and chat commands are dead.
-    tag: "0.37.2"
+    tag: "0.38.0"
     pullPolicy: IfNotPresent
 
   # XUIDs allowed to run !park and !unpark without being server operators,
