@@ -1,4 +1,8 @@
 {{- if and .Values.crew.enabled .Values.crew.control.enabled .Values.crew.control.metrics.enabled .Values.crew.control.offlineAlert.enabled }}
+{{- $fraction := .Values.crew.control.offlineAlert.fraction | float64 }}
+{{- if or (lt $fraction 0.0) (ge $fraction 1.0) }}
+{{- fail (printf "crew.control.offlineAlert.fraction must be >= 0 and < 1, got %v" $fraction) }}
+{{- end }}
 # The lab server follows the latest Bedrock release (versionCheck), and crew's
 # gophertunnel can lag a protocol change: the units then connect and hang at
 # "awaiting spawn", which read as offline for four hours on 2026-10-27 with
