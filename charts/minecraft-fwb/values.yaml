@@ -871,7 +871,9 @@ bot:
     # a dead bot stayed dead and held no chunks until the nightly restart.
     # The releases between are dependency bumps; gophertunnel is unchanged and
     # go-raknet moves to the v1.15.2 the agent already runs on this server.
-    tag: "1.5.2"
+    # 1.6.1 is the first build on gophertunnel v1.63 (protocol 2225); 1.5.x
+    # cannot decode the StartGame of Bedrock 1.26.60 and never spawns.
+    tag: "1.6.1"
     pullPolicy: IfNotPresent
 
   # Not the gamertag other players see — Xbox Live supplies that. This is the
@@ -982,7 +984,8 @@ bot2:
     #
     # 1.2.1 (the presence release, first built from gameops), the same as bot
     # above and for the same reason. 1.2.2 and 1.5.2 likewise.
-    tag: "1.5.2"
+    # 1.6.1: gophertunnel v1.63 for Bedrock 1.26.60, as for bot above.
+    tag: "1.6.1"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
@@ -1386,7 +1389,9 @@ agent:
     #
     # 0.36.0 adds presenceControllers below: !park and !unpark for named
     # players who are not operators.
-    tag: "0.36.1"
+    # 0.37.1: gophertunnel v1.63 for Bedrock 1.26.60. 0.36.x cannot decode its
+    # StartGame, so the agent never spawns and chat commands are dead.
+    tag: "0.37.1"
     pullPolicy: IfNotPresent
 
   # XUIDs allowed to run !park and !unpark without being server operators,
