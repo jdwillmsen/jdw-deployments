@@ -1,0 +1,36 @@
+{{- if and .Values.crew.enabled .Values.crew.control.enabled .Values.crew.control.metrics.enabled .Values.crew.control.offlineAlert.enabled }}
+# The lab server follows the latest Bedrock release (versionCheck), and crew's
+# gophertunnel can lag a protocol change: the units then connect and hang at
+# "awaiting spawn", which read as offline for four hours on 2026-10-27 with
+# nothing paging. A fleet-wide offline fraction is that failure's signature; a
+# single unit going offline is the console's own silent-unit alert.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: crew-units-offline
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: crew-units-offline
+      rules:
+        - alert: JdwillmsenCrewUnitsOffline
+          # A ratio, not a count, so adding units needs no edit here. Replayed
+          # over the 24 h to 2026-10-28 it fires through the 2026-10-27 hang and
+          # stays quiet through an ordinary server restart.
+          expr: |
+            sum(crew_fleet_unit_state{namespace="{{ .Release.Namespace }}",state="offline"})
+              / count(crew_fleet_unit_state{namespace="{{ .Release.Namespace }}",state="offline"})
+              > {{ .Values.crew.control.offlineAlert.fraction }}
+          for: {{ .Values.crew.control.offlineAlert.for }}
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Most crew units are offline
+            description: >-
+              More than {{ mulf .Values.crew.control.offlineAlert.fraction 100 | int }}% of crew units
+              have been offline for {{ .Values.crew.control.offlineAlert.for }}. After a lab server
+              restart this usually means the Bedrock version moved past what
+              crew's gophertunnel decodes: read the server's `Version:` line,
+              then re-pin minecraft-bedrock.minecraftServer.version and crew.image.tag.
+{{- end }}
