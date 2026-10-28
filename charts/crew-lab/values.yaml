@@ -153,7 +153,7 @@ minecraft-bedrock:
       # players, so unitKitGate holds the sync until none are online.
       env:
         - name: UNIT_KIT_REV
-          value: "051c926289c5"
+          value: "81a0b8948bbf"
       command:
         - sh
         - -ec
@@ -194,9 +194,9 @@ minecraft-bedrock:
           rm -rf "$mods"
           rlist="$world/world_resource_packs.json"
           [ -s "$rlist" ] || echo '[]' > "$rlist"
-          jq --arg id c8b7905a-b5e3-45a6-a10e-488507337eea 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [0, 0, 2]}]' "$rlist" > "$rlist.new"
+          jq --arg id c8b7905a-b5e3-45a6-a10e-488507337eea 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [0, 0, 3]}]' "$rlist" > "$rlist.new"
           mv "$rlist.new" "$rlist"
-          jq --arg id 900b5811-de7d-4aea-9a87-7398d78673db 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [0, 0, 2]}]' "$list" > "$list.new"
+          jq --arg id 900b5811-de7d-4aea-9a87-7398d78673db 'map(select(.pack_id != $id)) + [{pack_id: $id, version: [0, 0, 3]}]' "$list" > "$list.new"
           mv "$list.new" "$list"
       # Below the server's own, so the pod's quota charge is unchanged: an
       # init container counts only where it exceeds the main containers.
