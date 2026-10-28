@@ -54,13 +54,13 @@ data:
   dota.mcfunction: |
     structure load dota_kit ~ ~ ~ 0_degrees none true false
     scriptevent kits:arrange Dota's
-  # The Light King's kit, with his pets: the script spawns Cassie beside him,
+  # The Light King's kit, with his pets: the script spawns Cassy beside him,
   # tamed to him and armoured, unless one already exists, and keeps his cats
   # (see PETS below).
   lightking.mcfunction: |
     structure load lightking_kit ~ ~ ~ 0_degrees none true false
     scriptevent kits:arrange Light King's
-    scriptevent kits:dog Cassie
+    scriptevent kits:dog Cassy
     scriptevent kits:cats
   # Commands cannot move a named or trimmed item without rebuilding it bare, so
   # a script wears the kit's armour, puts its weapons and pickaxes in the hotbar
@@ -176,10 +176,12 @@ data:
       const owner = world.getPlayers({ name: PETS_OWNER })[0];
       if (!owner) return;
       keepCats(owner);
-      adopt(owner, "Cassie");
+      adopt(owner, "Cassy");
     }, 1200);
 
     function adopt(player, name) {
+      // The dog was once named Cassie; she is replaced, not renamed.
+      for (const old of player.dimension.getEntities({ type: "minecraft:wolf", name: "Cassie" })) old.remove();
       let dog = player.dimension.getEntities({ type: "minecraft:wolf", name })[0];
       if (!dog) {
         dog = player.dimension.spawnEntity("minecraft:wolf", player.location);
