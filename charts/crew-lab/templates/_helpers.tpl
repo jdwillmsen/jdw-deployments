@@ -84,14 +84,22 @@ true
 
 {{/*
 Where a mender is put when it joins, as "x y z". The unit's own `home` wins
-over crew.menderHome. A mender with neither fails the render.
+over crew.menderHome. A mender with neither fails the render, and so does a
+home inside the 200-block sphere around the hub spawn that the unit-kit pack
+teleports out of: the pack would send the mender back every two seconds.
 */}}
 {{- define "crew.menderHome" -}}
 {{- $h := .unit.home | default .default -}}
 {{- if not (and $h (hasKey $h "x") (hasKey $h "y") (hasKey $h "z")) -}}
 {{- fail (printf "unit %s: a mender needs a home with x, y and z (crew.menderHome or the unit's own home)" .unit.id) -}}
 {{- end -}}
-{{- printf "%d %d %d" (int64 $h.x) (int64 $h.y) (int64 $h.z) -}}
+{{- $dx := int64 $h.x -}}
+{{- $dy := sub (int64 $h.y) 64 -}}
+{{- $dz := add (int64 $h.z) 400 -}}
+{{- if le (add (mul $dx $dx) (mul $dy $dy) (mul $dz $dz)) 40000 -}}
+{{- fail (printf "unit %s: home %d %d %d is within 200 blocks of the hub spawn, so the mender would be teleported again every cycle" .unit.id $dx (int64 $h.y) (int64 $h.z)) -}}
+{{- end -}}
+{{- printf "%d %d %d" $dx (int64 $h.y) (int64 $h.z) -}}
 {{- end -}}
 
 {{- define "versionCheck.name" -}}

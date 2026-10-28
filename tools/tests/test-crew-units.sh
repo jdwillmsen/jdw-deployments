@@ -129,6 +129,12 @@ if helm template crew-lab "$chart" --namespace jdwillmsen-prd -f "$chart/values.
   fail "a mender with no home rendered"
 fi
 grep -q "needs a home" "$work/bad.err" || fail "a homeless mender failed without saying so: $(cat "$work/bad.err")"
+# A home inside the hub sphere would be teleported again every cycle.
+if helm template crew-lab "$chart" --namespace jdwillmsen-prd -f "$chart/values.yaml" \
+    --set crew.menderHome.x=0 --set crew.menderHome.y=64 --set crew.menderHome.z=-300 > "$work/bad.yaml" 2> "$work/bad.err"; then
+  fail "a mender home inside the hub sphere rendered"
+fi
+grep -q "within 200 blocks of the hub spawn" "$work/bad.err" || fail "a hub-sphere home failed without saying so: $(cat "$work/bad.err")"
 
 # A unit's replicas can be overridden alone, including to 0.
 helm template crew-lab "$chart" --namespace jdwillmsen-prd \
