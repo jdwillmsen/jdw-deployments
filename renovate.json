@@ -94,16 +94,16 @@
       "groupName": "afk bot"
     },
     {
-      "description": "The game server's init step, which installs the map's script pack, carries the map's image. Every update to that file is off: the map rule above merges unattended because a map bump restarts only the map pod, and an init container on the game server pod is the one place that is not true. On 2026-10-06 the same update moved this tag and restarted the world with nobody watching. The tag there moves by hand, when the pack changes. This rule is last so that it wins.",
-      "matchFileNames": [
-        "charts/minecraft-fwb/values-map-pack.yaml"
+      "description": "The wildlife add-on packs' image runs as an init container on the game server pod, so a bump restarts the world. The tag moves by hand, when a pack changes, together with tools/crew-lab-kit-rev.py --write, which puts the new tag into UNIT_KIT_REV so the unit-kit gate holds the restart until nobody is online. It matches a different package from the map-pack rule below, so their order does not matter.",
+      "matchPackageNames": [
+        "ghcr.io/jdwillmsen/lab-packs"
       ],
       "enabled": false
     },
     {
-      "description": "The wildlife add-on packs' image runs as an init container on the game server pod, so a bump restarts the world. The tag moves by hand, when a pack changes, together with tools/crew-lab-kit-rev.py --write, which puts the new tag into UNIT_KIT_REV so the unit-kit gate holds the restart until nobody is online. This rule is last so that it wins.",
-      "matchPackageNames": [
-        "ghcr.io/jdwillmsen/lab-packs"
+      "description": "The game server's init step, which installs the map's script pack, carries the map's image. Every update to that file is off: the map rule above merges unattended because a map bump restarts only the map pod, and an init container on the game server pod is the one place that is not true. On 2026-10-06 the same update moved this tag and restarted the world with nobody watching. The tag there moves by hand, when the pack changes. This rule is last so that it wins.",
+      "matchFileNames": [
+        "charts/minecraft-fwb/values-map-pack.yaml"
       ],
       "enabled": false
     }
