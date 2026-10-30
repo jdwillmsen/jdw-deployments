@@ -192,6 +192,23 @@ player list cannot be read, the job fails, the sync fails and nothing is
 restarted; run the sync again once the lab is empty. Set
 `unitKitGate.enabled=false` to skip the check.
 
+## Wildlife packs
+
+The wildlife add-on packs (behavior and resource) are installed by the
+`install-lab-packs` init container, which runs the `ghcr.io/jdwillmsen/lab-packs`
+image after `install-unit-kit`. The installer replaces each pack's folders in
+the world and merges its uuid and version, read from the pack's own manifest,
+into the world's pack lists, keeping other entries. The source is in the
+gameops repo: the packs in `packs/` and the installer in `minecraft/lab-packs`.
+
+To ship a pack update, publish a new `lab-packs` image through the gameops
+release, set the tag in `values.yaml` (Renovate leaves it alone), and run
+`tools/crew-lab-kit-rev.py --write`. The revision covers this container, so the
+restart goes through the unit-kit gate like any kit change.
+
+The wildlife pack's README has a manual checklist that only works on the live
+lab with a client; the owner runs it after a rollout.
+
 ## Colosseum
 
 The lab's arena stands on the flat ground centred on x 0, z -758: an ellipse
