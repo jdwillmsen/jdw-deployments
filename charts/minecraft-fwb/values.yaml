@@ -227,7 +227,10 @@ minecraft-bedrock:
     # The nightly backup and the volume-recovery CronJob are what make this
     # safe to leave unreviewed: a bad Mojang release corrupting the world on
     # restart is restorable from the last backup rather than un-upgradable.
-    version: "LATEST"
+    # Pinned: LATEST moved the server to 1.26.61.1 before the public Windows
+    # client had it (still 1.26.60), so players could not join. Unpin, and
+    # re-enable versionCheck, once the public client catches up.
+    version: "1.26.60.6"
     difficulty: hard
     gameMode: survival
     levelName: FWB
@@ -568,7 +571,9 @@ versionCheck:
   # restarts the real StatefulSet -- and only disconnects players/AFK bots --
   # when the two actually differ. Bounds staleness to at most the schedule
   # below, without paying an unconditional restart every run.
-  enabled: true
+  # Off while the server is pinned: the running version never matches LATEST,
+  # so the check would restart the server every hour.
+  enabled: false
   schedule: "0 * * * *"
   image: alpine/k8s:1.37.1
   # Generous against the CI smoke test's confirmed ~6s cold-pull-to-ready for
