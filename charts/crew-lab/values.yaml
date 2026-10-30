@@ -727,8 +727,8 @@ unitKitGate:
   waitSeconds: 600
 
 versionCheck:
-  # Off while the server is pinned: the check always boots LATEST and would
-  # restart the lab onto it again.
+  # Off while the server is pinned: the running version never matches LATEST,
+  # so the check would restart the lab every hour.
   # Hourly, boots a throwaway copy of the server image to see what LATEST
   # resolves to, and restarts the lab in place only when that differs from the
   # running binary. Without it LATEST is re-read only when something else
