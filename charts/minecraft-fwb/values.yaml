@@ -1603,6 +1603,12 @@ netherNet:
   # apiserver). The two cannot be the same number while both Services exist.
   signalingNodePort: 31134
 
+  # The node address clients dial, and the one the server advertises in its ICE
+  # candidates (server-udp-ports in server.properties). The bots, agent and
+  # join probe build their http://host:port address from this and
+  # signalingNodePort.
+  clientHost: 192.168.1.87
+
   gameplayPorts:
     start: 31160
     end: 31179
@@ -1642,7 +1648,8 @@ netherNet:
 # everything being checked -- and the only clients connected had joined before
 # the fault and speak RakNet themselves.
 joinProbe:
-  # Needs an agent image carrying /joinprobe, which is 0.18.0 and later.
+  # Needs an agent image carrying /joinprobe, which is 0.18.0 and later;
+  # 0.41.0 or later to probe a NetherNet endpoint.
   enabled: true
 
   # A minute. The check is one ping and one handshake against a server on the

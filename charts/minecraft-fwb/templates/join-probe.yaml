@@ -77,12 +77,15 @@ spec:
           command: ["/joinprobe"]
           args:
             - "-address"
-            # The headless Service above rather than the subchart's, and
-            # in-cluster rather than the NodePort: a probe through the node
-            # address would also be testing HAProxy and the DNAT rules, which
-            # have their own failure modes and their own checks. This one is
-            # about whether the server will start a session.
+            # Under NetherNet the probe dials what players dial, because the
+            # agent's NetherNet check only exercises /v1/join on the signaling
+            # URL. Under RakNet it keeps the headless Service above, so the
+            # check does not depend on HAProxy or the DNAT rules.
+{{- if .Values.netherNet.enabled }}
+            - {{ include "bot.serverAddress" . | quote }}
+{{- else }}
             - "{{ include "joinProbe.name" . }}-target.{{ .Release.Namespace }}.svc.cluster.local:{{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" }}"
+{{- end }}
             - "-interval"
             - {{ .Values.joinProbe.interval | quote }}
             - "-listen"
