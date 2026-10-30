@@ -12,6 +12,12 @@ restart or reschedule that server.
 
 ## Joining the lab
 
+> **While `values-raknet.yaml` is listed for `crew-lab-prd` in
+> `argocd/prd/config.yaml`, the lab is back on RakNet** and everything below
+> about NetherNet is off: the retail Windows client cannot join, the units join
+> offline, and port 31137 is closed. Removing that line returns the lab to
+> NetherNet.
+
 **Windows 1.26.60 and later** dial NetherNet only: on the LAN add the server at
 `192.168.1.163`, port **31137** (TCP signaling; gameplay UDP 31140-31159 is
 negotiated). The RakNet route below no longer reaches the server, because the
