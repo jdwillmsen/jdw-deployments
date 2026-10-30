@@ -1,0 +1,176 @@
+minecraft-bedrock:
+  image:
+    repository: itzg/minecraft-bedrock-server
+    # Pinned, as in the other two Bedrock charts: the tag versions the
+    # container tooling, the server binary is chosen by minecraftServer.version.
+    tag: "2026.10.2"
+    pullPolicy: IfNotPresent
+
+  # A StatefulSet waits for the old pod to go before starting the new one, so
+  # two writers never share the world volume.
+  workloadAsStatefulSet: true
+  strategyType: RollingUpdate
+
+  # A test server with a handful of players, a flat world and no crew units.
+  # The namespace quota is shared with the main server and the lab, and what
+  # looks free in it is not: the backup (1000m), volume-recovery and
+  # version-check (500m each) CronJobs need limits.cpu headroom to create their
+  # pods at all (see crew-lab's values.yaml for the day that failed). On
+  # 2026-10-30 the quota had 2950m of limits.cpu and 2560Mi of limits.memory
+  # unused, so this server's limits stay at 750m and 1Gi: that leaves 2200m for
+  # the 2000m of jobs and 1.5Gi of memory. Raise the cpu limit only together
+  # with a quota change; training bots will need one.
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: 750m
+
+  # One node, not "any", for the reason given in crew-lab's values.yaml: the
+  # world is a ReadWriteOnce iSCSI volume and moving the pod drags it to a
+  # node whose fsck can discard inodes. This world is disposable, but a silent
+  # corruption would waste the debugging time. The same node as the lab is
+  # chosen because SERVER_UDP_PORTS below advertises its address, and because
+  # it was the roomiest worker (6% cpu, 27% memory in use on 2026-10-30).
+  # Both servers on one node is accepted: the ports differ, and only gameplay
+  # UDP (a few clients) is shared.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - talos-lx0-6a4
+
+  minecraftServer:
+    eula: "TRUE"
+    # Pinned because LATEST moved the server to 1.26.61.1 before the Windows
+    # client had it (clients are still on 1.26.60), so no player could join.
+    # Unpin once the public client catches up. The version-check CronJob that
+    # restarts a server whose binary differs from LATEST is deliberately not in
+    # this chart: with a pin it would restart the server every hour.
+    version: "1.26.60.6"
+    difficulty: normal
+    gameMode: creative
+    levelName: crew-test
+    serverName: crew-test
+    # A fresh, empty flat world: nothing to protect and fast to generate. It is
+    # only read when the world is first created, so changing it later does
+    # nothing until the PVC is deleted.
+    levelType: FLAT
+    cheats: true
+    maxPlayers: 10
+    tickDistance: 4
+    viewDistance: 10
+    playerIdleTimeout: 0
+    maxThreads: 4
+
+    # Online, unlike the lab: this server exists to try the signed-in join with
+    # real accounts, and a NetherNet server turns an unsigned player away at
+    # the transport anyway. Online mode also makes XUIDs trustworthy, so an
+    # operator can be added by XUID through minecraftServer.ops if one is
+    # needed; none is set.
+    onlineMode: true
+    defaultPermission: member
+
+    serviceType: NodePort
+    serverPort: 31200
+    nodePort: 31200
+
+    # The subchart's probes are an unconnected ping, which Bedrock answers only
+    # with LAN visibility on. They still cannot pass on NetherNet (see below).
+    enableLanVisibility: true
+
+  extraEnv:
+    # Open to any signed-in account that can reach the port, which is LAN only:
+    # there is no router or HAProxy forward for this server. The image's allow
+    # list defaults on and would refuse the accounts being tried.
+    ALLOW_LIST: "false"
+    # The 1.26.60 Windows client dials NetherNet only: signaling over TCP on
+    # the server port and no RakNet UDP at all.
+    TRANSPORT: nethernet
+    # Gameplay UDP is negotiated per client, so behind a NodePort the ports
+    # are pinned and advertised as the node's address, or clients are handed
+    # the pod's own 10.244.x IP. The range matches netherNet.gameplayPorts and
+    # the node is the one this server is pinned to by affinity above.
+    SERVER_UDP_PORTS: "192.168.1.163:31210-31229:31210-31229"
+    # Lets the boot be checked for add-on errors (ContentLog files in /data/logs).
+    CONTENT_LOG_FILE_ENABLED: "true"
+
+  # Installs the wildlife add-on packs from the lab's image, the same init
+  # container crew-lab runs. It reads each pack's uuid and version from its
+  # manifest and merges them into the world's pack lists, so there is nothing
+  # to keep in step here. A pack only reaches the world on a start after the
+  # one that created it: the installer does nothing while the world folder is
+  # missing, so the first start of a new volume needs one pod restart.
+  #
+  # The tag is a literal because the subchart renders initContainers with plain
+  # toYaml. It is the lab's tag, bumped by hand (Renovate leaves the image
+  # alone); here a bump simply restarts this server, there is no unit-kit gate
+  # because nobody depends on the world. Fail-closed like the lab: a missing
+  # tag or a registry outage with no cached copy holds the pod in Init rather
+  # than starting the world without its packs.
+  #
+  # Add-ons to be tried before they are in that image can be put on the volume
+  # by hand under /data/worlds/crew-test/behavior_packs, and registered in
+  # world_behavior_packs.json; the installer keeps entries it did not write.
+  initContainers:
+    - name: install-lab-packs
+      image: "ghcr.io/jdwillmsen/lab-packs:1.0.0"
+      imagePullPolicy: IfNotPresent
+      args:
+        - /data/worlds/crew-test
+      resources:
+        requests:
+          memory: 16Mi
+          cpu: 10m
+        limits:
+          memory: 64Mi
+          cpu: 50m
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: datadir
+          mountPath: /data
+
+  # Every probe the subchart renders is a RakNet `mc-monitor` ping, which a
+  # NetherNet server never answers. The startup probe would kill the container
+  # after its attempts and liveness would restart it every minute, so startup
+  # is off and liveness is pushed a year out. Readiness stays and fails, so the
+  # pod reads NotReady and the NetherNet Service publishes not-ready addresses.
+  startupProbe:
+    enabled: false
+  livenessProbe:
+    initialDelaySeconds: "31536000"
+
+  # No backup: the world is rebuilt from scratch if it is lost.
+  persistence:
+    storageClass: truenas-iscsi
+    dataDir:
+      enabled: true
+      Size: 5Gi
+      accessModes:
+        - ReadWriteOnce
+
+# The way in for retail clients: signaling on TCP and gameplay on UDP.
+# Players dial the node address and signalingNodePort (the LAN address
+# 192.168.1.163:31201). The signaling nodePort differs from the server port
+# because the apiserver rejects the 31200 the subchart's UDP Service holds.
+# Cluster-wide taken ports at the time of writing were TCP 30180 30203 30543
+# 31134 31137 and UDP 31132 31136 31140-31179; check `kubectl get svc -A`
+# before moving these.
+netherNet:
+  enabled: true
+  signalingPort: 31200
+  signalingNodePort: 31201
+  gameplayPorts:
+    start: 31210
+    end: 31229

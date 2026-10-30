@@ -1,0 +1,10 @@
+apiVersion: v2
+name: crew-test
+description: Separate NetherNet Bedrock test server for signed-in joins, add-ons and later training bots
+type: application
+version: 0.1.0
+appVersion: "1.26.60.6"
+dependencies:
+  - name: minecraft-bedrock
+    version: 2.9.0
+    repository: https://itzg.github.io/minecraft-server-charts/
