@@ -236,10 +236,15 @@ minecraft-bedrock:
     # result the same on every start.
     #
     # The tag is a literal because initContainers are rendered by plain toYaml
-    # in the subchart and never templated. It moves only by hand, together with
-    # tools/crew-lab-kit-rev.py --write, which covers this container, so a new tag changes UNIT_KIT_REV, restarts the game server and
-    # waits at unitKitGate until nobody is online. Renovate is told to leave it
-    # alone for the same reason.
+    # in the subchart and never templated. It moves only by hand, together
+    # with tools/crew-lab-kit-rev.py --write, which covers this container, so
+    # a new tag changes UNIT_KIT_REV, restarts the game server and waits at
+    # unitKitGate until nobody is online. Renovate is told to leave it alone
+    # for the same reason.
+    #
+    # The image is pulled at every pod start, and the pull is fail-closed by
+    # design: a registry outage or a bad tag holds the pod in Init rather than
+    # starting the world without its packs.
     #
     # Pack uuids and versions are read from the packs' own manifests by the
     # installer, so there is nothing to keep in step here. The entrypoint is the
