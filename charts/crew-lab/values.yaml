@@ -75,11 +75,10 @@ minecraft-bedrock:
 
   minecraftServer:
     eula: "TRUE"
-    # LATEST: Bedrock clients only connect within a narrow protocol window of
-    # their own build, so a pinned server strands players as soon as their
-    # client updates. versionCheck below restarts the server when LATEST moves,
-    # and the crew units' gophertunnel has to keep up with the protocol.
-    version: "LATEST"
+    # Pinned because LATEST moved the server to 1.26.61.1 before the Windows
+    # client had it (clients are still on 1.26.60), so no player could join.
+    # Unpin, and re-enable versionCheck, once the public client catches up.
+    version: "1.26.60.6"
     difficulty: normal
     gameMode: survival
     levelName: crew-lab
@@ -728,12 +727,14 @@ unitKitGate:
   waitSeconds: 600
 
 versionCheck:
+  # Off while the server is pinned: the check always boots LATEST and would
+  # restart the lab onto it again.
   # Hourly, boots a throwaway copy of the server image to see what LATEST
   # resolves to, and restarts the lab in place only when that differs from the
   # running binary. Without it LATEST is re-read only when something else
   # happens to restart the pod. Players online are fine (the lab is
   # disposable); the units reconnect on their own.
-  enabled: true
+  enabled: false
   # Half past, so the candidate pod does not coincide with the main server's
   # hourly check: the namespace has about 3 cores and 3Gi of limits to spare.
   schedule: "30 * * * *"
