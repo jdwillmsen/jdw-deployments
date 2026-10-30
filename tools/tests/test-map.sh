@@ -1900,8 +1900,8 @@ fence = [i for i, r in enumerate(rules)
          if r.get("enabled") is False and r.get("matchFileNames") == ["charts/minecraft-fwb/values-map-pack.yaml"]]
 if not fence:
     bad.append("renovate.json has no rule disabling updates in charts/minecraft-fwb/values-map-pack.yaml")
-elif fence[-1] != len(rules) - 1:
-    bad.append("the rule disabling updates in values-map-pack.yaml is not last, so a later rule can switch them back on")
+elif any(r.get("enabled") is not False for r in rules[fence[-1] + 1:]):
+    bad.append("the rule disabling updates in values-map-pack.yaml is followed by a rule that can switch them back on")
 
 apps = yaml.safe_load(open(f"{here}/argocd/prd/config.yaml"))["apps"]
 listed = next(a for a in apps if a["name"] == "minecraft-fwb-prd")["valueFiles"]

@@ -99,6 +99,13 @@
         "charts/minecraft-fwb/values-map-pack.yaml"
       ],
       "enabled": false
+    },
+    {
+      "description": "The wildlife add-on packs' image runs as an init container on the game server pod, so a bump restarts the world. The tag moves by hand, when a pack changes, together with tools/crew-lab-kit-rev.py --write, which puts the new tag into UNIT_KIT_REV so the unit-kit gate holds the restart until nobody is online. This rule is last so that it wins.",
+      "matchPackageNames": [
+        "ghcr.io/jdwillmsen/lab-packs"
+      ],
+      "enabled": false
     }
   ],
   "platformAutomerge": true
