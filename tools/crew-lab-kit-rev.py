@@ -4,9 +4,10 @@
 The revision is a checksum of everything the init containers install: the
 rendered crew-lab-unit-kit ConfigMap and the specs of install-unit-kit and
 install-lab-packs without the revision, so a new lab-packs tag restarts the
-server through the same gate as a unit-kit change. A pod only restarts, and so only re-reads the pack, when the
-revision changes, so a hand-bumped number can be forgotten; this one cannot,
-because the chart tests compare it with the value in values.yaml.
+server through the same gate as a unit-kit change. A pod only restarts, and so
+only re-reads the pack, when the revision changes, so a hand-bumped number can
+be forgotten; this one cannot, because the chart tests compare it with the
+value in values.yaml.
 
 usage: crew-lab-kit-rev.py [--write]
   --write  put the revision into charts/crew-lab/values.yaml
