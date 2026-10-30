@@ -121,10 +121,16 @@ minecraft-bedrock:
     # Open by design. The image's allow list defaults on, which would refuse
     # crew's unknown name and every player not on the list.
     ALLOW_LIST: "false"
-    # Bedrock 1.26.51 and later default a new world to NetherNet, which opens
-    # no RakNet listener. crew dials RakNet only, and so do the probes this
-    # subchart renders, so the transport is pinned.
-    TRANSPORT: raknet
+    # The 1.26.60 Windows client dials NetherNet only: signaling over TCP on
+    # the server port and no RakNet UDP at all, so a RakNet server is
+    # unreachable for it. The server then opens no RakNet listener, and crew
+    # (gophertunnel over RakNet) cannot join until it gains a NetherNet dialer.
+    TRANSPORT: nethernet
+    # Gameplay UDP is negotiated per client, so behind a NodePort the ports
+    # are pinned and advertised as the node's address, or clients are handed
+    # the pod's own 10.244.x IP. The range matches netherNet.gameplayPorts and
+    # the node is the one this server is pinned to by affinity above.
+    SERVER_UDP_PORTS: "192.168.1.163:31140-31159:31140-31159"
     # Lets the boot be checked for add-on errors (ContentLog files in /data/logs).
     CONTENT_LOG_FILE_ENABLED: "true"
 
@@ -225,11 +231,15 @@ minecraft-bedrock:
           configMap:
             name: crew-lab-unit-kit
 
+  # Every probe the subchart renders is a RakNet `mc-monitor` ping, which a
+  # NetherNet server never answers. The startup probe would kill the container
+  # after its attempts and liveness would restart it every minute, so startup
+  # is off and liveness is pushed a year out. Readiness stays and fails, so the
+  # pod reads NotReady and the NetherNet Service publishes not-ready addresses.
   startupProbe:
-    enabled: true
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    failureThreshold: 60
+    enabled: false
+  livenessProbe:
+    initialDelaySeconds: "31536000"
 
   # Lab world only: no backup, so it is rebuilt from scratch if it is lost.
   persistence:
@@ -745,3 +755,15 @@ versionCheck:
   timeoutSeconds: 900
   # Long enough for an overnight failure's log to still be there in the morning.
   ttlSecondsAfterFinished: 21600
+
+# The way in for retail clients: signaling on TCP and gameplay on UDP.
+# Players dial the node address and signalingNodePort (the LAN address
+# 192.168.1.163:31137). The signaling nodePort differs from the server port
+# because the apiserver rejects the 31136 the subchart's UDP Service holds.
+netherNet:
+  enabled: true
+  signalingPort: 31136
+  signalingNodePort: 31137
+  gameplayPorts:
+    start: 31140
+    end: 31159

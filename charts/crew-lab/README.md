@@ -12,6 +12,13 @@ restart or reschedule that server.
 
 ## Joining the lab
 
+**Windows 1.26.60 and later** dial NetherNet only: on the LAN add the server at
+`192.168.1.163`, port **31137** (TCP signaling; gameplay UDP 31140-31159 is
+negotiated). The RakNet route below no longer reaches the server, because the
+server runs `transport=nethernet` and the crew units, which dial RakNet only,
+cannot join it until crew gains a NetherNet dialer. The `crew.prd.jdwlabs.com`
+router forward is RakNet-only and does not carry NetherNet.
+
 Players join from a Bedrock client at `crew.prd.jdwlabs.com`, port **19133**,
 from inside or outside the LAN. Any `jdwlabs.com` name works, since they all
 resolve to the same address. The path is the same one FWB uses on 19132: the
