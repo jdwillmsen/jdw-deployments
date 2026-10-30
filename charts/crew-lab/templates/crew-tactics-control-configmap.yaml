@@ -1,0 +1,19 @@
+{{- /*
+The switch the lab warriors read before they take a tactics profile or a duel
+roster from their squad (values.yaml, crew.tactics). It lives in this chart so
+it can never be mounted by the main server. Only exactly "on" turns training
+on; the value is checked here so a typo fails the render and not the lab.
+*/ -}}
+{{- if .Values.crew.enabled }}
+{{- $training := .Values.crew.tactics.training }}
+{{- if not (has $training (list "on" "off")) }}
+{{- fail (printf "crew.tactics.training must be \"on\" or \"off\", got %q" (toString $training)) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crew-tactics-control
+  namespace: {{ .Release.Namespace }}
+data:
+  training: {{ $training | quote }}
+{{- end }}

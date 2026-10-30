@@ -129,6 +129,12 @@ spec:
               value: {{ $unit.squadRole | quote }}
             - name: CREW_SQUAD
               value: {{ $unit.squad | quote }}
+            {{- if hasPrefix "lab-" $unit.squad }}
+            {{- /* Where the unit reads the training switch. Only a lab squad
+            gets it, and the unit ignores the variable on any other. */}}
+            - name: TACTICS_CONTROL_DIR
+              value: /etc/crew-tactics-control
+            {{- end }}
             {{- end }}
             {{- with $.Values.crew.joinStaggerSeconds }}
             - name: JOIN_DELAY_S
@@ -207,11 +213,21 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            {{- if and $unit.squad (hasPrefix "lab-" $unit.squad) }}
+            - name: tactics-control
+              mountPath: /etc/crew-tactics-control
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ if $unit.sharedVolume }}crew-shared{{ else }}{{ $unit.id }}{{ end }}
         - name: tmp
           emptyDir: {}
+        {{- if and $unit.squad (hasPrefix "lab-" $unit.squad) }}
+        - name: tactics-control
+          configMap:
+            name: crew-tactics-control
+        {{- end }}
 {{- end }}
 {{- end }}

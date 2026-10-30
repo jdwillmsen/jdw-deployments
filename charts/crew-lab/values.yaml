@@ -348,19 +348,19 @@ crew:
       name: Rusty
       role: warrior
       squadRole: vanguard
-      squad: alpha
+      squad: lab-alpha
       sharedVolume: true
     - id: crew-19
       name: Slate
       role: warrior
       squadRole: striker
-      squad: alpha
+      squad: lab-alpha
       sharedVolume: true
     - id: crew-20
       name: Tinder
       role: warrior
       squadRole: ranger
-      squad: alpha
+      squad: lab-alpha
       sharedVolume: true
     - id: crew-21
       name: Umber
@@ -481,6 +481,16 @@ crew:
   # a rollout of 20 units does not log them in on one second (crew-20 waits
   # 114 s).
   joinStaggerSeconds: 6
+
+  # The training switch for the lab warriors. A warrior on a `lab-` squad
+  # takes a tactics profile and a duel roster from its squad only while the
+  # file `training` in this ConfigMap holds exactly "on"; any other value, a
+  # missing file or an unreadable one leaves it on the shipped behaviour, so
+  # "off" is the state a wiped or half-applied release falls back to. The
+  # squad's `lab-` prefix is what keeps this off every other squad.
+  # Kubelet refreshes the mounted file in about a minute, with no pod restart.
+  tactics:
+    training: "off"
 
   # The public console. It serves the page and reverse-proxies an allow-list of
   # each unit's camera routes, so the route reaches this one Service instead of
