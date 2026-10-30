@@ -1,0 +1,30 @@
+{{- if .Values.netherNet.enabled }}
+# Signaling is TCP on the server's own port; gameplay is UDP from the range
+# pinned by SERVER_UDP_PORTS, one Service port per number because there is no
+# range form. publishNotReadyAddresses is required: the subchart's probes ping
+# RakNet, which a NetherNet server never answers, so the pod is NotReady and
+# would otherwise have no endpoints.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-nethernet
+  namespace: {{ .Release.Namespace }}
+spec:
+  type: NodePort
+  publishNotReadyAddresses: true
+  selector:
+    app: {{ .Release.Name }}-minecraft-bedrock
+  ports:
+    - name: signaling
+      port: {{ .Values.netherNet.signalingPort }}
+      targetPort: {{ .Values.netherNet.signalingPort }}
+      nodePort: {{ .Values.netherNet.signalingNodePort }}
+      protocol: TCP
+{{- range untilStep (int .Values.netherNet.gameplayPorts.start) (int (add1 .Values.netherNet.gameplayPorts.end)) 1 }}
+    - name: gameplay-{{ . }}
+      port: {{ . }}
+      targetPort: {{ . }}
+      nodePort: {{ . }}
+      protocol: UDP
+{{- end }}
+{{- end }}
