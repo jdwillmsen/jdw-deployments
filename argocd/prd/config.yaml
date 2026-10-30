@@ -32,3 +32,8 @@ apps:
     valueFiles:
       - values.yaml
       - values-prd.yaml
+      # TEMPORARY (2026-10-30): serves the lab over RakNet so the crew units, who
+      # have no Microsoft accounts, can join and the warriors can train. A retail
+      # Windows client cannot join the lab while this line is here. Removing it
+      # returns the lab to NetherNet; either way the lab server restarts once.
+      - values-raknet.yaml

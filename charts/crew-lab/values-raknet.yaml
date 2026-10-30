@@ -1,0 +1,37 @@
+# Serves the crew lab over RakNet instead of NetherNet.
+#
+# A NetherNet server admits only a signed-in player, and the crew units have no
+# accounts, so on NetherNet every unit is offline. Listing this file after
+# values-prd.yaml in argocd/prd/config.yaml puts the lab back on RakNet: the
+# units join offline as before and the warriors can train. A retail Windows
+# client cannot join a RakNet server, so the owner cannot play on the lab while
+# this is on. Removing the line in config.yaml returns the lab to NetherNet.
+# Each switch restarts the lab server, not the main server.
+#
+# It undoes exactly what the NetherNet change set: the transport, the pinned
+# gameplay UDP range, the probes the subchart renders (all RakNet pings, so they
+# work again), the NetherNet Service, and the signed-in warriors.
+#
+# One thing it cannot undo: the image writes server.properties only from env vars
+# that carry a value, so the `server-udp-ports` line the NetherNet setup left on
+# the data volume stays there. The transport is rewritten to raknet; the stale
+# range is believed to be ignored under RakNet but that is unverified, so check
+# the server log after a switch.
+minecraft-bedrock:
+  extraEnv:
+    TRANSPORT: raknet
+    SERVER_UDP_PORTS: null
+  startupProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 60
+  livenessProbe:
+    initialDelaySeconds: 30
+
+netherNet:
+  enabled: false
+
+crew:
+  nethernet:
+    enabled: false

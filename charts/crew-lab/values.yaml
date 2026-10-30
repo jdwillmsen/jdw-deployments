@@ -462,7 +462,10 @@ crew:
   # is the signaling URL and `port` its TCP port; the game UDP range is the
   # server's `SERVER_UDP_PORTS`. A unit without the flag keeps the RakNet
   # address and `offline` above.
+  # `enabled: false` (set by values-raknet.yaml) sends them back to RakNet and
+  # offline with every other unit, for a lab that is served over RakNet.
   nethernet:
+    enabled: true
     host: "http://192.168.1.163"
     port: 31137
 
