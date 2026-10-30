@@ -54,7 +54,9 @@ c, env = server(over)
 assert env["TRANSPORT"] == "raknet", env["TRANSPORT"]
 # set-property ignores an empty value, so the env var must carry none (a value would rewrite the range)
 assert not env.get("SERVER_UDP_PORTS"), env.get("SERVER_UDP_PORTS")
-assert c.get("startupProbe"), "the startup probe is back (it pings RakNet again)"
+sp = c.get("startupProbe")
+assert sp, "the startup probe is back"
+assert (sp["initialDelaySeconds"], sp["periodSeconds"], sp["failureThreshold"]) == (30, 10, 60), sp
 live = c["livenessProbe"]["initialDelaySeconds"]
 assert int(live) == 30, f"liveness delay must be the normal 30s, not a year: {live}"
 assert not any(d["kind"] == "Service" and d["metadata"]["name"].endswith("-nethernet") for d in over), "the NetherNet Service goes"
@@ -70,6 +72,10 @@ for u in ("crew-18", "crew-19", "crew-20"):
 # --- the overlay is listed after values-prd.yaml for the lab app
 apps = yaml.safe_load(open(cfg))["apps"]
 vf = next(a for a in apps if a["name"] == "crew-lab-prd")["valueFiles"]
+import os
+chart_dir = os.path.join(os.path.dirname(os.path.dirname(cfg)), os.pardir, "charts", "crew-lab")
+for f in vf:
+    assert os.path.exists(os.path.join(chart_dir, f)), f"{f} is listed for crew-lab-prd but does not exist"
 if "values-raknet.yaml" in vf:
     assert vf.index("values-raknet.yaml") > vf.index("values-prd.yaml"), vf
 print("ok")

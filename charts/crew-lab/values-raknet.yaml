@@ -9,18 +9,22 @@
 # Each switch restarts the lab server, not the main server.
 #
 # It undoes exactly what the NetherNet change set: the transport, the pinned
-# gameplay UDP range, the probes the subchart renders (all RakNet pings, so they
-# work again), the NetherNet Service, and the signed-in warriors.
+# gameplay UDP range, the startup probe, the NetherNet Service, and the
+# signed-in warriors. The probes do not prove the transport: the subchart's
+# `mc-monitor status-bedrock` probes in `auto` protocol mode and answers for
+# either transport, so a Ready pod is not evidence of RakNet. After a switch
+# look for `"transport":"raknet"` in the boot log and for units joining.
 #
-# One thing it cannot undo: the image writes server.properties only from env vars
-# that carry a value, so the `server-udp-ports` line the NetherNet setup left on
-# the data volume stays there. The transport is rewritten to raknet; the stale
-# range is believed to be ignored under RakNet but that is unverified, so check
-# the server log after a switch.
+# One thing it cannot rewrite: the image writes server.properties only from env
+# vars that carry a value, so the `server-udp-ports` line the NetherNet setup
+# left on the data volume stays there. Mojang documents that property as ignored
+# when the transport is raknet, and the empty value below is deliberate: it
+# renders as `value: ""`, which clears the variable without relying on how a
+# null is applied.
 minecraft-bedrock:
   extraEnv:
     TRANSPORT: raknet
-    SERVER_UDP_PORTS: null
+    SERVER_UDP_PORTS: ""
   startupProbe:
     enabled: true
     initialDelaySeconds: 30
