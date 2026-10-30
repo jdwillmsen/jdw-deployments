@@ -158,7 +158,7 @@ minecraft-bedrock:
       # players, so unitKitGate holds the sync until none are online.
       env:
         - name: UNIT_KIT_REV
-          value: "50480618f73e"
+          value: "3cc256c222dd"
       command:
         - sh
         - -ec
@@ -224,6 +224,47 @@ minecraft-bedrock:
         - name: unit-kit
           mountPath: /kit
           readOnly: true
+
+    # Installs the wildlife add-on packs, which live in their own image. The
+    # unit-kit ConfigMap tops out near 780 KB and holds the older stage-0 pack,
+    # so anything larger ships as an image instead.
+    #
+    # It must stay after install-unit-kit: init containers run in order and
+    # both read-modify-write world_behavior_packs.json and
+    # world_resource_packs.json. Each keeps the entries the other wrote, so
+    # the lists end up whole in either order, but a fixed order keeps the
+    # result the same on every start.
+    #
+    # The tag is a literal because initContainers are rendered by plain toYaml
+    # in the subchart and never templated. It moves only by hand, together with
+    # tools/crew-lab-kit-rev.py --write, which covers this container, so a new tag changes UNIT_KIT_REV, restarts the game server and
+    # waits at unitKitGate until nobody is online. Renovate is told to leave it
+    # alone for the same reason.
+    #
+    # Pack uuids and versions are read from the packs' own manifests by the
+    # installer, so there is nothing to keep in step here. The entrypoint is the
+    # installer, hence args and no command.
+    - name: install-lab-packs
+      image: "ghcr.io/jdwillmsen/lab-packs:1.0.0"
+      imagePullPolicy: IfNotPresent
+      args:
+        - /data/worlds/crew-lab
+      resources:
+        requests:
+          memory: 16Mi
+          cpu: 10m
+        limits:
+          memory: 64Mi
+          cpu: 50m
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: datadir
+          mountPath: /data
 
   extraVolumes:
     - volumes:

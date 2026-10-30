@@ -200,4 +200,34 @@ for pack in ("behavior_pack", "resource_pack"):
     assert f'version: {json.dumps(header["version"])}' in script, pack
 PY
 
+# The wildlife packs come from their own image, installed after the unit kit:
+# both read-modify-write the world's pack lists, so the order is the contract.
+python3 - "$work/rendered.yaml" <<'PY' || fail "the lab-packs init container is not rendered as expected"
+import re, sys, yaml
+
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+inits = next(d for d in docs if d["kind"] == "StatefulSet")["spec"]["template"]["spec"]["initContainers"]
+names = [c["name"] for c in inits]
+assert "install-lab-packs" in names, names
+assert names.index("install-lab-packs") > names.index("install-unit-kit"), names
+kit = next(c for c in inits if c["name"] == "install-unit-kit")
+packs = next(c for c in inits if c["name"] == "install-lab-packs")
+assert re.fullmatch(r"ghcr\.io/jdwillmsen/lab-packs:\d+\.\d+\.\d+", packs["image"]), packs["image"]
+assert packs["args"] == ["/data/worlds/crew-lab"], packs["args"]
+assert "command" not in packs, "the image entrypoint is the installer"
+assert packs["securityContext"] == kit["securityContext"] == {
+    "allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}}
+assert [(m["name"], m["mountPath"]) for m in packs["volumeMounts"]] == [("datadir", "/data")], packs["volumeMounts"]
+
+def milli(v):
+    return int(v[:-1]) if v.endswith("m") else int(float(v) * 1000)
+
+def mebi(v):
+    return int(v[:-2])
+
+for kind in ("requests", "limits"):
+    assert mebi(packs["resources"][kind]["memory"]) <= mebi(kit["resources"][kind]["memory"]), kind
+    assert milli(packs["resources"][kind]["cpu"]) <= milli(kit["resources"][kind]["cpu"]), kind
+PY
+
 echo "PASS: unit kit renders as expected"
