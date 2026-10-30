@@ -42,6 +42,29 @@
 {{ .Release.Name }}-minecraft-bedrock.{{ .Release.Namespace }}.svc.cluster.local
 {{- end -}}
 
+{{/*
+Where the bots, agent and join probe dial. NetherNet signaling is HTTP, and the
+ICE candidates the server then offers carry the node address plus the pinned
+UDP range, so clients must use the node address and nodePort that players use
+rather than the cluster Service. The port is in the URL, which wins over
+MC_PORT, so the two cannot disagree. A bare hostname selects RakNet.
+*/}}
+{{- define "bot.serverAddress" -}}
+{{- if .Values.netherNet.enabled -}}
+http://{{ .Values.netherNet.clientHost }}:{{ .Values.netherNet.signalingNodePort }}
+{{- else -}}
+{{ include "bot.serverHost" . }}
+{{- end -}}
+{{- end -}}
+
+{{- define "bot.serverPort" -}}
+{{- if .Values.netherNet.enabled -}}
+{{ .Values.netherNet.signalingNodePort }}
+{{- else -}}
+{{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" }}
+{{- end -}}
+{{- end -}}
+
 {{- define "netherNet.name" -}}
 {{ .Release.Name }}-nethernet
 {{- end -}}

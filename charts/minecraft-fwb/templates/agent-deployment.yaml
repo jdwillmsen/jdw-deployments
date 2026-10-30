@@ -48,9 +48,9 @@ spec:
               drop: ["ALL"]
           env:
             - name: MC_HOST
-              value: {{ include "bot.serverHost" . }}
+              value: {{ include "bot.serverAddress" . | quote }}
             - name: MC_PORT
-              value: {{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" | quote }}
+              value: {{ include "bot.serverPort" . | quote }}
             - name: MC_USERNAME
               value: {{ .Values.agent.username | quote }}
             - name: CONSOLE_BRIDGE_URL

@@ -54,12 +54,11 @@ spec:
               drop: ["ALL"]
           env:
             - name: MC_HOST
-              value: {{ include "bot.serverHost" . }}
-            # The in-cluster Service publishes the server on its own port
-            # rather than 19132, and the chart keeps serverPort and nodePort
-            # equal so clients display a ping time.
+              value: {{ include "bot.serverAddress" . | quote }}
+            # Only a fallback under NetherNet: the port in MC_HOST's URL wins.
+            # Under RakNet it is the in-cluster Service port, not 19132.
             - name: MC_PORT
-              value: {{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" | quote }}
+              value: {{ include "bot.serverPort" . | quote }}
             - name: MC_USERNAME
               value: {{ .Values.bot2.username | quote }}
             - name: MC_VIEW_DISTANCE
