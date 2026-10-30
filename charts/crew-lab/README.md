@@ -81,7 +81,7 @@ Set `replicas: 0` on one unit to stop it without deleting its volume;
 ## Squads
 
 `crew-18`-`crew-20` (Rusty, Slate, Tinder) are not working units: they are
-squad `alpha`'s three warriors (`role: warrior` with `squadRole` vanguard,
+squad `lab-alpha`'s three warriors (`role: warrior` with `squadRole` vanguard,
 striker, ranger, in that order), built to fight side by side rather than work
 a plot. Rendering leaves them out of everything a working unit gets: no
 `WORK_PLAN` on the pod, no plot tp and no yard restocking from the unit-kit
@@ -106,6 +106,21 @@ players. The `unitKitGate` PreSync job holds that sync until no human is online
 
 The pod carries `CREW_ROLE/<squadRole>` and `CREW_SQUAD/<squad>` on warriors
 only.
+
+### Warrior training switch
+
+The squad id carries a `lab-` prefix on purpose: the squad service only hands a
+tactics profile or a duel roster to a squad with that prefix, and a unit only
+asks for one when its squad has it and `TACTICS_CONTROL_DIR` is set (this
+chart sets it for exactly those warriors). The directory is the ConfigMap
+`crew-tactics-control`; its file `training` must hold exactly `on` for a unit to
+take anything from its squad. `crew.tactics.training` sets it and defaults to
+`"off"`, so a fresh or half-applied release trains nothing. Kubelet refreshes
+the mounted file in about a minute and the units re-read it every second, with
+no pod restart. Changing it is a values change, so turning training on is a
+reviewed PR like any other; the squad side also lapses on its own (a duel in 45
+seconds, a profile five minutes after its last fetch). See the gameops
+`docs/tactics-training.md` for the operator side.
 
 ## Menders and builders
 

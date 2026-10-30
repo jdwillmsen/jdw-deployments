@@ -67,7 +67,13 @@ for uid, name in want.items():
         # squad env carries the in-squad role, not the yard role.
         assert "WORK_PLAN" not in e, (uid, "warriors must have no WORK_PLAN")
         assert e["CREW_ROLE"]["value"] == squads[uid], (uid, e["CREW_ROLE"])
-        assert e["CREW_SQUAD"]["value"] == "alpha", (uid, e["CREW_SQUAD"])
+        assert e["CREW_SQUAD"]["value"] == "lab-alpha", (uid, e["CREW_SQUAD"])
+        # A lab squad's warriors read the training switch from the mounted
+        # ConfigMap, and no other unit gets the variable or the mount.
+        assert e["TACTICS_CONTROL_DIR"]["value"] == "/etc/crew-tactics-control", (uid, e.get("TACTICS_CONTROL_DIR"))
+        spec = dep["spec"]["template"]["spec"]
+        assert {"name": "tactics-control", "configMap": {"name": "crew-tactics-control"}} in spec["volumes"], uid
+        assert {"name": "tactics-control", "mountPath": "/etc/crew-tactics-control", "readOnly": True} in spec["containers"][0]["volumeMounts"], uid
     elif uid in lab_units:
         assert e["CREW_ROLE"]["value"] == lab_units[uid], (uid, e["CREW_ROLE"])
         assert e["CREW_LAB"]["value"] == "true", (uid, e["CREW_LAB"])
@@ -76,6 +82,8 @@ for uid, name in want.items():
         assert e["CREW_UNIT_ROLE"]["value"] == lab_units[uid], (uid, e.get("CREW_UNIT_ROLE"))
         assert claim == "crew-shared", uid
     else:
+        assert "TACTICS_CONTROL_DIR" not in e, (uid, "only lab-squad warriors read the training switch")
+        assert all(v["name"] != "tactics-control" for v in dep["spec"]["template"]["spec"]["volumes"]), uid
         assert "CREW_ROLE" not in e and "CREW_SQUAD" not in e and "CREW_LAB" not in e, uid
         plan = json.loads(e["WORK_PLAN"]["value"])
         assert 1 <= len(plan) <= 8, (uid, plan)
