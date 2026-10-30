@@ -73,15 +73,17 @@ spec:
               drop: ["ALL"]
           env:
             - name: MC_HOST
-              value: {{ include "crew.serverHost" $ }}
+              value: {{ if $unit.nethernet }}{{ $.Values.crew.nethernet.host | quote }}{{ else }}{{ include "crew.serverHost" $ }}{{ end }}
             - name: MC_PORT
-              value: {{ index $.Values "minecraft-bedrock" "minecraftServer" "serverPort" | quote }}
+              value: {{ if $unit.nethernet }}{{ $.Values.crew.nethernet.port | quote }}{{ else }}{{ index $.Values "minecraft-bedrock" "minecraftServer" "serverPort" | quote }}{{ end }}
             - name: CREW_ID
               value: {{ $unit.id | quote }}
             - name: MC_USERNAME
               value: {{ $unit.name | quote }}
             - name: MC_OFFLINE
-              value: {{ $.Values.crew.offline | quote }}
+              {{- /* A NetherNet server turns an unsigned player away at the
+              transport, so these units sign in. */}}
+              value: {{ if $unit.nethernet }}"false"{{ else }}{{ $.Values.crew.offline | quote }}{{ end }}
             - name: MC_VIEW_DISTANCE
               value: {{ $.Values.crew.viewDistance | quote }}
             - name: STATUS_ADDR

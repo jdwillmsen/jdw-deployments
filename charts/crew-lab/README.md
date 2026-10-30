@@ -107,6 +107,27 @@ players. The `unitKitGate` PreSync job holds that sync until no human is online
 The pod carries `CREW_ROLE/<squadRole>` and `CREW_SQUAD/<squad>` on warriors
 only.
 
+### Warriors on NetherNet
+
+The lab server accepts NetherNet only, and it turns an unsigned player away at
+the transport, so a unit cannot join it offline. `crew-18`-`crew-20` set
+`nethernet: true`: they take `crew.nethernet.host` and `.port` as `MC_HOST` and
+`MC_PORT` and run with `MC_OFFLINE=false`, so each signs in with a Microsoft
+account that owns Minecraft. Every other unit keeps the RakNet address and the
+offline join, and stays unable to connect until it is given an account.
+
+Each warrior needs one device-code login, run by the owner. The unit prints a
+code once to its log on the first start with an empty token cache and waits;
+open the Microsoft link it names in a browser, enter the code, and sign in as
+that unit's account:
+
+    kubectl -n jdwillmsen-prd logs -f deploy/crew-18
+
+Do this in your own terminal, not through an agent. The token is kept under
+`/data/crew-18/auth` on the shared volume, so a restart does not ask again.
+Use a different account for each warrior: one account cannot be in the world
+twice. Check Microsoft's terms and rate limits for the accounts you use.
+
 ### Warrior training switch
 
 The squad id carries a `lab-` prefix on purpose: the squad service only hands a

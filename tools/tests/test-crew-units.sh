@@ -60,6 +60,9 @@ for uid, name in want.items():
     claim = dep["spec"]["template"]["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"]
     assert claim == (uid if uid in own_claim else "crew-shared"), (uid, claim)
     assert e["CAMERA_ATLAS_DIR"]["value"] == "/data/atlas", uid
+    if uid not in squads:
+        assert not e["MC_HOST"]["value"].startswith("http"), (uid, e["MC_HOST"])
+        assert e["MC_PORT"]["value"] == "31136" and e["MC_OFFLINE"]["value"] == "true", (uid, e["MC_PORT"], e["MC_OFFLINE"])
     if uid not in own_claim:
         assert e["AUTH_CACHE_DIR"]["value"] == f"/data/{uid}/auth", uid
     if uid in squads:
@@ -68,6 +71,11 @@ for uid, name in want.items():
         assert "WORK_PLAN" not in e, (uid, "warriors must have no WORK_PLAN")
         assert e["CREW_ROLE"]["value"] == squads[uid], (uid, e["CREW_ROLE"])
         assert e["CREW_SQUAD"]["value"] == "lab-alpha", (uid, e["CREW_SQUAD"])
+        # The warriors join the NetherNet listener signed in; that server
+        # turns an unsigned player away at the transport.
+        assert e["MC_HOST"]["value"] == "http://192.168.1.163", (uid, e["MC_HOST"])
+        assert e["MC_PORT"]["value"] == "31137", (uid, e["MC_PORT"])
+        assert e["MC_OFFLINE"]["value"] == "false", (uid, e["MC_OFFLINE"])
         # A lab squad's warriors read the training switch from the mounted
         # ConfigMap, and no other unit gets the variable or the mount.
         assert e["TACTICS_CONTROL_DIR"]["value"] == "/etc/crew-tactics-control", (uid, e.get("TACTICS_CONTROL_DIR"))

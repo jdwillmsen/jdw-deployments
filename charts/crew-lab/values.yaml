@@ -403,18 +403,21 @@ crew:
     - id: crew-18
       name: Rusty
       role: warrior
+      nethernet: true
       squadRole: vanguard
       squad: lab-alpha
       sharedVolume: true
     - id: crew-19
       name: Slate
       role: warrior
+      nethernet: true
       squadRole: striker
       squad: lab-alpha
       sharedVolume: true
     - id: crew-20
       name: Tinder
       role: warrior
+      nethernet: true
       squadRole: ranger
       squad: lab-alpha
       sharedVolume: true
@@ -445,12 +448,23 @@ crew:
 
   image:
     repository: ghcr.io/jdwillmsen/minecraft-crew
-    tag: "1.76.0"
+    tag: "1.79.0"
     pullPolicy: IfNotPresent
 
   # Lab only: skip Microsoft sign-in. The lab server runs offline, so a signed
   # in unit could not join it anyway.
   offline: true
+
+  # Units that join the NetherNet listener instead of RakNet (units: `nethernet:
+  # true`). A NetherNet server admits only a player it can identify at the
+  # transport, so these units are signed in, not offline: each needs one
+  # device-code login by the owner (README, "Warriors on NetherNet"). `host`
+  # is the signaling URL and `port` its TCP port; the game UDP range is the
+  # server's `SERVER_UDP_PORTS`. A unit without the flag keeps the RakNet
+  # address and `offline` above.
+  nethernet:
+    host: "http://192.168.1.163"
+    port: 31137
 
   viewDistance: 8
   statusPort: 8080
