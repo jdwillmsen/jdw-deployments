@@ -298,10 +298,9 @@ minecraft-bedrock:
   # Until that lands, this workload is not observable and must not be read as
   # healthy. See README, "NetherNet transition".
   startupProbe:
-    enabled: true
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    failureThreshold: 60
+    enabled: false
+  livenessProbe:
+    initialDelaySeconds: "31536000"
 
 
   # The step that installs the map's script pack before the server starts
@@ -506,6 +505,16 @@ minecraft-bedrock:
   # actual output, not assumed.
   extraEnv:
     CONTENT_LOG_CONSOLE_OUTPUT_ENABLED: "true"
+    # The 1.26.60 Windows client dials NetherNet only (TCP signaling on the
+    # server port, no RakNet UDP), so a RakNet server is unreachable for it.
+    # The agent and afk bots dial RakNet only and stay offline until they gain
+    # a NetherNet dialer.
+    TRANSPORT: nethernet
+    # Gameplay UDP is negotiated per client, so behind a NodePort the range is
+    # pinned and advertised as the node's address, or clients are handed the
+    # pod's own 10.244.x IP. Matches netherNet.gameplayPorts; the node is the
+    # one this server is pinned to by affinity.
+    SERVER_UDP_PORTS: "192.168.1.87:31160-31179:31160-31179"
 
   persistence:
     storageClass: truenas-iscsi
