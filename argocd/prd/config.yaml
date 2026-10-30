@@ -32,3 +32,14 @@ apps:
     valueFiles:
       - values.yaml
       - values-prd.yaml
+  # Separate NetherNet test server for signed-in joins, add-ons and later
+  # training bots. Its own app, after the lab (wave 3), so nothing here can
+  # sync, restart or reschedule the lab or the main server, and a sync of
+  # either never waits on it.
+  - name: crew-test-prd
+    namespace: jdwillmsen-prd
+    chartPath: charts/crew-test
+    syncWave: "3"
+    valueFiles:
+      - values.yaml
+      - values-prd.yaml

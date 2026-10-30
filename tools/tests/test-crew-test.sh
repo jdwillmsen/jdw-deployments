@@ -139,4 +139,17 @@ keys = [(d["kind"], d["metadata"]["name"]) for d in test]
 assert len(keys) == len(set(keys)), keys
 PY
 
+# Its own ArgoCD app, ordered after the lab, so a sync of the lab or the main
+# server never includes this chart.
+python3 - "$here/argocd/prd/config.yaml" <<'PY' || fail "the argo app is not a separate, later wave"
+import sys, yaml
+
+apps = {a["name"]: a for a in yaml.safe_load(open(sys.argv[1]))["apps"]}
+app = apps["crew-test-prd"]
+assert app["chartPath"] == "charts/crew-test" and app["namespace"] == "jdwillmsen-prd", app
+assert app["valueFiles"] == ["values.yaml", "values-prd.yaml"], app["valueFiles"]
+assert int(app["syncWave"]) > int(apps["crew-lab-prd"]["syncWave"]), "must sync after the lab"
+assert [n for n, a in apps.items() if a["chartPath"] == app["chartPath"]] == ["crew-test-prd"], "chart is shared with another app"
+PY
+
 echo "PASS: crew-test is a separate NetherNet server with no collisions"
