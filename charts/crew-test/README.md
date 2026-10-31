@@ -55,15 +55,22 @@ there is no unit-kit gate: a change restarts this server at once.
 - **Restart**: `kubectl -n jdwillmsen-prd delete pod jdwillmsen-crew-test-prd-minecraft-bedrock-0`.
 - **Stop** keeping the world: scale the StatefulSet to 0 (`kubectl -n
   jdwillmsen-prd scale sts jdwillmsen-crew-test-prd-minecraft-bedrock
-  --replicas=0`). ArgoCD may revert it on its next sync, in which case pause
-  that app's auto-sync first.
-- **Reset the world**: delete the pod and the PVC
-  `datadir-jdwillmsen-crew-test-prd-minecraft-bedrock-0`; the server generates
-  a new flat world on the next start. There is no backup.
+  --replicas=0`). The chart renders no replica count, so ArgoCD should not
+  revert it; if it does, remove the `crew-test-prd` entry instead, which is the
+  durable way. Scaling back up is the same command with `--replicas=1`.
+- **Reset the world**: delete the PVC first, then the pod, because a pod
+  deleted first is recreated at once and keeps the volume mounted:
+  `kubectl -n jdwillmsen-prd delete pvc
+  datadir-jdwillmsen-crew-test-prd-minecraft-bedrock-0 --wait=false`, then the
+  pod. The server generates a new flat world on the next start. There is no
+  backup. The storage class keeps the underlying volume after the claim goes
+  (`reclaimPolicy: Retain`), so the iSCSI volume and its PV are left behind and
+  need deleting by hand if the space matters.
 - **Remove the server**: delete the `crew-test-prd` entry in
-  `argocd/prd/config.yaml`. Whether the PVC goes with it depends on the
-  ApplicationSet's prune settings, so check, and delete the PVC by hand if it
-  stays.
+  `argocd/prd/config.yaml`. The StatefulSet and the Services go with the app,
+  but the claim carries no ArgoCD tracking and no retention policy, so it stays
+  and so does the world (read from how the lab's identical claim is rendered;
+  not exercised here). Delete the claim by hand to reclaim the space.
 
 ## Resources
 
@@ -75,11 +82,21 @@ there is no unit-kit gate: a change restarts this server at once.
 An init container only counts toward the quota where it exceeds the main
 container, so the pod's charge is the server's alone. The namespace quota
 (`tenant-quota`: 12 cpu and 24Gi of limits, 6 cpu and 12Gi of requests) is
-shared with the main server and the lab, and the backup, volume-recovery and
-version-check CronJobs need 2000m of `limits.cpu` free to create their pods. On
-2026-10-30 that was 2950m free, so 750m leaves 2200m. Do not raise the limits
-without raising the quota. Storage is one 5Gi PVC (13 of the 20 allowed were in
-use).
+shared with the main server and the lab.
+
+- **CPU:** the backup, volume-recovery and version-check CronJobs need 2000m of
+  `limits.cpu` free to create their pods. On 2026-10-30 that was 2950m free, so
+  750m leaves 2200m. Do not raise the limit without raising the quota.
+- **Memory, and a gate on the version check:** the check creates a Job and a
+  candidate pod (1 CPU, 2Gi limits), so it needs about 2560Mi of
+  `limits.memory` free while it runs. That was exactly what was free before this
+  server; with its 1Gi, pod creation by the check is refused. The check is off
+  while the main server and the lab are pinned to 1.26.60.6, so nothing fails
+  today. **Before re-enabling `versionCheck` on either, raise the tenant
+  quota's `limits.memory` by at least 1Gi, or remove this server.** The quota
+  lives in the platform repo's tenant envelope, not here.
+
+Storage is one 5Gi PVC (13 of the 20 allowed were in use).
 
 ## How it differs from the lab
 

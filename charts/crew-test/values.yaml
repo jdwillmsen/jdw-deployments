@@ -13,13 +13,20 @@ minecraft-bedrock:
 
   # A test server with a handful of players, a flat world and no crew units.
   # The namespace quota is shared with the main server and the lab, and what
-  # looks free in it is not: the backup (1000m), volume-recovery and
+  # looks free in it is not. CPU: the backup (1000m), volume-recovery and
   # version-check (500m each) CronJobs need limits.cpu headroom to create their
-  # pods at all (see crew-lab's values.yaml for the day that failed). On
-  # 2026-10-30 the quota had 2950m of limits.cpu and 2560Mi of limits.memory
-  # unused, so this server's limits stay at 750m and 1Gi: that leaves 2200m for
-  # the 2000m of jobs and 1.5Gi of memory. Raise the cpu limit only together
-  # with a quota change; training bots will need one.
+  # pods at all (see crew-lab's values.yaml for the day that failed); 750m here
+  # leaves 2200m of the 2950m that was free on 2026-10-30. Raise it only with a
+  # quota change; training bots will need one.
+  #
+  # MEMORY, and a gate: the version check creates a Job and then a candidate
+  # pod with limits of 1 CPU and 2Gi, so while it runs the namespace needs
+  # about 2560Mi of limits.memory free, which is exactly what was free on
+  # 2026-10-30 before this server existed. This server's 1Gi therefore makes
+  # that check fail its pod creation. It is off today because the main server
+  # and the lab are pinned. DO NOT re-enable versionCheck on either until the
+  # tenant quota's limits.memory has been raised by at least this server's
+  # limit, or this server is removed.
   resources:
     requests:
       memory: 512Mi
