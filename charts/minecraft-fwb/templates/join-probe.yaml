@@ -10,9 +10,11 @@
 # The two clients that were connected had joined before the fault and speak
 # RakNet themselves, so their presence argued the server was fine.
 #
-# This performs the pre-login handshake, which is exactly the step that
-# failed, and needs no Xbox Live account because the protocol verdict comes
-# before any credential is examined. What it cannot prove is that a real
+# Over RakNet this performs the pre-login handshake, which is exactly the step
+# that failed, and needs no Xbox Live account because the protocol verdict comes
+# before any credential is examined. Over NetherNet no such unauthenticated
+# handshake exists, so it only checks that the signaling endpoint answers (and
+# the advertised protocol when joinProbe.protocol is set). What it cannot prove is that a real
 # account can authenticate and spawn; agent.sessionRecycleMs is the half that
 # covers that.
 # The probe's own way to the server, which exists so the check does not depend
@@ -180,7 +182,10 @@ spec:
             summary: Minecraft FWB cannot be joined
             description: >-
               The join probe has not completed a session handshake for
-              {{ .Values.joinProbe.alert.for }}. mc_joinprobe_stage says how far it
+              {{ .Values.joinProbe.alert.for }}. Over NetherNet it checks that the
+              signaling endpoint answers and not the gameplay UDP route or a login,
+              so a green probe does not prove a player can join; agent session
+              staleness covers that half. mc_joinprobe_stage says how far it
               got (0 unreachable, 1 answered the ping, 2 refused the session) and
               mc_joinprobe_play_status carries the server's own reason when it
               refused -- 2 means the server is older than the client it was asked
