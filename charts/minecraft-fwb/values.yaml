@@ -2664,7 +2664,7 @@ map:
       reader:
         # A pod that holds the volume read-only so that evidence can be
         # copied out of it. Pinned by digest, like the checks' own image.
-        image: busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
+        image: busybox:1.38@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4
 
     networkPolicy:
       # Where the gateway that serves map.host runs; the namespace the
