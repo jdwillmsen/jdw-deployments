@@ -171,7 +171,7 @@ minecraft-bedrock:
       # players, so unitKitGate holds the sync until none are online.
       env:
         - name: UNIT_KIT_REV
-          value: "3cc256c222dd"
+          value: "a7fa190958ce"
       command:
         - sh
         - -ec
@@ -263,7 +263,7 @@ minecraft-bedrock:
     # installer, so there is nothing to keep in step here. The entrypoint is the
     # installer, hence args and no command.
     - name: install-lab-packs
-      image: "ghcr.io/jdwillmsen/lab-packs:1.0.0"
+      image: "ghcr.io/jdwillmsen/lab-packs:1.1.0"
       imagePullPolicy: IfNotPresent
       args:
         - /data/worlds/crew-lab
