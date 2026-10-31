@@ -133,6 +133,19 @@ minecraft-bedrock:
     SERVER_UDP_PORTS: "192.168.1.163:31140-31159:31140-31159"
     # Lets the boot be checked for add-on errors (ContentLog files in /data/logs).
     CONTENT_LOG_FILE_ENABLED: "true"
+    # Add-on scripts log through console.warn, and the server drops those lines
+    # unless the content log level is verbose and the log goes to stdout; without
+    # both, a pack's own log lines (gameops:event, gameops:wildlife script loaded)
+    # never reach kubectl logs. Idle, the lab prints about one line a minute,
+    # so the extra volume is only what the pack logs on events.
+    CONTENT_LOG_LEVEL: "verbose"
+    CONTENT_LOG_CONSOLE_OUTPUT_ENABLED: "true"
+    # One console line per item moved between containers, to see what a unit or
+    # player took or dropped.
+    ITEM_TRANSACTION_LOGGING_ENABLED: "true"
+    # EMIT_SERVER_TELEMETRY stays off: the server's own message says it sends
+    # data to Mojang to "improve the game", i.e. off this cluster. Enabling it
+    # needs the owner's explicit OK.
 
   # Gear for the crew units, from the unit-kit ConfigMap (templates/). An
   # offline-mode player has no XUID, so the server cannot persist its
