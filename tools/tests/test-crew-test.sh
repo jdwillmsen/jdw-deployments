@@ -73,8 +73,11 @@ assert "readinessProbe" in server
 def milli(v):
     v = str(v)
     return int(v[:-1]) if v.endswith("m") else int(float(v) * 1000)
-assert milli(server["resources"]["limits"]["cpu"]) <= 1000, server["resources"]["limits"]
+# 2950m was free for 2000m of jobs: only 750m leaves them room
+assert server["resources"]["limits"]["cpu"] == "750m", server["resources"]["limits"]
 assert server["resources"]["limits"]["memory"] == "1Gi", server["resources"]["limits"]
+# open on purpose: a list would refuse every account the owner signs in with
+assert env["ALLOW_LIST"] == "false", env.get("ALLOW_LIST")
 
 # The lab-packs hook installs into the world the server creates.
 init = pod["initContainers"]
@@ -101,9 +104,9 @@ assert len(nn["ports"]) == 21 and len({p["name"] for p in nn["ports"]}) == 21
 PY
 
 # Collision audit across everything else in the namespace. Two releases in one
-# namespace fail to sync on a repeated (kind, name), and two NodePorts on the
-# same protocol and number are refused by the apiserver, so both are checked
-# against the lab and the main server, whatever their transport settings.
+# namespace fail to sync on a repeated (kind, name), and a NodePort number is
+# taken whatever its protocol (the chart's own 31201 note rests on that), so
+# both are checked against the lab and the main server, whatever their transport.
 python3 - "$work/test.yaml" "$work/lab.yaml" "$work/fwb.yaml" <<'PY' || fail "the test server collides with another release"
 import sys, yaml
 
@@ -121,9 +124,10 @@ def node_ports(docs):
         if d["kind"] == "Service":
             for p in d["spec"].get("ports", []):
                 if p.get("nodePort"):
-                    yield (p.get("protocol", "TCP"), p["nodePort"])
+                    yield p["nodePort"]
 
 test, others = load(sys.argv[1]), [load(p) for p in sys.argv[2:]]
+assert test and all(others), "an empty render makes the audit vacuous"
 mine = {(d["kind"], d["metadata"]["name"], d["metadata"].get("namespace")) for d in test}
 mine |= {("PersistentVolumeClaim", c, "jdwillmsen-prd") for c in claims(test)}
 for docs in others:
@@ -139,8 +143,9 @@ keys = [(d["kind"], d["metadata"]["name"]) for d in test]
 assert len(keys) == len(set(keys)), keys
 PY
 
-# Its own ArgoCD app, ordered after the lab, so a sync of the lab or the main
-# server never includes this chart.
+# Its own ArgoCD app, so a sync of the lab or the main server never includes
+# this chart. The wave records the intent to come after the lab; it orders
+# nothing without a parent app.
 python3 - "$here/argocd/prd/config.yaml" <<'PY' || fail "the argo app is not a separate, later wave"
 import sys, yaml
 
@@ -148,8 +153,22 @@ apps = {a["name"]: a for a in yaml.safe_load(open(sys.argv[1]))["apps"]}
 app = apps["crew-test-prd"]
 assert app["chartPath"] == "charts/crew-test" and app["namespace"] == "jdwillmsen-prd", app
 assert app["valueFiles"] == ["values.yaml", "values-prd.yaml"], app["valueFiles"]
-assert int(app["syncWave"]) > int(apps["crew-lab-prd"]["syncWave"]), "must sync after the lab"
+assert int(app["syncWave"]) > int(apps["crew-lab-prd"]["syncWave"]), "the wave records that it follows the lab"
 assert [n for n, a in apps.items() if a["chartPath"] == app["chartPath"]] == ["crew-test-prd"], "chart is shared with another app"
+PY
+
+# The add-on installer is the lab's image at the lab's tag, not one of its own.
+python3 - "$work/test.yaml" "$work/lab.yaml" <<'PY' || fail "the lab-packs image differs from the lab's"
+import sys, yaml
+
+def packs(path):
+    for d in yaml.safe_load_all(open(path)):
+        if d and d["kind"] == "StatefulSet" and d["metadata"]["name"].endswith("-minecraft-bedrock"):
+            for i in d["spec"]["template"]["spec"].get("initContainers", []):
+                if i["name"] == "install-lab-packs":
+                    return i["image"]
+test, lab = packs(sys.argv[1]), packs(sys.argv[2])
+assert test and lab and test == lab, (test, lab)
 PY
 
 echo "PASS: crew-test is a separate NetherNet server with no collisions"
