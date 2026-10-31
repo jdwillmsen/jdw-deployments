@@ -9,7 +9,10 @@ command -v helm >/dev/null || { echo "SKIP: helm is not installed"; exit 0; }
 
 out="$(helm template lab "$here/charts/crew-lab" -f "$here/charts/crew-lab/values-prd.yaml")" || fail "helm template failed"
 
+# A name rendered twice (the subchart's default plus extraEnv) would let the
+# first value hide the one the server actually gets.
 env_value() {
+  [ "$(grep -c -- "- name: $1\$" <<<"$out")" -eq 1 ] || fail "$1 is rendered more than once or not at all"
   grep -A1 -- "- name: $1\$" <<<"$out" | grep -m1 'value:' | sed 's/.*value: *"\(.*\)"/\1/'
 }
 
