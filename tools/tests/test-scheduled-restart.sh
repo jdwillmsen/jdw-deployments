@@ -48,12 +48,25 @@ sed -i "s|/var/run/secrets/kubernetes.io/serviceaccount/namespace|$work/sa/names
 # deadlines and sleeps already follow, so a new wait added to the job fails
 # this suite rather than quietly adding two minutes back.
 found="$(grep -c 'SECONDS + 120' "$work/restart.sh" || true)"
-[ "$found" = "1" ] || fail "expected one 120s restart deadline to shorten, found $found"
+[ "$found" = "2" ] || fail "expected two 120s restart deadlines to shorten, found $found"
 sed -i 's/SECONDS + 120/SECONDS + 6/' "$work/restart.sh"
 
 found="$(grep -c '^ *sleep 3$' "$work/restart.sh" || true)"
-[ "$found" = "1" ] || fail "expected one 3s restart poll sleep to shorten, found $found"
+[ "$found" = "2" ] || fail "expected two 3s restart poll sleeps to shorten, found $found"
 sed -i 's/^\( *\)sleep 3$/\1sleep 0.2/' "$work/restart.sh"
+
+# The signaling-port wait added for the NetherNet bind race: a 60s listen
+# window polled every 4s, and a 90s wait for TIME_WAIT sockets polled every 10s.
+for lit in 'SECONDS + 60' 'SECONDS + 90'; do
+  found="$(grep -c "$lit" "$work/restart.sh" || true)"
+  [ "$found" = "1" ] || fail "expected one '$lit' deadline to shorten, found $found"
+done
+sed -i 's/SECONDS + 60/SECONDS + 2/; s/SECONDS + 90/SECONDS + 2/' "$work/restart.sh"
+for lit in 4 10; do
+  found="$(grep -c "^ *sleep $lit\$" "$work/restart.sh" || true)"
+  [ "$found" = "1" ] || fail "expected one ${lit}s sleep to shorten, found $found"
+  sed -i "s/^\( *\)sleep $lit\$/\1sleep 0.2/" "$work/restart.sh"
+done
 
 # The settle after `send-command list`, waiting for the server to print its
 # player line. The shim answers immediately, so every case paid two seconds for
@@ -86,6 +99,21 @@ if [[ "$1" == "exec" ]]; then
     exit 0
   fi
   [[ "$*" == *"tellraw"* ]] && { echo "__TELLRAW__ $*" >> "$STATE_DIR/calls"; exit 0; }
+  # The socket table the script reads to learn whether the signaling port
+  # (31132 = 799C) is bound. FAKE_LISTEN: yes (default), no, unreadable, or
+  # second = bound only once a second stop has been recorded, which is the
+  # race the script heals. FAKE_TIME_WAIT=yes adds a TIME_WAIT socket on it.
+  if [[ "$*" == *"/proc/net/tcp6"* ]]; then
+    stops="$(grep -c __STOP_CALLED__ "$STATE_DIR/calls" 2>/dev/null || true)"
+    [[ "${FAKE_LISTEN:-yes}" == "unreadable" ]] && exit 1
+    printf '  sl  local_address rem_address st\n'
+    case "${FAKE_LISTEN:-yes}" in
+      yes) echo "   0: 00000000000000000000000000000000:799C 00000000000000000000000000000000:0000 0A" ;;
+      second) [[ "${stops:-0}" -ge 2 ]] && echo "   0: 00000000000000000000000000000000:799C 00000000000000000000000000000000:0000 0A" ;;
+    esac
+    [[ "${FAKE_TIME_WAIT:-no}" == "yes" ]] && echo "   1: 0000000000000000FFFF0000FA06F40A:799C 0000000000000000FFFF0000E307F40A:DD0A 06"
+    exit 0
+  fi
   # The statistics file the server writes as it shuts down. Unset stands in a
   # realistic file; "none" stages a read that fails, as it would on a
   # container that is not yet accepting exec.
@@ -110,6 +138,8 @@ if [[ "$1" == "get" ]]; then
     # Unset falls back to a default; set-but-empty stays empty, which is how a
     # case stages a read that failed rather than one that answered.
     if [[ -f "$STATE_DIR/stopped" ]]; then
+      stops="$(grep -c __STOP_CALLED__ "$STATE_DIR/calls" 2>/dev/null || true)"
+      [[ -z "${FAKE_STATE_AFTER+x}" && "${stops:-0}" -ge 2 ]] && { printf 'uid-1 %s' "$((3 + stops))"; exit 0; }
       printf '%s' "${FAKE_STATE_AFTER-uid-1 4}"
     else
       printf '%s' "${FAKE_STATE-uid-1 3}"
@@ -230,6 +260,29 @@ assert_contains "unreadable statistics are reported" "packet_statistics_unavaila
   FAKE_STATE="uid-1 3" FAKE_STATE_AFTER="uid-1 4" FAKE_STATS=none
 assert_missing "unreadable statistics do not fail the run" '"event":"failed"' \
   FAKE_STATE="uid-1 3" FAKE_STATE_AFTER="uid-1 4" FAKE_STATS=none
+
+# The race this job's second half exists for: a restarted NetherNet server whose
+# signaling bind failed against the old process's TIME_WAIT sockets runs with
+# nothing listening. The job must notice, stop it again, and report the bind.
+assert_contains "a bound signaling port is reported" '"event":"listener_ok"' \
+  FAKE_STATE="uid-1 3" FAKE_STATE_AFTER="uid-1 4"
+assert_missing "a bound signaling port is not stopped twice" "__STOP_CALLED__
+__STOP_CALLED__" \
+  FAKE_STATE="uid-1 3" FAKE_STATE_AFTER="uid-1 4"
+assert_contains "a missing listener is reported" '"event":"listener_missing"' \
+  FAKE_LISTEN=second FAKE_TIME_WAIT=yes FAKE_STATE="uid-1 3"
+assert_contains "a missing listener stops the server a second time" "__STOP_CALLED__
+__STOP_CALLED__" \
+  FAKE_LISTEN=second FAKE_STATE="uid-1 3"
+assert_contains "the second start binding the port ends the run as a success" '"event":"listener_ok"' \
+  FAKE_LISTEN=second FAKE_STATE="uid-1 3"
+assert_contains "a port that never binds fails the run" "still not listening after two restarts" \
+  FAKE_LISTEN=no FAKE_STATE="uid-1 3"
+assert_missing "an unreadable socket table does not restart again" "__STOP_CALLED__
+__STOP_CALLED__" \
+  FAKE_LISTEN=unreadable FAKE_STATE="uid-1 3"
+assert_contains "an unreadable socket table is reported, not guessed" "is unverified" \
+  FAKE_LISTEN=unreadable FAKE_STATE="uid-1 3"
 
 # The stop landed and the container never came back. Takes the full two-minute
 # poll, which is why this case is last.

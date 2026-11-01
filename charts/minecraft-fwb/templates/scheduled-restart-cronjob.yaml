@@ -272,4 +272,86 @@ spec:
                       "raw": text,
                   }))' || emit packet_statistics_unavailable "statistics were read but could not be parsed"
                   fi
+
+{{- if .Values.netherNet.enabled }}
+
+                  # A NetherNet server binds its signaling port once, while it
+                  # starts, and never retries. The process that just stopped
+                  # leaves TIME_WAIT sockets on that port in the pod's network
+                  # namespace -- the namespace survives an in-place restart --
+                  # and the bind fails without a word in the log. The server
+                  # then runs, ticks and saves with nothing listening, so every
+                  # player is locked out while the pod looks alive. This took
+                  # FWB offline from the 16:40 restart on 2026-10-31 and again
+                  # on 2026-11-01, each time until someone deleted the pod. A
+                  # fresh pod has a clean namespace, which is why only restarts
+                  # in place are hit.
+                  #
+                  # So the restart is not finished until the port answers. If
+                  # it does not, wait for the old sockets to expire and stop
+                  # the server again: the second start binds. A server whose
+                  # exec cannot be read is reported rather than restarted, so a
+                  # slow container never causes a second stop on its own.
+                  SIGNAL_HEX="$(printf '%04X' "{{ .Values.netherNet.signalingPort }}")"
+
+                  # 0 = listening, 1 = not listening, 2 = could not read.
+                  signal_state() {
+                    local table
+                    table="$(timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                      -- cat /proc/net/tcp6 /proc/net/tcp 2>/dev/null)" || true
+                    [[ -z "$table" ]] && return 2
+                    awk -v p=":$SIGNAL_HEX" 'toupper($2) ~ (p "$") && $4 == "0A" { found = 1 } END { exit !found }' <<<"$table"
+                  }
+
+                  signal_time_wait() {
+                    timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                      -- cat /proc/net/tcp6 /proc/net/tcp 2>/dev/null \
+                      | awk -v p=":$SIGNAL_HEX" 'toupper($2) ~ (p "$") && $4 == "06" { found = 1 } END { exit !found }'
+                  }
+
+                  for attempt in 1 2; do
+                    state=1
+                    listen_deadline=$(( SECONDS + 60 ))
+                    while (( SECONDS < listen_deadline )); do
+                      signal_state && { state=0; break; } || state=$?
+                      sleep 4
+                    done
+                    if (( state == 0 )); then
+                      emit listener_ok "signaling port {{ .Values.netherNet.signalingPort }} is accepting connections after restart attempt $attempt"
+                      exit 0
+                    fi
+                    if (( state == 2 )); then
+                      emit failed "could not read the server's sockets, so the signaling port {{ .Values.netherNet.signalingPort }} is unverified"
+                      exit 1
+                    fi
+                    emit listener_missing "signaling port {{ .Values.netherNet.signalingPort }} is not listening after restart attempt $attempt"
+
+                    clear_deadline=$(( SECONDS + 90 ))
+                    while (( SECONDS < clear_deadline )) && signal_time_wait; do
+                      sleep 10
+                    done
+
+                    before="$(server_state)"
+                    if [[ -z "$before" ]] || ! timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- send-command stop >/dev/null 2>&1; then
+                      emit failed "signaling port {{ .Values.netherNet.signalingPort }} is not listening and the server could not be restarted again"
+                      exit 1
+                    fi
+                    restarted=""
+                    restart_deadline=$(( SECONDS + 120 ))
+                    while (( SECONDS < restart_deadline )); do
+                      now="$(server_state)"
+                      if [[ -n "$now" && "$now" != "$before" ]]; then
+                        restarted="$now"
+                        break
+                      fi
+                      sleep 3
+                    done
+                    if [[ -z "$restarted" ]]; then
+                      emit failed "second stop was delivered but $SERVER_POD never restarted"
+                      exit 1
+                    fi
+                  done
+                  emit failed "signaling port {{ .Values.netherNet.signalingPort }} is still not listening after two restarts"
+                  exit 1
+{{- end }}
 {{- end }}
