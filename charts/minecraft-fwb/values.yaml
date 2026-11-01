@@ -1622,18 +1622,19 @@ netherNet:
   # namespace; Prometheus selects Probes and PrometheusRules with empty
   # selectors, so both objects are picked up from this tenant namespace with
   # no change to the platform repo.
-  # Off while the server speaks RakNet. This probe is a TCP connect against the
-  # signaling port, and a RakNet server opens no TCP listener there -- left on
-  # it reports probe_success 0 for a server that is serving fine, which is a
-  # false alarm on the one alert that is supposed to mean "players are locked
-  # out". RakNet has its own working check again: the kubelet probes and
-  # mc-monitor's metric both came back the moment the transport did.
+  # On because the server speaks NetherNet, where this TCP connect is the only
+  # check that a player can reach it: the kubelet probes are RakNet pings and
+  # are switched off. It was left off from the RakNet days, so the 2026-11-01
+  # outage -- nothing listening on the signaling port for 3.4 hours after the
+  # nightly restart -- paged nobody. A RakNet server opens no TCP listener
+  # here, so move back to RakNet and this must go off with it, or it reports
+  # probe_success 0 for a server that is serving fine.
   #
-  # The Service, the ports and this probe all stay in the chart rather than
-  # being deleted: NetherNet is where Mojang is going, and the next attempt
-  # should start from what was already learned here rather than from nothing.
+  # The Service, the ports and this probe stay in the chart rather than being
+  # deleted either way, so the next transport change starts from what was
+  # already learned.
   probe:
-    enabled: false
+    enabled: true
     interval: 30s
     target: 192.168.1.87:31134
     blackboxHost: platform-blackbox-exporter-prometheus-blackbox-exporter.monitoring.svc.cluster.local:9115

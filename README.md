@@ -60,7 +60,7 @@ The chart keeps everything the attempt produced, switched off:
 | Kept | State | Why it is still here |
 |---|---|---|
 | `nethernet-service.yaml` | rendered, unused | NetherNet is where Mojang is going; the nodePort and UDP-range mechanics were expensive to work out |
-| `nethernet-probe.yaml` | `netherNet.probe.enabled: false` | It is a TCP connect against a signaling port a RakNet server does not open, so it would report a false outage |
+| `nethernet-probe.yaml` | `netherNet.probe.enabled: true` | A TCP connect against the signaling port. FWB runs NetherNet, so it is the check that players can reach the server; turn it off if the transport goes back to RakNet |
 
 What a second attempt needs, beyond what is here:
 
