@@ -126,11 +126,17 @@ minecraft-bedrock:
     # unreachable for it. The server then opens no RakNet listener, and crew
     # (gophertunnel over RakNet) cannot join until it gains a NetherNet dialer.
     TRANSPORT: nethernet
-    # Gameplay UDP is negotiated per client, so behind a NodePort the ports
-    # are pinned and advertised as the node's address, or clients are handed
-    # the pod's own 10.244.x IP. The range matches netherNet.gameplayPorts and
-    # the node is the one this server is pinned to by affinity above.
-    SERVER_UDP_PORTS: "192.168.1.163:31140-31159:31140-31159"
+    # Gameplay UDP is negotiated per client, so behind a NodePort the ports are
+    # pinned and advertised as an address and external ports, or clients are
+    # handed the pod's own 10.244.x IP. Format: address:external:internal.
+    #
+    # The address is the WAN one so players outside the LAN can join: the router
+    # forwards UDP 19140-19159 to the HAProxy VM, which maps each to the
+    # matching NodePort 31140-31159 (191NN -> 311NN). Signaling is TCP 19133 on
+    # the same path. LAN and in-cluster clients cannot reach the WAN address
+    # themselves, but ICE checks run both ways, so the server reaches them.
+    # The WAN address is not static; update it here if the ISP changes it.
+    SERVER_UDP_PORTS: "104.53.12.62:19140-19159:31140-31159"
     # Lets the boot be checked for add-on errors (ContentLog files in /data/logs).
     CONTENT_LOG_FILE_ENABLED: "true"
     # Add-on scripts log through console.warn, and the server drops those lines
@@ -840,8 +846,8 @@ versionCheck:
   ttlSecondsAfterFinished: 21600
 
 # The way in for retail clients: signaling on TCP and gameplay on UDP.
-# Players dial the node address and signalingNodePort (the LAN address
-# 192.168.1.163:31137). The signaling nodePort differs from the server port
+# LAN players dial the node address and signalingNodePort
+# (192.168.1.163:31137); remote players dial mc.jdwlabs.com:19133. The signaling nodePort differs from the server port
 # because the apiserver rejects the 31136 the subchart's UDP Service holds.
 netherNet:
   enabled: true
