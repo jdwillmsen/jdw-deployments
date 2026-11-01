@@ -278,6 +278,10 @@ assert_contains "the second start binding the port ends the run as a success" '"
   FAKE_LISTEN=second FAKE_STATE="uid-1 3"
 assert_contains "a port that never binds fails the run" "still not listening after two restarts" \
   FAKE_LISTEN=no FAKE_STATE="uid-1 3"
+assert_missing "a port that never binds is stopped no more than twice" "__STOP_CALLED__
+__STOP_CALLED__
+__STOP_CALLED__" \
+  FAKE_LISTEN=no FAKE_STATE="uid-1 3"
 assert_missing "an unreadable socket table does not restart again" "__STOP_CALLED__
 __STOP_CALLED__" \
   FAKE_LISTEN=unreadable FAKE_STATE="uid-1 3"
