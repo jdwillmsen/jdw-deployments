@@ -511,10 +511,19 @@ minecraft-bedrock:
     # a NetherNet dialer.
     TRANSPORT: nethernet
     # Gameplay UDP is negotiated per client, so behind a NodePort the range is
-    # pinned and advertised as the node's address, or clients are handed the
-    # pod's own 10.244.x IP. Matches netherNet.gameplayPorts; the node is the
-    # one this server is pinned to by affinity.
-    SERVER_UDP_PORTS: "192.168.1.87:31160-31179:31160-31179"
+    # pinned and advertised as an address and external ports, or clients are
+    # handed the pod's own 10.244.x IP. Format: address:external:internal.
+    #
+    # The address is the WAN one, because players join from other states: the
+    # router forwards UDP 19160-19179 to the HAProxy VM, which maps each to the
+    # matching NodePort 31160-31179 (191NN -> 311NN, as for the RakNet ports).
+    # LAN and in-cluster clients cannot reach the WAN address themselves -- the
+    # gateway does not loop traffic back -- but ICE checks run in both
+    # directions, so the server reaches their own addresses instead.
+    #
+    # The WAN address is not static. If the ISP changes it, remote joins break
+    # until this is updated; check with `curl -s ifconfig.me`.
+    SERVER_UDP_PORTS: "104.53.12.62:19160-19179:31160-31179"
 
   persistence:
     storageClass: truenas-iscsi
