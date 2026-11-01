@@ -113,7 +113,13 @@ spec:
                     emit skipped "server container is not running"
                     exit 0
                   fi
-                  age=$(( $(date -u +%s) - $(date -u -d "$started" +%s) ))
+                  # python3 rather than date: the image's date is busybox, which
+                  # cannot parse an ISO timestamp.
+                  age="$(python3 -c 'import sys, time, datetime; print(int(time.time() - datetime.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()))' "$started" 2>/dev/null || true)"
+                  if [[ -z "$age" ]]; then
+                    emit unverified "could not read the container start time: $started"
+                    exit 0
+                  fi
                   if (( age < MIN_AGE_SECONDS )); then
                     emit skipped "container up ${age}s, under ${MIN_AGE_SECONDS}s"
                     exit 0
@@ -126,7 +132,7 @@ spec:
                     exit 0
                   fi
                   hex="$(printf '%04X' "$SIGNAL_PORT")"
-                  sockets() { awk -v p=":$hex" -v s="$1" 'toupper($2) ~ (p "$") && $4 == s { found = 1 } END { exit !found }' <<<"$table"; }
+                  sockets() { printf '%s\n' "$table" | awk -v p=":$hex" -v s="$1" 'toupper($2) ~ (p "$") && $4 == s { found = 1 } END { exit !found }'; }
 
                   if sockets 0A; then
                     emit ok "signaling port $SIGNAL_PORT is listening, container up ${age}s"
