@@ -1868,11 +1868,15 @@ scheduledRestart:
   #   stop                                  timeout       =  30
   #   restart poll   120 + 10 (get) + 3 (sleep)           = 133
   #   statistics      3 x (15 exec + 5 sleep)              =  60
+  #   port check (x2) 60 + 15 + 4                         = 158
+  #   port heal       90 + 15 + 10 wait, 10 get, 30 stop,
+  #                   133 restart poll                    = 288
   #
-  # About 485s of worst case. 600 leaves margin without letting a wedged run
+  # About 930s of worst case, 485 of it without the port check and heal that
+  # guard the NetherNet bind race. 1200 leaves margin without letting a wedged run
   # sit long enough to matter -- and with concurrencyPolicy Forbid, a run that
   # never ends would otherwise suspend every future restart silently.
-  timeoutSeconds: 600
+  timeoutSeconds: 1200
 
   # A failed Job with no TTL is kept until failedJobsHistoryLimit evicts it,
   # and KubeJobFailed reads the object rather than the run -- so one bad night

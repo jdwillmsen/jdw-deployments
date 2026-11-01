@@ -304,9 +304,10 @@ spec:
                   }
 
                   signal_time_wait() {
-                    timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
-                      -- cat /proc/net/tcp6 /proc/net/tcp 2>/dev/null \
-                      | awk -v p=":$SIGNAL_HEX" 'toupper($2) ~ (p "$") && $4 == "06" { found = 1 } END { exit !found }'
+                    local table
+                    table="$(timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                      -- cat /proc/net/tcp6 /proc/net/tcp 2>/dev/null)" || true
+                    awk -v p=":$SIGNAL_HEX" 'toupper($2) ~ (p "$") && $4 == "06" { found = 1 } END { exit !found }' <<<"$table"
                   }
 
                   for attempt in 1 2; do
@@ -325,6 +326,10 @@ spec:
                       exit 1
                     fi
                     emit listener_missing "signaling port {{ .Values.netherNet.signalingPort }} is not listening after restart attempt $attempt"
+                    if (( attempt == 2 )); then
+                      emit failed "signaling port {{ .Values.netherNet.signalingPort }} is still not listening after two restarts"
+                      exit 1
+                    fi
 
                     clear_deadline=$(( SECONDS + 90 ))
                     while (( SECONDS < clear_deadline )) && signal_time_wait; do
@@ -350,8 +355,10 @@ spec:
                       emit failed "second stop was delivered but $SERVER_POD never restarted"
                       exit 1
                     fi
+                    if [[ "${restarted%% *}" != "${before%% *}" ]]; then
+                      emit failed "pod was recreated (${before%% *} -> ${restarted%% *}), not restarted in place"
+                      exit 1
+                    fi
                   done
-                  emit failed "signaling port {{ .Values.netherNet.signalingPort }} is still not listening after two restarts"
-                  exit 1
 {{- end }}
 {{- end }}
