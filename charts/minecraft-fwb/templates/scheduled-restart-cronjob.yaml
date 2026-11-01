@@ -300,14 +300,14 @@ spec:
                     table="$(timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
                       -- cat /proc/net/tcp6 /proc/net/tcp 2>/dev/null)" || true
                     [[ -z "$table" ]] && return 2
-                    awk -v p=":$SIGNAL_HEX" 'toupper($2) ~ (p "$") && $4 == "0A" { found = 1 } END { exit !found }' <<<"$table"
+                    printf '%s\n' "$table" | awk -v p=":$SIGNAL_HEX" 'toupper($2) ~ (p "$") && $4 == "0A" { found = 1 } END { exit !found }'
                   }
 
                   signal_time_wait() {
                     local table
                     table="$(timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
                       -- cat /proc/net/tcp6 /proc/net/tcp 2>/dev/null)" || true
-                    awk -v p=":$SIGNAL_HEX" 'toupper($2) ~ (p "$") && $4 == "06" { found = 1 } END { exit !found }' <<<"$table"
+                    printf '%s\n' "$table" | awk -v p=":$SIGNAL_HEX" 'toupper($2) ~ (p "$") && $4 == "06" { found = 1 } END { exit !found }'
                   }
 
                   for attempt in 1 2; do
