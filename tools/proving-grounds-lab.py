@@ -13,7 +13,7 @@ Layout (x east, z south), all around the spawn plaza:
   plaza    x -14..14   z -14..14
   wildlife x -34..34   z -75..-28   six 16x16 glass pens, one species each
   safety   x -62..-34  z -14..14    the two-client pet safety room
-  arena    x  34..82   z -24..24    brute, werewolf and ground dragon
+  arena    x  29..85   z -28..28    sealed glass dome: brute, werewolf and ground dragon
   supply   x -14..14   z  15..31    food, gear and a command sheet
 """
 import math
