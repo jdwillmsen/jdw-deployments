@@ -28,6 +28,7 @@ import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 kinds = sorted((d["kind"], d["metadata"]["name"]) for d in docs)
 want = [
+    ("ConfigMap", "jdwillmsen-proving-grounds-prd-lab-mods-stage0"),
     ("Service", "jdwillmsen-proving-grounds-prd-minecraft-bedrock"),
     ("Service", "jdwillmsen-proving-grounds-prd-nethernet"),
     ("StatefulSet", "jdwillmsen-proving-grounds-prd-minecraft-bedrock"),
@@ -81,8 +82,9 @@ assert env["ALLOW_LIST"] == "false", env.get("ALLOW_LIST")
 
 # The lab-packs hook installs into the world the server creates.
 init = pod["initContainers"]
-assert [i["name"] for i in init] == ["install-lab-packs"], [i["name"] for i in init]
+assert [i["name"] for i in init] == ["install-lab-packs", "install-lab-mods-stage0"], [i["name"] for i in init]
 assert init[0]["args"] == ["/data/worlds/" + env["LEVEL_NAME"]], init[0]["args"]
+assert "/data/worlds/" + env["LEVEL_NAME"] in init[1]["command"][-1], "stage0 installer targets another world"
 image = init[0]["image"]
 assert image.startswith("ghcr.io/jdwillmsen/lab-packs:") and not image.endswith(":latest"), image
 assert init[0]["resources"]["limits"]["cpu"] == "50m" and init[0]["resources"]["limits"]["memory"] == "64Mi"
@@ -170,5 +172,11 @@ def packs(path):
 test, lab = packs(sys.argv[1]), packs(sys.argv[2])
 assert test and lab and test == lab, (test, lab)
 PY
+
+# The stage-0 add-on ships as a copy of the lab's tarball; the two must not drift.
+cmp -s "$here/charts/proving-grounds/files/lab-mods-stage0.tar.gz" "$here/charts/crew-lab/files/lab-mods-stage0.tar.gz" \
+  || { echo "FAIL: proving-grounds stage0 tarball differs from crew-lab's"; exit 1; }
+helm template jdwillmsen-proving-grounds-prd "$here/charts/proving-grounds" -n jdwillmsen-prd | grep -q 'name: install-lab-mods-stage0' \
+  || { echo "FAIL: stage0 installer missing"; exit 1; }
 
 echo "PASS: proving-grounds is a separate NetherNet server with no collisions"

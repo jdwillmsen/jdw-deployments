@@ -107,6 +107,12 @@ minecraft-bedrock:
     SERVER_UDP_PORTS: "192.168.1.163:31210-31229:31210-31229"
     # Lets the boot be checked for add-on errors (ContentLog files in /data/logs).
     CONTENT_LOG_FILE_ENABLED: "true"
+    # Pack scripts log through console.warn, which the server drops unless the
+    # content log is verbose and goes to stdout; without both, a pack's own
+    # lines (gameops:event, gameops:wildlife script loaded) never reach
+    # kubectl logs.
+    CONTENT_LOG_LEVEL: "verbose"
+    CONTENT_LOG_CONSOLE_OUTPUT_ENABLED: "true"
 
   # Installs the wildlife add-on packs from the lab's image, the same init
   # container crew-lab runs. It reads each pack's uuid and version from its
@@ -147,6 +153,61 @@ minecraft-bedrock:
       volumeMounts:
         - name: datadir
           mountPath: /data
+
+    # The stage-0 mobs (brute, werewolf, ground dragon) from the chart's own
+    # ConfigMap. Replaced wholesale on every start, so the pack always matches
+    # the tarball; uuids and versions come from its manifests. After
+    # install-lab-packs: both only add or replace their own entries in the pack
+    # lists. The server image is used for its tar and jq only.
+    - name: install-lab-mods-stage0
+      image: "itzg/minecraft-bedrock-server:2026.10.2"
+      command:
+        - sh
+        - -ec
+        - |
+          world=/data/worlds/proving-grounds
+          [ -d "$world" ] || { echo "world $world does not exist yet, nothing installed"; exit 0; }
+          mods=/data/.lab-mods-stage0
+          rm -rf "$mods" && mkdir -p "$mods"
+          tar -xzf /stage0/lab-mods-stage0.tar.gz -C "$mods"
+          mkdir -p "$world/behavior_packs" "$world/resource_packs"
+          rm -rf "$world/behavior_packs/gameops-lab-mods-stage0" "$world/resource_packs/gameops-lab-mods-stage0"
+          mv "$mods/behavior_pack" "$world/behavior_packs/gameops-lab-mods-stage0"
+          mv "$mods/resource_pack" "$world/resource_packs/gameops-lab-mods-stage0"
+          for kind in behavior resource; do
+            list="$world/world_${kind}_packs.json"
+            manifest="$world/${kind}_packs/gameops-lab-mods-stage0/manifest.json"
+            [ -s "$list" ] || echo '[]' > "$list"
+            jq --slurpfile m "$manifest" '($m[0].header) as $h | map(select(.pack_id != $h.uuid)) + [{pack_id: $h.uuid, version: $h.version}]' "$list" > "$list.new"
+            mv "$list.new" "$list"
+          done
+          rm -rf "$mods"
+          echo "installed gameops-lab-mods-stage0"
+      resources:
+        requests:
+          memory: 16Mi
+          cpu: 10m
+        limits:
+          memory: 64Mi
+          cpu: 50m
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: datadir
+          mountPath: /data
+        - name: stage0
+          mountPath: /stage0
+          readOnly: true
+
+  extraVolumes:
+    - volumes:
+        - name: stage0
+          configMap:
+            name: jdwillmsen-proving-grounds-prd-lab-mods-stage0
 
   # Every probe the subchart renders is a RakNet `mc-monitor` ping, which a
   # NetherNet server never answers. The startup probe would kill the container
