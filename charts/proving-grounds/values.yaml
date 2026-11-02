@@ -1,0 +1,150 @@
+# A disposable Bedrock server for trying behaviour packs, add-ons and mods
+# before they go near the crew lab or the main server. NetherNet only, because
+# retail clients dial nothing else. No crew units, so nothing here needs the
+# lab's RakNet path or its unit-kit gate: a pack change restarts the server
+# whenever it syncs, players or not.
+minecraft-bedrock:
+  image:
+    repository: itzg/minecraft-bedrock-server
+    tag: "2026.10.2"
+    pullPolicy: IfNotPresent
+
+  workloadAsStatefulSet: true
+  strategyType: RollingUpdate
+
+  # Namespace quota is shared: at the time of writing limits sit at 9050m of
+  # 12 cores and 22Gi of 24Gi, and the backup and recovery jobs need headroom
+  # to create their pods. A world with a handful of testers fits well inside
+  # these; raise them only after checking `kubectl describe resourcequota`.
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: 800m
+
+  # Same node as the lab, for the same reason: the world is a ReadWriteOnce
+  # iSCSI volume, and moving the pod moves the volume with a dirty journal.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - talos-lx0-6a4
+
+  minecraftServer:
+    eula: "TRUE"
+    # Pinned to the version the public client speaks; unpin together with the
+    # lab and FWB.
+    version: "1.26.60.6"
+    difficulty: normal
+    gameMode: creative
+    levelName: proving-grounds
+    serverName: proving-grounds
+    levelType: FLAT
+    cheats: true
+    maxPlayers: 20
+    tickDistance: 4
+    viewDistance: 12
+    playerIdleTimeout: 0
+    maxThreads: 2
+
+    # Offline so any friend can join under a display name. Players can claim
+    # any XUID, so nobody is an operator (permissions.json keys operators by
+    # XUID); commands go through the server console. Do not add ops while
+    # online mode is off.
+    onlineMode: false
+    defaultPermission: member
+
+    # serverPort equals nodePort so a client shows a ping time. 31138 is clear
+    # of 31132-31137, which the lab and the main server hold.
+    serviceType: NodePort
+    serverPort: 31138
+    nodePort: 31138
+    enableLanVisibility: true
+
+  extraEnv:
+    ALLOW_LIST: "false"
+    TRANSPORT: nethernet
+    # address:external:internal. The router forwards UDP 19180-19199 to the
+    # HAProxy VM, which maps each to NodePort 31180-31199 (191NN -> 311NN).
+    # The WAN address is not static; update it here if the ISP changes it.
+    SERVER_UDP_PORTS: "104.53.12.62:19180-19199:31180-31199"
+    # Pack scripts log through console.warn, which the server drops unless the
+    # content log is verbose and goes to stdout.
+    CONTENT_LOG_FILE_ENABLED: "true"
+    CONTENT_LOG_LEVEL: "verbose"
+    CONTENT_LOG_CONSOLE_OUTPUT_ENABLED: "true"
+    ITEM_TRANSACTION_LOGGING_ENABLED: "true"
+
+  # Installs the add-on packs from their own image into the world on every
+  # start. The tag is a literal because the subchart renders initContainers
+  # with plain toYaml; it moves by hand, and a new tag restarts the server.
+  # Pull is fail-closed: a bad tag holds the pod in Init rather than starting
+  # the world without its packs. The installer reads uuids and versions from
+  # the packs' own manifests.
+  initContainers:
+    - name: install-lab-packs
+      image: "ghcr.io/jdwillmsen/lab-packs:1.1.0"
+      imagePullPolicy: IfNotPresent
+      args:
+        - /data/worlds/proving-grounds
+      resources:
+        requests:
+          memory: 16Mi
+          cpu: 10m
+        limits:
+          memory: 64Mi
+          cpu: 50m
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: datadir
+          mountPath: /data
+
+  # The subchart's probes ping RakNet, which a NetherNet server never answers:
+  # startup is off and liveness pushed a year out. Readiness stays and fails,
+  # so the pod reads NotReady and the NetherNet Service publishes not-ready
+  # addresses.
+  startupProbe:
+    enabled: false
+  livenessProbe:
+    initialDelaySeconds: "31536000"
+
+  # No backup: rebuilt from scratch if lost.
+  persistence:
+    storageClass: truenas-iscsi
+    dataDir:
+      enabled: true
+      Size: 2Gi
+      accessModes:
+        - ReadWriteOnce
+
+# Signaling is TCP on the server port; gameplay is the pinned UDP range.
+# LAN players dial the node address and signalingNodePort
+# (192.168.1.163:31139); remote players dial mc.jdwlabs.com:19134. The
+# signaling nodePort differs from the server port because the apiserver
+# rejects the 31138 that the subchart's UDP Service holds.
+netherNet:
+  enabled: true
+  signalingPort: 31138
+  signalingNodePort: 31139
+  gameplayPorts:
+    start: 31180
+    end: 31199
+
+# Restarts a NetherNet server whose signaling port is not listening. See
+# templates/listener-watchdog.yaml.
+listenerWatchdog:
+  enabled: true
+  schedule: "*/5 * * * *"
+  minAgeSeconds: 360
+  image: alpine/k8s:1.37.1

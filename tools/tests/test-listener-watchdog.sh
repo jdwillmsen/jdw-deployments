@@ -33,7 +33,7 @@ exit 0
 SHIM
 chmod +x "$work/bin/kubectl"
 
-for chart in minecraft-fwb crew-lab; do
+for chart in minecraft-fwb crew-lab proving-grounds; do
   helm template x "$here/charts/$chart" -f "$here/charts/$chart/values.yaml" | python3 -c "
 import sys, yaml
 for d in yaml.safe_load_all(sys.stdin):

@@ -1,0 +1,3 @@
+# Environment overlay. This tenant has a single environment, so the base values
+# are already production-shaped; kept for the repo's values.yaml +
+# values-<env>.yaml convention.

@@ -37,3 +37,13 @@ apps:
       # Windows client cannot join the lab while this line is here. Removing it
       # returns the lab to NetherNet; either way the lab server restarts once.
       - values-raknet.yaml
+  # Disposable NetherNet server for trying behaviour packs, add-ons and mods.
+  # Its own app so that nothing here can sync, restart or reschedule the lab or
+  # the main server. Removing this entry prunes the server and its world.
+  - name: proving-grounds-prd
+    namespace: jdwillmsen-prd
+    chartPath: charts/proving-grounds
+    syncWave: "2"
+    valueFiles:
+      - values.yaml
+      - values-prd.yaml

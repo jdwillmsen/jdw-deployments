@@ -1,0 +1,152 @@
+{{- if and .Values.netherNet.enabled .Values.listenerWatchdog.enabled }}
+{{- $name := "listener-watchdog" }}
+{{- $serverPod := printf "%s-minecraft-bedrock-0" .Release.Name }}
+{{- $serverContainer := printf "%s-minecraft-bedrock" .Release.Name }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # One pod, by name, and never a delete: the whole point is to restart the
+  # server process in place, which keeps the world volume mounted.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+# A NetherNet server binds its signaling port once, while it starts, and never
+# retries. After an in-place container restart -- the nightly restart, a crash,
+# an OOM kill -- TIME_WAIT sockets from the old process can make that bind fail
+# silently, and the server then runs for hours with nothing listening while the
+# pod looks alive. A fresh pod is unaffected, which is why only restarts in place
+# are hit. This job notices and stops the server once more: by the time it runs,
+# the old sockets have expired and the next start binds.
+#
+# It stops a server only when the container has been up longer than minAgeSeconds
+# (so it never races a restart in progress, or the restart job's own recovery),
+# the socket table was readable and shows no listener, and no TIME_WAIT socket
+# still holds the port. An unreadable table is reported and left alone.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.listenerWatchdog.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      activeDeadlineSeconds: 120
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ $name }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: watchdog
+              image: {{ .Values.listenerWatchdog.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: 32Mi
+                  cpu: 10m
+                limits:
+                  memory: 128Mi
+                  cpu: 100m
+              env:
+                - name: SERVER_POD
+                  value: {{ $serverPod | quote }}
+                - name: SERVER_CONTAINER
+                  value: {{ $serverContainer | quote }}
+                - name: SIGNAL_PORT
+                  value: {{ .Values.netherNet.signalingPort | quote }}
+                - name: MIN_AGE_SECONDS
+                  value: {{ .Values.listenerWatchdog.minAgeSeconds | quote }}
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -uo pipefail
+                  NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+                  emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
+
+                  started="$(timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" \
+                    -o jsonpath="{.status.containerStatuses[?(@.name=='$SERVER_CONTAINER')].state.running.startedAt}" 2>/dev/null || true)"
+                  if [[ -z "$started" ]]; then
+                    emit skipped "server container is not running"
+                    exit 0
+                  fi
+                  # python3 rather than date: the image's date is busybox, which
+                  # cannot parse an ISO timestamp.
+                  age="$(python3 -c 'import sys, time, datetime; print(int(time.time() - datetime.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()))' "$started" 2>/dev/null || true)"
+                  if [[ -z "$age" ]]; then
+                    emit unverified "could not read the container start time: $started"
+                    exit 0
+                  fi
+                  if (( age < MIN_AGE_SECONDS )); then
+                    emit skipped "container up ${age}s, under ${MIN_AGE_SECONDS}s"
+                    exit 0
+                  fi
+
+                  table="$(timeout 15s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" \
+                    -- cat /proc/net/tcp6 /proc/net/tcp 2>/dev/null)" || true
+                  if [[ -z "$table" ]]; then
+                    emit unverified "could not read the server's sockets"
+                    exit 0
+                  fi
+                  hex="$(printf '%04X' "$SIGNAL_PORT")"
+                  sockets() { printf '%s\n' "$table" | awk -v p=":$hex" -v s="$1" 'toupper($2) ~ (p "$") && $4 == s { found = 1 } END { exit !found }'; }
+
+                  if sockets 0A; then
+                    emit ok "signaling port $SIGNAL_PORT is listening, container up ${age}s"
+                    exit 0
+                  fi
+                  if sockets 06; then
+                    emit waiting "signaling port $SIGNAL_PORT not listening but TIME_WAIT sockets still hold it"
+                    exit 0
+                  fi
+
+                  emit listener_missing "signaling port $SIGNAL_PORT not listening, container up ${age}s; stopping the server to restart it"
+                  if ! timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- send-command stop >/dev/null 2>&1; then
+                    emit failed "could not deliver stop to $SERVER_POD"
+                    exit 1
+                  fi
+                  emit stopped "stop delivered; the kubelet restarts the container in place"
+{{- end }}

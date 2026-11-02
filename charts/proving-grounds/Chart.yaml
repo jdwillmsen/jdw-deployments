@@ -1,0 +1,10 @@
+apiVersion: v2
+name: proving-grounds
+description: NetherNet Bedrock server for trying behaviour packs, add-ons and mods
+type: application
+version: 0.1.0
+appVersion: "1.26.60.6"
+dependencies:
+  - name: minecraft-bedrock
+    version: 2.9.0
+    repository: https://itzg.github.io/minecraft-server-charts/
