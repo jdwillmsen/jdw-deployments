@@ -10,8 +10,9 @@ mc.jdwlabs.com. Disposable world, no crew units, no backup.
   sync, restart or reschedule the lab or FWB.
 - Subchart minecraft-bedrock 2.9.0, same pin as the lab (1.26.60.6), online
   mode off, creative flat world, cheats on, survival-capable.
-- `install-lab-packs` init container installs the stage-0 and wildlife packs
-  from the `lab-packs` image into the world; new packs ship by a tag bump.
+- `install-lab-packs` init container installs the wildlife pack from the
+  `lab-packs` image into the world (stage-0 mobs and the dragon are not in that
+  image; they ship separately, see PR); new packs ship by a tag bump.
 - Templates copied from crew-lab: nethernet-service, listener-watchdog.
   No crew, unit-kit, rebuild or version-check.
 - Ports: signaling NodePort 31139 (server port 31138), gameplay UDP 31180-31199 (public TCP 19134 -> 31139 and UDP

@@ -1,5 +1,6 @@
 {{- if and .Values.netherNet.enabled .Values.listenerWatchdog.enabled }}
-{{- $name := "listener-watchdog" }}
+{{- /* Release-prefixed: the crew-lab chart names its watchdog bare, and both live in one namespace. */ -}}
+{{- $name := printf "%s-listener-watchdog" .Release.Name }}
 {{- $serverPod := printf "%s-minecraft-bedrock-0" .Release.Name }}
 {{- $serverContainer := printf "%s-minecraft-bedrock" .Release.Name }}
 apiVersion: v1
