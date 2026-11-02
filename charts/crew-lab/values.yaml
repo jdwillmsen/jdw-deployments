@@ -582,7 +582,7 @@ crew:
   # squad's `lab-` prefix is what keeps this off every other squad.
   # Kubelet refreshes the mounted file in about a minute, with no pod restart.
   tactics:
-    training: "off"
+    training: "on"
 
   # The public console. It serves the page and reverse-proxies an allow-list of
   # each unit's camera routes, so the route reaches this one Service instead of
