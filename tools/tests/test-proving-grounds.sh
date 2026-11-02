@@ -43,10 +43,10 @@ server = pod["containers"][0]
 assert len(pod["containers"]) == 1, "the server is the only container"
 env = {e["name"]: e.get("value") for e in server["env"]}
 
-# Transport, ports and the node address the client is handed.
+# Transport, ports and the public address the client is handed.
 assert env["TRANSPORT"] == "nethernet", env["TRANSPORT"]
 assert env["SERVER_PORT"] == "31200", env["SERVER_PORT"]
-assert env["SERVER_UDP_PORTS"] == "192.168.1.163:31210-31229:31210-31229", env["SERVER_UDP_PORTS"]
+assert env["SERVER_UDP_PORTS"] == "104.53.12.62:19180-19199:31210-31229", env["SERVER_UDP_PORTS"]
 
 # Pinned to one node, the one whose address SERVER_UDP_PORTS advertises.
 terms = pod["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]

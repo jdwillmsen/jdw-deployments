@@ -111,12 +111,14 @@ Storage is one 5Gi PVC (13 of the 20 allowed were in use).
 | Unit-kit pack and gate | yes | none |
 | Version check, rebuild job | available | none |
 | Ports (server / signaling / gameplay) | 31136 / 31137 / 31140-31159 | 31200 / 31201 / 31210-31229 |
-| Router / HAProxy forward | RakNet 19133 | none, LAN only |
+| Router / HAProxy forward | RakNet 19133 | NetherNet TCP 19134, UDP 19180-19199 |
 | Limits | 2000m, 2Gi | 750m, 1Gi |
 
-Both servers pin to node `talos-lx0-6a4` (`192.168.1.163`), which `SERVER_UDP_PORTS`
-advertises. If the node changes, change the affinity, `SERVER_UDP_PORTS`, and
-the join address together.
+Both servers pin to node `talos-lx0-6a4` (`192.168.1.163`). `SERVER_UDP_PORTS`
+advertises the WAN address (`104.53.12.62`, not static) with external ports
+19180-19199; remote players enter `mc.jdwlabs.com:19134`. If the node changes, change the
+affinity, the VM's nft targets and the join address together. See
+`docs/minecraft-nethernet-public-route.md`.
 
 ## Design
 
@@ -152,4 +154,5 @@ and readiness fails, so the pod reads NotReady and the NetherNet Service sets
 **Ports.** Signaling is TCP on the server port (31200), but the signaling
 nodePort is 31201: the apiserver rejects reusing 31200 because the subchart's
 UDP Service already holds it, as in the lab. Gameplay UDP is pinned to
-31210-31229 by `SERVER_UDP_PORTS` and exposed one to one.
+31210-31229 by `SERVER_UDP_PORTS` and exposed one to one; the public
+ports 19180-19199 map to them in order.

@@ -20,6 +20,7 @@ player ── TCP 19132 / UDP 19160-19179 ──▶ BGW320 gateway (forwards to 
 |---|---|---|---|---|
 | FWB | `mc.jdwlabs.com` (port 19132) | 19132 -> 31134 | 19160-19179 | 31160-31179 |
 | Crew lab | `mc.jdwlabs.com:19133` | 19133 -> 31137 | 19140-19159 | 31140-31159 |
+| Proving grounds | `mc.jdwlabs.com:19134` | 19134 -> 31201 | 19180-19199 | 31210-31229 |
 
 External `191NN` maps to NodePort `311NN`. The existing gateway rule
 "K8 Talos Cluster - UDP" forwards TCP and UDP 19132-19141; each gameplay range

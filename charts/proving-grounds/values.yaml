@@ -101,10 +101,17 @@ minecraft-bedrock:
     # the server port and no RakNet UDP at all.
     TRANSPORT: nethernet
     # Gameplay UDP is negotiated per client, so behind a NodePort the ports
-    # are pinned and advertised as the node's address, or clients are handed
-    # the pod's own 10.244.x IP. The range matches netherNet.gameplayPorts and
-    # the node is the one this server is pinned to by affinity above.
-    SERVER_UDP_PORTS: "192.168.1.163:31210-31229:31210-31229"
+    # are pinned and advertised as an address and external ports, or clients
+    # are handed the pod's own 10.244.x IP. Format: address:external:internal.
+    #
+    # The address is the WAN one so players outside the LAN can join: the
+    # router forwards UDP 19180-19199 to the HAProxy VM, which maps them to
+    # NodePorts 31210-31229 (the range of netherNet.gameplayPorts); signaling
+    # is TCP 19134 to 31201 on the same path. LAN and in-cluster clients
+    # cannot reach the WAN address themselves, but ICE checks run both ways,
+    # so the server reaches them. The WAN address is not static; update it
+    # here if the ISP changes it.
+    SERVER_UDP_PORTS: "104.53.12.62:19180-19199:31210-31229"
     # Lets the boot be checked for add-on errors (ContentLog files in /data/logs).
     CONTENT_LOG_FILE_ENABLED: "true"
     # Pack scripts log through console.warn, which the server drops unless the
