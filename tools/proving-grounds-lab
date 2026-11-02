@@ -12,4 +12,4 @@ ctr=jdwillmsen-proving-grounds-prd-minecraft-bedrock
 python3 "$here/proving-grounds-lab.py" "$@" | kubectl -n "$ns" exec -i "$pod" -c "$ctr" -- sh -c '
 proc=$(find /proc -mindepth 2 -maxdepth 2 -name exe -lname "/data/bedrock_server-*" -printf "%h" -quit)
 [ -n "$proc" ] || { echo "no bedrock server process" >&2; exit 2; }
-while IFS= read -r l; do echo "$l" > "$proc/fd/0"; sleep 0.08; done'
+while IFS= read -r l; do echo "$l" > "$proc/fd/0"; case "$l" in "tickingarea add"*) sleep 8;; *) sleep 0.08;; esac; done'
