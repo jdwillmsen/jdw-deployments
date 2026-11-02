@@ -127,7 +127,7 @@ minecraft-bedrock:
   # world_behavior_packs.json; the installer keeps entries it did not write.
   initContainers:
     - name: install-lab-packs
-      image: "ghcr.io/jdwillmsen/lab-packs:1.0.0"
+      image: "ghcr.io/jdwillmsen/lab-packs:1.1.0"
       imagePullPolicy: IfNotPresent
       args:
         - /data/worlds/crew-test
