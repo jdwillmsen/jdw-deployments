@@ -121,16 +121,16 @@ minecraft-bedrock:
     CONTENT_LOG_LEVEL: "verbose"
     CONTENT_LOG_CONSOLE_OUTPUT_ENABLED: "true"
 
-  # Installs the wildlife add-on packs from the lab's image, the same init
-  # container crew-lab runs. It reads each pack's uuid and version from its
+  # Installs the add-on packs in the lab-packs image (wildlife and the lab-tools
+  # menus) with the same installer crew-lab runs. It reads each pack's uuid and version from its
   # manifest and merges them into the world's pack lists, so there is nothing
   # to keep in step here. A pack only reaches the world on a start after the
   # one that created it: the installer does nothing while the world folder is
   # missing, so the first start of a new volume needs one pod restart.
   #
   # The tag is a literal because the subchart renders initContainers with plain
-  # toYaml. It is the lab's tag, bumped by hand (Renovate leaves the image
-  # alone); here a bump simply restarts this server, there is no unit-kit gate
+  # toYaml. This server may run a newer tag than the lab, because it is where
+  # a pack is tried first; it is bumped by hand (Renovate leaves the image alone); here a bump simply restarts this server, there is no unit-kit gate
   # because nobody depends on the world. Fail-closed like the lab: a missing
   # tag or a registry outage with no cached copy holds the pod in Init rather
   # than starting the world without its packs.
