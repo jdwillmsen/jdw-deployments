@@ -6,7 +6,8 @@
 
 Prints one console command per line; tools/proving-grounds-lab pipes them into
 the server. The flat world's grass top is y -61, so floors are laid at y -61 and
-players stand at y -60. Re-running a section rebuilds it in place.
+players stand at y -60. Re-running a section rebuilds its blocks but adds its mobs and labels
+again; `build all` clears them first, or run `clear` before a single section.
 
 Layout (x east, z south), all around the spawn plaza:
   plaza    x -14..14   z -14..14
