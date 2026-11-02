@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Builds or clears the proving-grounds laboratory through the server console.
+#   proving-grounds-lab build [wildlife|safety|arena|supply|plaza|all]
+#   proving-grounds-lab clear
+# Commands are fed one at a time, because the server drops console input that
+# arrives faster than it can run. Progress is in the pod log.
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+ns=jdwillmsen-prd
+pod=jdwillmsen-proving-grounds-prd-minecraft-bedrock-0
+ctr=jdwillmsen-proving-grounds-prd-minecraft-bedrock
+python3 "$here/proving-grounds-lab.py" "$@" | kubectl -n "$ns" exec -i "$pod" -c "$ctr" -- sh -c '
+proc=$(find /proc -mindepth 2 -maxdepth 2 -name exe -lname "/data/bedrock_server-*" -printf "%h" -quit)
+[ -n "$proc" ] || { echo "no bedrock server process" >&2; exit 2; }
+while IFS= read -r l; do echo "$l" > "$proc/fd/0"; sleep 0.08; done'
