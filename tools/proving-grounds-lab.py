@@ -30,6 +30,7 @@ PENS = [
     ("hyena", "rotten_flesh", 4, (24, -66)),
 ]
 STAGE0 = [("training_dummy_brute", 42), ("werewolf", 58), ("ground_dragon", 74)]
+SPAWNABLE_IDS = [p[0] for p in PENS] + [s[0] for s in STAGE0]
 FOODS = ["beef", "rabbit", "mutton", "chicken", "salmon", "rotten_flesh"]
 
 
@@ -39,7 +40,17 @@ def fill(x1, y1, z1, x2, y2, z2, block, mode=""):
 
 def label(text, x, z, y=STAND):
     yield f'summon armor_stand "{text}" {x} {y} {z}'
-    yield f"effect @e[type=armor_stand,x={x},y={y},z={z},r=1] invisibility 99999 0 true"
+    yield f"effect @e[type=armor_stand,x={x},y={y},z={z},r=0.1] invisibility 99999 0 true"
+
+
+def board(lines, x, z, y=STAND):
+    """Floating text: one invisible named stand per line, stacked upward, first line on top."""
+    for i, text in enumerate(reversed(lines)):
+        yield from label(text, x, z, round(y + 0.28 * i, 2))
+
+
+def lectern(x, z):
+    yield f"setblock {x} {STAND} {z} lectern"
 
 
 def chest(x, y, z, items):
@@ -70,26 +81,56 @@ def clear():
 
 
 def plaza():
-    yield from fill(-14, STAND, -14, 14, STAND + 6, 14, "air")
+    yield from fill(-14, STAND, -14, 14, STAND + 8, 14, "air")
     yield from fill(-14, FLOOR, -14, 14, FLOOR, 14, "polished_andesite")
+    # quadrants in the colour of the area they lead to
+    yield from fill(-13, FLOOR, -13, -1, FLOOR, -1, "lime_concrete")
+    yield from fill(1, FLOOR, -13, 13, FLOOR, -1, "red_concrete")
+    yield from fill(-13, FLOOR, 1, -1, FLOOR, 13, "yellow_concrete")
+    yield from fill(1, FLOOR, 1, 13, FLOOR, 13, "blue_concrete")
+    # border and cross
     yield from fill(-14, FLOOR, -14, 14, FLOOR, -14, "stone_bricks")
     yield from fill(-14, FLOOR, 14, 14, FLOOR, 14, "stone_bricks")
     yield from fill(-14, FLOOR, -14, -14, FLOOR, 14, "stone_bricks")
     yield from fill(14, FLOOR, -14, 14, FLOOR, 14, "stone_bricks")
-    for x in (-8, 0, 8):
-        for z in (-8, 0, 8):
+    yield from fill(-14, FLOOR, -1, 14, FLOOR, 1, "quartz_block")
+    yield from fill(-1, FLOOR, -14, 1, FLOOR, 14, "quartz_block")
+    yield from fill(-3, FLOOR, -3, 3, FLOOR, 3, "smooth_stone")
+    # a lit obelisk at the centre
+    yield from fill(0, STAND, 0, 0, STAND + 5, 0, "quartz_pillar")
+    yield f"setblock 0 {STAND + 6} 0 sea_lantern"
+    # corner towers
+    for x in (-13, 13):
+        for z in (-13, 13):
+            yield from fill(x, STAND, z, x, STAND + 4, z, "stone_bricks")
+            yield f"setblock {x} {STAND + 5} {z} sea_lantern"
+    for x in (-8, 8):
+        for z in (-8, 8):
             yield f"setblock {x} {FLOOR} {z} sea_lantern"
-    yield from fill(-2, FLOOR, -2, 2, FLOOR, 2, "smooth_stone")
-    # paths: north to the wildlife apron, west to safety, east to the arena, south to supply
+    # gateways: a lintel over each exit, coloured like its quadrant
+    yield from fill(-3, STAND + 3, -14, 3, STAND + 3, -14, "lime_concrete")
+    yield from fill(-3, STAND, -14, -3, STAND + 2, -14, "stone_bricks")
+    yield from fill(3, STAND, -14, 3, STAND + 2, -14, "stone_bricks")
+    yield from fill(-14, STAND + 3, -3, -14, STAND + 3, 3, "blue_concrete")
+    yield from fill(-14, STAND, -3, -14, STAND + 2, -3, "stone_bricks")
+    yield from fill(-14, STAND, 3, -14, STAND + 2, 3, "stone_bricks")
+    yield from fill(14, STAND + 3, -3, 14, STAND + 3, 3, "red_concrete")
+    yield from fill(14, STAND, -3, 14, STAND + 2, -3, "stone_bricks")
+    yield from fill(14, STAND, 3, 14, STAND + 2, 3, "stone_bricks")
+    yield from fill(-3, STAND + 3, 14, 3, STAND + 3, 14, "yellow_concrete")
+    yield from fill(-3, STAND, 14, -3, STAND + 2, 14, "stone_bricks")
+    yield from fill(3, STAND, 14, 3, STAND + 2, 14, "stone_bricks")
+    # paths out
     yield from fill(-2, FLOOR, -28, 2, FLOOR, -15, "light_gray_concrete")
     yield from fill(-30, FLOOR, -2, -15, FLOOR, 2, "light_gray_concrete")
     yield from fill(15, FLOOR, -2, 33, FLOOR, 2, "light_gray_concrete")
     yield from fill(-2, FLOOR, 15, 2, FLOOR, 15, "light_gray_concrete")
-    yield from label("PROVING GROUNDS", 0, 0)
-    yield from label("N: Wildlife preserve", 0, -12)
-    yield from label("W: Safety lab (two clients)", -12, 0)
-    yield from label("E: Boss arena", 12, 0)
-    yield from label("S: Supply room", 0, 12)
+    yield from lectern(0, -5)
+    yield from board(["\u00a7lPROVING GROUNDS", "Add-on test world", "Right-click the lectern for the guide"], 0, 3)
+    yield from board(["\u00a7aWildlife preserve", "tamable animals"], 0, -11)
+    yield from board(["\u00a79Safety lab", "two-player pet tests"], -11, 0)
+    yield from board(["\u00a7cBoss arena", "brute, werewolf, dragon"], 11, 0)
+    yield from board(["\u00a7eSupply room", "food, gear, eggs"], 0, 11)
 
 
 def wildlife():
@@ -104,7 +145,8 @@ def wildlife():
         for gx in (cx - 1, cx, cx + 1):
             yield f"setblock {gx} {STAND} {z2} fence_gate"
         yield from chest(cx - 6, STAND, cz + 6, [(food, 32)])
-        yield from label(species.replace("_", " ").title() + " (" + food.replace("_", " ") + ")", cx, z2 + 1)
+        yield from board([species.replace("_", " ").title(), "tames with " + food.replace("_", " ")], cx, z2 + 1)
+        yield from lectern(cx + 3, z2 + 1)
         for i in range(count):
             yield f"summon gameops:{species} {cx - 2 + 3 * (i % 2)} {STAND} {cz - 2 + 2 * (i // 2)}"
 
@@ -125,7 +167,8 @@ def safety():
     yield f"summon gameops:hyena -42 {STAND} 0"
     yield from chest(-36, STAND, -12, [(f, 32) for f in FOODS])
     yield from label("Tame with the food here", -36, -11)
-    yield from label("Safety: B hits owner, owner hits B, owner hits pet, sit and walk away", -48, 12)
+    yield from lectern(-36, -9)
+    yield from board(["Safety checks", "B hits owner / owner hits B", "owner hits pet / sitting pet"], -48, 12)
 
 
 def arena():
@@ -139,8 +182,8 @@ def arena():
         yield from fill(x - 2, FLOOR, -14, x + 2, FLOOR, -10, "quartz_block")
         yield from label(name.replace("_", " "), x, -9)
         yield f"summon gameops:{name} {x} {STAND} -12"
-    yield from label("They hunt only the arena_warrior tag", 58, 10)
-    yield from label("tag @s add arena_warrior  /  tag @s remove arena_warrior", 58, 12)
+    yield from lectern(34, -4)
+    yield from board(["They hunt only players with the arena_warrior tag", "Toggle it from the lectern or any book"], 58, 12)
 
 
 def supply():
@@ -153,8 +196,10 @@ def supply():
                                       ("arrow", 64), ("golden_apple", 16), ("totem_of_undying", 1)])
     yield from label("Food for taming", -10, 28)
     yield from label("Gear", -8, 28)
-    yield from label("Ops: op <name> in the console, then /tag /summon /time /effect", 0, 20)
-    yield from label("Test steps: see packs/lab-mods-wildlife README", 0, 22)
+    yield from lectern(0, 17)
+    yield from chest(4, STAND, 29, [(f"gameops:{sp}_spawn_egg", 16) for sp in SPAWNABLE_IDS] + [("book", 4)])
+    yield from label("Spawn eggs and guide books", 4, 28)
+    yield from board(["Supply room", "Right-click the lectern, or hold a book"], 0, 22)
 
 
 SECTIONS = {"plaza": plaza, "wildlife": wildlife, "safety": safety, "arena": arena, "supply": supply}
