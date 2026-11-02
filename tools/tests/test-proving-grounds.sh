@@ -159,8 +159,9 @@ assert int(app["syncWave"]) > int(apps["crew-lab-prd"]["syncWave"]), "the wave r
 assert [n for n, a in apps.items() if a["chartPath"] == app["chartPath"]] == ["proving-grounds-prd"], "chart is shared with another app"
 PY
 
-# The add-on installer is the lab's image at the lab's tag, not one of its own.
-python3 - "$work/test.yaml" "$work/lab.yaml" <<'PY' || fail "the lab-packs image differs from the lab's"
+# The add-on installer is the lab's image repository. This server may run a newer tag than the lab,
+# because it is where a pack is tried first; it must never lag behind.
+python3 - "$work/test.yaml" "$work/lab.yaml" <<'PY' || fail "the lab-packs image is not the lab's repository at the lab's tag or newer"
 import sys, yaml
 
 def packs(path):
@@ -170,7 +171,12 @@ def packs(path):
                 if i["name"] == "install-lab-packs":
                     return i["image"]
 test, lab = packs(sys.argv[1]), packs(sys.argv[2])
-assert test and lab and test == lab, (test, lab)
+assert test and lab, (test, lab)
+repo, tag = test.rsplit(":", 1)
+lab_repo, lab_tag = lab.rsplit(":", 1)
+ver = lambda t: tuple(int(x) for x in t.split("."))
+assert repo == lab_repo, (test, lab)
+assert ver(tag) >= ver(lab_tag), f"{test} is older than the lab's {lab}"
 PY
 
 # The stage-0 add-on ships as a copy of the lab's tarball; the two must not drift.
