@@ -41,9 +41,9 @@ apps:
   # training bots. Its own app, so nothing here can sync, restart or
   # reschedule the lab or the main server. The wave only records that it comes
   # after the lab: with no parent app it orders nothing today.
-  - name: crew-test-prd
+  - name: proving-grounds-prd
     namespace: jdwillmsen-prd
-    chartPath: charts/crew-test
+    chartPath: charts/proving-grounds
     syncWave: "3"
     valueFiles:
       - values.yaml

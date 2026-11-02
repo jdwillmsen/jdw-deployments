@@ -1,5 +1,5 @@
 apiVersion: v2
-name: crew-test
+name: proving-grounds
 description: Separate NetherNet Bedrock test server for signed-in joins, add-ons and later training bots
 type: application
 version: 0.1.0
