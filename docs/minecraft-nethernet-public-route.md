@@ -22,7 +22,8 @@ player ── TCP 19132 / UDP 19160-19179 ──▶ BGW320 gateway (forwards to 
 | Crew lab | `mc.jdwlabs.com:19133` | 19133 -> 31137 | 19140-19159 | 31140-31159 |
 | Proving grounds | `mc.jdwlabs.com:19134` | 19134 -> 31201 | 19180-19199 | 31210-31229 |
 
-External `191NN` maps to NodePort `311NN`. The existing gateway rule
+External `191NN` maps to NodePort `311NN` for FWB and the lab; proving grounds uses the
+mapping in its row (19134 -> 31201, 19180 -> 31210 in order). The existing gateway rule
 "K8 Talos Cluster - UDP" forwards TCP and UDP 19132-19141; each gameplay range
 beyond it is a custom service (UDP, base host port equal to the first port so
 the gateway never rewrites a port) attached to the HAProxy VM, matched by MAC

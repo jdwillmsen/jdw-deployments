@@ -20,15 +20,16 @@ CronJobs.
 ## Joining
 
 Windows retail clients (1.26.60) dial NetherNet only. Add a server on the LAN
-at `192.168.1.163`, port **31201**, and sign in with the Microsoft account.
-Gameplay UDP 31210-31229 is negotiated per client and advertised as the node's
-address. The server is **LAN only**: there is no router forward or HAProxy NAT
-for it, so it is not reachable from outside the house. It does not appear in a
+at `192.168.1.163`, port **31201**, or from outside the house at
+`mc.jdwlabs.com`, port **19134**, and sign in with the Microsoft account.
+Gameplay UDP 31210-31229 is negotiated per client and advertised as the WAN
+address with external ports 19180-19199 (HAProxy VM NAT and a gateway forward,
+see `docs/minecraft-nethernet-public-route.md`). It does not appear in a
 client's Friends tab (LAN discovery broadcasts do not cross a NodePort), so add
 it by address.
 
 It runs in online mode with no allow list, so any signed-in account that can
-reach the port joins. Nobody is an operator; to make one, set
+reach the port joins, and the port is reachable from the internet. Nobody is an operator; to make one, set
 `minecraft-bedrock.minecraftServer.ops` to its XUID (safe here because online
 mode makes XUIDs trustworthy) or use the server console:
 
