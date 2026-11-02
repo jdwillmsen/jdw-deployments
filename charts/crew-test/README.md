@@ -58,11 +58,13 @@ there is no unit-kit gate: a change restarts this server at once.
   --replicas=0`). The chart renders no replica count, so ArgoCD should not
   revert it; if it does, remove the `crew-test-prd` entry instead, which is the
   durable way. Scaling back up is the same command with `--replicas=1`.
-- **Reset the world**: delete the PVC first, then the pod, because a pod
-  deleted first is recreated at once and keeps the volume mounted:
-  `kubectl -n jdwillmsen-prd delete pvc
-  datadir-jdwillmsen-crew-test-prd-minecraft-bedrock-0 --wait=false`, then the
-  pod. The server generates a new flat world on the next start. There is no
+- **Reset the world**: scale the StatefulSet to 0 and wait for the pod to
+  terminate, so nothing holds the claim, then delete the PVC and wait for it to
+  go, then scale back to 1:
+  `kubectl -n jdwillmsen-prd scale sts jdwillmsen-crew-test-prd-minecraft-bedrock
+  --replicas=0`, then `kubectl -n jdwillmsen-prd delete pvc
+  datadir-jdwillmsen-crew-test-prd-minecraft-bedrock-0`, then `--replicas=1`.
+  The server generates a new flat world on the next start. There is no
   backup. The storage class keeps the underlying volume after the claim goes
   (`reclaimPolicy: Retain`), so the iSCSI volume and its PV are left behind and
   need deleting by hand if the space matters.
