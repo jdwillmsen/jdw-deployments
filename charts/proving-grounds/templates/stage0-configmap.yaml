@@ -1,0 +1,13 @@
+{{- /*
+The stage-0 mob add-on (brute, werewolf, ground dragon). It is not in the
+lab-packs image, which leaves it to crew-lab's ConfigMap, so this server carries
+its own copy of the tarball. Keep it equal to charts/crew-lab/files/ and bump
+both together.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-lab-mods-stage0
+  namespace: {{ .Release.Namespace }}
+binaryData:
+  lab-mods-stage0.tar.gz: {{ .Files.Get "files/lab-mods-stage0.tar.gz" | b64enc }}
