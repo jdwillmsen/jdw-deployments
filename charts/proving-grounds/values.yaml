@@ -63,8 +63,8 @@ minecraft-bedrock:
     version: "1.26.60.6"
     difficulty: normal
     gameMode: creative
-    levelName: crew-test
-    serverName: crew-test
+    levelName: proving-grounds
+    serverName: proving-grounds
     # A fresh, empty flat world: nothing to protect and fast to generate. It is
     # only read when the world is first created, so changing it later does
     # nothing until the PVC is deleted.
@@ -123,14 +123,14 @@ minecraft-bedrock:
   # than starting the world without its packs.
   #
   # Add-ons to be tried before they are in that image can be put on the volume
-  # by hand under /data/worlds/crew-test/behavior_packs, and registered in
+  # by hand under /data/worlds/proving-grounds/behavior_packs, and registered in
   # world_behavior_packs.json; the installer keeps entries it did not write.
   initContainers:
     - name: install-lab-packs
       image: "ghcr.io/jdwillmsen/lab-packs:1.1.0"
       imagePullPolicy: IfNotPresent
       args:
-        - /data/worlds/crew-test
+        - /data/worlds/proving-grounds
       resources:
         requests:
           memory: 16Mi

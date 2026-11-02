@@ -1,9 +1,9 @@
-# crew-test
+# proving-grounds
 
 A second, separate Bedrock server, the **test server**, for trying things that
 must not touch the lab or the main server: the signed-in NetherNet join with a
 few real accounts, add-ons and behaviour packs, the lab-packs mechanism, and
-later training bots. It is its own ArgoCD app (`crew-test-prd`), so nothing here
+later training bots. It is its own ArgoCD app (`proving-grounds-prd`), so nothing here
 can sync, restart or reschedule `crew-lab-prd` or `minecraft-fwb-prd`.
 
 | Piece | What |
@@ -12,8 +12,8 @@ can sync, restart or reschedule `crew-lab-prd` or `minecraft-fwb-prd`.
 | `<release>-nethernet` | NodePort Service: signaling TCP 31201 and gameplay UDP 31210-31229 |
 | `install-lab-packs` | init container from the lab's `ghcr.io/jdwillmsen/lab-packs` image |
 
-The release is `jdwillmsen-crew-test-prd`, so the objects are
-`jdwillmsen-crew-test-prd-minecraft-bedrock` and `jdwillmsen-crew-test-prd-nethernet`.
+The release is `jdwillmsen-proving-grounds-prd`, so the objects are
+`jdwillmsen-proving-grounds-prd-minecraft-bedrock` and `jdwillmsen-proving-grounds-prd-nethernet`.
 Nothing else is rendered: no crew units, no `crew-control`, no ConfigMaps, no
 CronJobs.
 
@@ -32,19 +32,19 @@ reach the port joins. Nobody is an operator; to make one, set
 `minecraft-bedrock.minecraftServer.ops` to its XUID (safe here because online
 mode makes XUIDs trustworthy) or use the server console:
 
-    kubectl -n jdwillmsen-prd attach -it jdwillmsen-crew-test-prd-minecraft-bedrock-0
+    kubectl -n jdwillmsen-prd attach -it jdwillmsen-proving-grounds-prd-minecraft-bedrock-0
 
 ## Add-ons
 
-`install-lab-packs` installs the wildlife packs into `/data/worlds/crew-test` on
+`install-lab-packs` installs the wildlife packs into `/data/worlds/proving-grounds` on
 every start and merges them into the world's pack lists, keeping other entries.
 The installer does nothing while the world folder does not exist, so after the
 first start of a fresh volume restart the pod once:
 
-    kubectl -n jdwillmsen-prd delete pod jdwillmsen-crew-test-prd-minecraft-bedrock-0
+    kubectl -n jdwillmsen-prd delete pod jdwillmsen-proving-grounds-prd-minecraft-bedrock-0
 
 To try a pack that is not in the image yet, copy it to
-`/data/worlds/crew-test/behavior_packs/<name>` (and `resource_packs/`) and add
+`/data/worlds/proving-grounds/behavior_packs/<name>` (and `resource_packs/`) and add
 its uuid and version to `world_behavior_packs.json`; the installer keeps entries
 it did not write. Boot errors from packs are in `/data/logs` (content log is on).
 The lab-packs tag is a literal bumped by hand, as in the lab. Unlike the lab
@@ -52,23 +52,23 @@ there is no unit-kit gate: a change restarts this server at once.
 
 ## Stop, restart, delete
 
-- **Restart**: `kubectl -n jdwillmsen-prd delete pod jdwillmsen-crew-test-prd-minecraft-bedrock-0`.
+- **Restart**: `kubectl -n jdwillmsen-prd delete pod jdwillmsen-proving-grounds-prd-minecraft-bedrock-0`.
 - **Stop** keeping the world: scale the StatefulSet to 0 (`kubectl -n
-  jdwillmsen-prd scale sts jdwillmsen-crew-test-prd-minecraft-bedrock
+  jdwillmsen-prd scale sts jdwillmsen-proving-grounds-prd-minecraft-bedrock
   --replicas=0`). The chart renders no replica count, so ArgoCD should not
-  revert it; if it does, remove the `crew-test-prd` entry instead, which is the
+  revert it; if it does, remove the `proving-grounds-prd` entry instead, which is the
   durable way. Scaling back up is the same command with `--replicas=1`.
 - **Reset the world**: scale the StatefulSet to 0 and wait for the pod to
   terminate, so nothing holds the claim, then delete the PVC and wait for it to
   go, then scale back to 1:
-  `kubectl -n jdwillmsen-prd scale sts jdwillmsen-crew-test-prd-minecraft-bedrock
+  `kubectl -n jdwillmsen-prd scale sts jdwillmsen-proving-grounds-prd-minecraft-bedrock
   --replicas=0`, then `kubectl -n jdwillmsen-prd delete pvc
-  datadir-jdwillmsen-crew-test-prd-minecraft-bedrock-0`, then `--replicas=1`.
+  datadir-jdwillmsen-proving-grounds-prd-minecraft-bedrock-0`, then `--replicas=1`.
   The server generates a new flat world on the next start. There is no
   backup. The storage class keeps the underlying volume after the claim goes
   (`reclaimPolicy: Retain`), so the iSCSI volume and its PV are left behind and
   need deleting by hand if the space matters.
-- **Remove the server**: delete the `crew-test-prd` entry in
+- **Remove the server**: delete the `proving-grounds-prd` entry in
   `argocd/prd/config.yaml`. The StatefulSet and the Services go with the app,
   but the claim carries no ArgoCD tracking and no retention policy, so it stays
   and so does the world (read from how the lab's identical claim is rendered;
@@ -102,11 +102,11 @@ Storage is one 5Gi PVC (13 of the 20 allowed were in use).
 
 ## How it differs from the lab
 
-| | crew-lab | crew-test |
+| | crew-lab | proving-grounds |
 |---|---|---|
 | Purpose | crew workers, colosseum, wildlife | signed-in joins, add-ons, bots later |
 | Online mode | off | **on** |
-| World | survival, generated | creative, fresh **flat**, `crew-test` |
+| World | survival, generated | creative, fresh **flat**, `proving-grounds` |
 | Crew units / `crew-control` / route | yes | none |
 | Unit-kit pack and gate | yes | none |
 | Version check, rebuild job | available | none |
@@ -132,7 +132,7 @@ the subchart's objects and the NetherNet Service are named from the release.
 Making every one of those switchable would put edits in the lab chart, which is
 the thing this server exists to stay away from. The tradeoff is a 25-line
 `nethernet-service.yaml` and the NetherNet env/probe block copied from the lab;
-the test `tools/tests/test-crew-test.sh` renders the lab and the main server
+the test `tools/tests/test-proving-grounds.sh` renders the lab and the main server
 beside this chart and fails on any repeated kind and name or NodePort.
 
 **Same namespace.** `jdwillmsen-prd` has the headroom (see Resources) and the

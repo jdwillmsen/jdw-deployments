@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Renders the crew-test chart and checks that the test server is a separate,
+# Renders the proving-grounds chart and checks that the test server is a separate,
 # NetherNet-only, node-pinned server that cannot collide with the lab or the
 # main server. The release names are the ones ArgoCD generates (the owner
 # prefix plus the app name), because every object name derives from them.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/../.." && pwd)"
-test_chart="$here/charts/crew-test"
+test_chart="$here/charts/proving-grounds"
 lab_chart="$here/charts/crew-lab"
 fwb_chart="$here/charts/minecraft-fwb"
 work="$(mktemp -d)"
@@ -14,7 +14,7 @@ trap 'rm -rf "$work"' EXIT
 
 fail() { echo "FAIL: $1"; exit 1; }
 
-helm template jdwillmsen-crew-test-prd "$test_chart" --namespace jdwillmsen-prd \
+helm template jdwillmsen-proving-grounds-prd "$test_chart" --namespace jdwillmsen-prd \
   -f "$test_chart/values.yaml" -f "$test_chart/values-prd.yaml" > "$work/test.yaml"
 helm template jdwillmsen-crew-lab-prd "$lab_chart" --namespace jdwillmsen-prd \
   -f "$lab_chart/values.yaml" -f "$lab_chart/values-prd.yaml" > "$work/lab.yaml"
@@ -28,9 +28,9 @@ import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 kinds = sorted((d["kind"], d["metadata"]["name"]) for d in docs)
 want = [
-    ("Service", "jdwillmsen-crew-test-prd-minecraft-bedrock"),
-    ("Service", "jdwillmsen-crew-test-prd-nethernet"),
-    ("StatefulSet", "jdwillmsen-crew-test-prd-minecraft-bedrock"),
+    ("Service", "jdwillmsen-proving-grounds-prd-minecraft-bedrock"),
+    ("Service", "jdwillmsen-proving-grounds-prd-nethernet"),
+    ("StatefulSet", "jdwillmsen-proving-grounds-prd-minecraft-bedrock"),
 ]
 # Nothing else: no crew units or control plane, no CronJob (so no version
 # check that would restart a pinned server every hour), no ConfigMap.
@@ -55,7 +55,7 @@ assert terms == [{"matchExpressions": [{"key": "kubernetes.io/hostname", "operat
 assert env["VERSION"] == "1.26.60.6", env["VERSION"]
 
 # A fresh creative flat world that signed-in players can join and cheat in.
-assert env["LEVEL_NAME"] == "crew-test" and env["LEVEL_TYPE"] == "FLAT", (env["LEVEL_NAME"], env["LEVEL_TYPE"])
+assert env["LEVEL_NAME"] == "proving-grounds" and env["LEVEL_TYPE"] == "FLAT", (env["LEVEL_NAME"], env["LEVEL_TYPE"])
 assert env["GAMEMODE"] == "creative" and env["ALLOW_CHEATS"] == "true", (env["GAMEMODE"], env["ALLOW_CHEATS"])
 assert env["ONLINE_MODE"] == "true", env["ONLINE_MODE"]
 assert env["OPS"] == "", "no operator is preset; permissions are keyed by XUID"
@@ -88,13 +88,13 @@ assert image.startswith("ghcr.io/jdwillmsen/lab-packs:") and not image.endswith(
 assert init[0]["resources"]["limits"]["cpu"] == "50m" and init[0]["resources"]["limits"]["memory"] == "64Mi"
 
 svcs = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Service"}
-raknet = svcs["jdwillmsen-crew-test-prd-minecraft-bedrock"]["spec"]
+raknet = svcs["jdwillmsen-proving-grounds-prd-minecraft-bedrock"]["spec"]
 assert raknet["type"] == "NodePort"
 assert [(p["protocol"], p["port"], p["nodePort"]) for p in raknet["ports"]] == [("UDP", 31200, 31200)], raknet["ports"]
 
-nn = svcs["jdwillmsen-crew-test-prd-nethernet"]["spec"]
+nn = svcs["jdwillmsen-proving-grounds-prd-nethernet"]["spec"]
 assert nn["type"] == "NodePort" and nn["publishNotReadyAddresses"] is True, nn
-assert nn["selector"] == {"app": "jdwillmsen-crew-test-prd-minecraft-bedrock"}, nn["selector"]
+assert nn["selector"] == {"app": "jdwillmsen-proving-grounds-prd-minecraft-bedrock"}, nn["selector"]
 signaling = [p for p in nn["ports"] if p["protocol"] == "TCP"]
 assert [(p["port"], p["targetPort"], p["nodePort"]) for p in signaling] == [(31200, 31200, 31201)], signaling
 udp = [p for p in nn["ports"] if p["protocol"] == "UDP"]
@@ -150,11 +150,11 @@ python3 - "$here/argocd/prd/config.yaml" <<'PY' || fail "the argo app is not a s
 import sys, yaml
 
 apps = {a["name"]: a for a in yaml.safe_load(open(sys.argv[1]))["apps"]}
-app = apps["crew-test-prd"]
-assert app["chartPath"] == "charts/crew-test" and app["namespace"] == "jdwillmsen-prd", app
+app = apps["proving-grounds-prd"]
+assert app["chartPath"] == "charts/proving-grounds" and app["namespace"] == "jdwillmsen-prd", app
 assert app["valueFiles"] == ["values.yaml", "values-prd.yaml"], app["valueFiles"]
 assert int(app["syncWave"]) > int(apps["crew-lab-prd"]["syncWave"]), "the wave records that it follows the lab"
-assert [n for n, a in apps.items() if a["chartPath"] == app["chartPath"]] == ["crew-test-prd"], "chart is shared with another app"
+assert [n for n, a in apps.items() if a["chartPath"] == app["chartPath"]] == ["proving-grounds-prd"], "chart is shared with another app"
 PY
 
 # The add-on installer is the lab's image at the lab's tag, not one of its own.
@@ -171,4 +171,4 @@ test, lab = packs(sys.argv[1]), packs(sys.argv[2])
 assert test and lab and test == lab, (test, lab)
 PY
 
-echo "PASS: crew-test is a separate NetherNet server with no collisions"
+echo "PASS: proving-grounds is a separate NetherNet server with no collisions"
