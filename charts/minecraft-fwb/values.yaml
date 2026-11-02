@@ -2211,7 +2211,10 @@ map:
     # 1.52.1 draws a grass block, leaves, plants, a cactus and a shield in
     # the player details instead of their initials. 1.52.2 makes those pictures
     # on the first start, which 1.52.1 left to the next samples pin.
-    tag: "1.52.2"
+    #
+    # 1.53.0 lets "and N more" in the player details' tallies open to every
+    # row.
+    tag: "1.53.0"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
