@@ -64,7 +64,7 @@ spec:
             - name: MC_VIEW_DISTANCE
               value: {{ .Values.bot2.viewDistance | quote }}
             - name: SKIN_THEME
-              value: {{ .Values.skins.theme | quote }}
+              value: {{ .Values.bot2.skinTheme | default .Values.skins.theme | quote }}
             - name: SKIN_DIR
               value: /skins
             {{- if .Values.global.presence.enabled }}

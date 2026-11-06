@@ -840,7 +840,7 @@ restore:
 # What the AFK bots wear. The theme is generated per bot from its username;
 # a PNG in skins/ named <username>.png (64x64) replaces it for that bot. Other
 # servers' bots default to the neon theme in the bot itself; this chart is
-# the one that gives the Dotablaze look.
+# the one that gives the Dotablaze look. A bot's own skinTheme (bot2's) wins.
 skins:
   theme: dotablaze
 
@@ -1022,6 +1022,10 @@ bot2:
 
   # Distinct from bot.username so the two token caches never collide.
   username: fwb-afk-bot-2
+
+  # This account plays as Dotablaze7321, who is a sheriff: a fixed fair, blond,
+  # blue-eyed, slim likeness in a county Class A uniform.
+  skinTheme: sheriff
 
   # The gamertag this account plays as is afk-bot-2's in global.actors. It was
   # recorded here first, as documentation only, because nothing else mapped a
