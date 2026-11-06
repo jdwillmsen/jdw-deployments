@@ -837,6 +837,13 @@ restore:
     storageClass: truenas-iscsi
     size: 5Gi
 
+# What the AFK bots wear. The theme is generated per bot from its username;
+# a PNG in skins/ named <username>.png (64x64) replaces it for that bot. Other
+# servers' bots default to the neon theme in the bot itself; this chart is
+# the one that gives the Dotablaze look.
+skins:
+  theme: dotablaze
+
 bot:
   # Off until the account behind it exists. Enabling this before the one-time
   # device-code login has been completed gets a pod that cannot authenticate
