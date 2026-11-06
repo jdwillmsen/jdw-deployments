@@ -1024,7 +1024,10 @@ bot2:
   username: fwb-afk-bot-2
 
   # This account plays as Dotablaze7321, who is a sheriff: a fixed fair, blond,
-  # blue-eyed, slim likeness in a county Class A uniform.
+  # blue-eyed, slim likeness in a county Class A uniform. Needs afkbot 1.10.0:
+  # older images reject an unknown SKIN_THEME and exit before connecting, so
+  # rolling the image back below 1.10.0 must also set this to dotablaze (1.9.0)
+  # or remove it.
   skinTheme: sheriff
 
   # The gamertag this account plays as is afk-bot-2's in global.actors. It was
