@@ -7,17 +7,19 @@ minecraft-bedrock:
   workloadAsStatefulSet: true
   strategyType: RollingUpdate
 
-  # Same sizing as proving-grounds and for the same quota reasons: the backup,
-  # recovery and version-check CronJobs of the other servers need limits.cpu
-  # and limits.memory headroom in the shared namespace to create their pods.
-  # Raise these only with a tenant quota change.
+  # Smaller than proving-grounds on purpose. The shared namespace quota
+  # (24Gi limits.memory, 12 cpu) had about 1.5Gi memory and 1.45 cpu free
+  # before this server was counted. FWB's census job needs 1Gi of memory
+  # headroom and the 04:00 backup, volume-recovery and watchdog pods need
+  # about 900Mi and 1.4 cpu at once, so this server may take 512Mi and 500m and
+  # no more; if it OOMs, raise the tenant quota first, then these.
   resources:
     requests:
-      memory: 512Mi
-      cpu: 250m
+      memory: 384Mi
+      cpu: 150m
     limits:
-      memory: 1Gi
-      cpu: 750m
+      memory: 512Mi
+      cpu: 500m
 
   # Not FWB's node (talos-4h8-zy6, which hung on 2026-11-05): a second world
   # must not share that failure, and the volume is RWO iSCSI so the pod stays
