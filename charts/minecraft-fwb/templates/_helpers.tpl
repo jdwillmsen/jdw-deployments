@@ -384,3 +384,7 @@ it as a duration because that is how the description reads.
 {{- else -}}{{ fail (printf "worldIntegrity.censusStaleAfter must be whole hours or minutes like 2h or 90m, got %q" $v) }}
 {{- end -}}
 {{- end -}}
+
+{{- define "skins.name" -}}
+{{- printf "%s-skins" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}

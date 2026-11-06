@@ -63,6 +63,10 @@ spec:
               value: {{ .Values.bot2.username | quote }}
             - name: MC_VIEW_DISTANCE
               value: {{ .Values.bot2.viewDistance | quote }}
+            - name: SKIN_THEME
+              value: {{ .Values.skins.theme | quote }}
+            - name: SKIN_DIR
+              value: /skins
             {{- if .Values.global.presence.enabled }}
             {{- $actor := include "actors.forValuesKey" (dict "root" . "key" "bot2") | fromJson }}
             # PRESENCE_DEFAULT is what the bot acts on until the agent first
@@ -92,7 +96,13 @@ spec:
             # on paths that are not obvious from the source.
             - name: tmp
               mountPath: /tmp
+            - name: skins
+              mountPath: /skins
+              readOnly: true
       volumes:
+        - name: skins
+          configMap:
+            name: {{ include "skins.name" . }}
         - name: auth
           persistentVolumeClaim:
             claimName: {{ include "bot2.name" . }}

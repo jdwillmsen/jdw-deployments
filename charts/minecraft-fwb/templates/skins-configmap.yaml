@@ -1,0 +1,17 @@
+{{- if or .Values.bot.enabled .Values.bot2.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "skins.name" . }}
+  namespace: {{ .Release.Namespace }}
+# Hand-painted skins, one 64x64 <bot username>.png each. Empty is fine: the
+# bots then wear the generated theme. A change here does not restart a bot on
+# its own, since the bots read the directory at join; roll the pod to apply it.
+{{- $skins := .Files.Glob "skins/*.png" }}
+{{- if $skins }}
+binaryData:
+  {{- range $path, $_ := $skins }}
+  {{ base $path }}: {{ $.Files.Get $path | b64enc }}
+  {{- end }}
+{{- end }}
+{{- end }}
