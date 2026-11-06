@@ -48,3 +48,11 @@ apps:
     valueFiles:
       - values.yaml
       - values-prd.yaml
+  # Second world from FWB's seed, minimal settings, its own server.
+  - name: fwb-seed-prd
+    namespace: jdwillmsen-prd
+    chartPath: charts/fwb-seed
+    syncWave: "3"
+    valueFiles:
+      - values.yaml
+      - values-prd.yaml

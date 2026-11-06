@@ -1,0 +1,10 @@
+apiVersion: v2
+name: fwb-seed
+description: Separate minimal NetherNet Bedrock server whose world is generated from the same seed as FWB
+type: application
+version: 0.1.0
+appVersion: "1.26.60.6"
+dependencies:
+  - name: minecraft-bedrock
+    version: 2.9.0
+    repository: https://itzg.github.io/minecraft-server-charts/
