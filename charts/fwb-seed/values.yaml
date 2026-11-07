@@ -19,9 +19,11 @@ minecraft-bedrock:
       memory: 1Gi
       cpu: 750m
 
-  # Not FWB's node (talos-4h8-zy6, which hung on 2026-11-05): a second world
-  # must not share that failure, and the volume is RWO iSCSI so the pod stays
-  # on one node. talos-lx0-6a4 is the node SERVER_UDP_PORTS' targets point at.
+  # talos-lx0-6a4 (where proving-grounds and the lab run) is at its 110-pod
+  # limit, and the small workers are at 99% memory requests, so the only node
+  # with room is FWB's talos-4h8-zy6. This server is 1Gi and disposable;
+  # NodePorts answer on every node, so the VM's NAT to 192.168.1.163 still
+  # reaches the pod. Move it back to the lab node if pods are freed there.
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -30,7 +32,7 @@ minecraft-bedrock:
               - key: kubernetes.io/hostname
                 operator: In
                 values:
-                  - talos-lx0-6a4
+                  - talos-4h8-zy6
 
   minecraftServer:
     eula: "TRUE"

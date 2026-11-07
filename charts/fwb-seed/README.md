@@ -10,7 +10,7 @@ only its terrain. Same difficulty (hard), survival, no cheats, version 1.26.60.6
 | Public join | `mc.jdwlabs.com:19135` (needs VM nft + gateway rules, below) |
 | Server / signaling / gameplay | 31300 / 31301 / 31310-31329 |
 | Public TCP / UDP | 19135 -> 31301 / 19200-19219 -> 31310-31329 |
-| Node | `talos-lx0-6a4` |
+| Node | `talos-4h8-zy6` (lab node is at its pod limit) |
 | Limits | 750m cpu, 1Gi (needs the 26Gi tenant quota) |
 
 Public route (R3, by hand): add TCP 19135 and UDP 19200-19219 to the VM's
