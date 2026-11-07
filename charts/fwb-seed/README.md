@@ -11,7 +11,7 @@ only its terrain. Same difficulty (hard), survival, no cheats, version 1.26.60.6
 | Server / signaling / gameplay | 31300 / 31301 / 31310-31329 |
 | Public TCP / UDP | 19135 -> 31301 / 19200-19219 -> 31310-31329 |
 | Node | `talos-lx0-6a4` |
-| Limits | 500m cpu, 512Mi (quota headroom for FWB jobs) |
+| Limits | 750m cpu, 1Gi (needs the 26Gi tenant quota) |
 
 Public route (R3, by hand): add TCP 19135 and UDP 19200-19219 to the VM's
 `/etc/minecraft-udp-nat.nft`, and a gateway Custom Service for UDP 19200-19219
