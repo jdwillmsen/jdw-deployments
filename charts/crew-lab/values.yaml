@@ -756,7 +756,7 @@ crew:
     # init container. Its limits sit inside crew.resources, so the namespace
     # quota does not change.
     sharedInit:
-      image: alpine/k8s:1.37.1
+      image: alpine/k8s:1.37.2
       resources:
         requests:
           memory: 16Mi
@@ -800,7 +800,7 @@ labRebuild:
   failedJobsHistoryLimit: 3
 
   # kubectl and bash for the feed; the same image as the main server's jobs.
-  image: alpine/k8s:1.37.1
+  image: alpine/k8s:1.37.2
 
   # The namespace quota's memory limits have about 3Gi left, so these are small.
   resources:
@@ -840,7 +840,7 @@ versionCheck:
   # Half past, so the candidate pod does not coincide with the main server's
   # hourly check: the namespace has about 3 cores and 3Gi of limits to spare.
   schedule: "30 * * * *"
-  image: alpine/k8s:1.37.1
+  image: alpine/k8s:1.37.2
   # Per candidate attempt (two): gone 57 + create 15 + ready 72 + version
   # poll 87 + log 10 = 241s, so 482s. Then 30s notice, 173s to stop and
   # confirm the restart, 20s slack: ~705s of ceiling against 900.
@@ -868,4 +868,4 @@ listenerWatchdog:
   # Longer than any restart plus recovery in this chart, so it never acts on
   # one in progress.
   minAgeSeconds: 360
-  image: alpine/k8s:1.37.1
+  image: alpine/k8s:1.37.2
