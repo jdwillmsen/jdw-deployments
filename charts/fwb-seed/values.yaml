@@ -1,7 +1,7 @@
 minecraft-bedrock:
   image:
     repository: itzg/minecraft-bedrock-server
-    tag: "2026.10.2"
+    tag: "2026.11.0"
     pullPolicy: IfNotPresent
 
   workloadAsStatefulSet: true
