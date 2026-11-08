@@ -313,6 +313,10 @@ def supply():
     yield from label("Spawn eggs and guide books", EGGS_AT, 28)
     yield from chest(EGGS_AT + 2, STAND, 29, [(f"{m}_spawn_egg", 4) for m in VANILLA_MOBS])
     yield from label("Vanilla mobs: prey, rivals, riders", EGGS_AT + 2, 28)
+    # lanterns set into the side walls, built after the room so nothing clears them
+    for z in (18, 24):
+        for x in (-14, 14):
+            yield f"setblock {x} {STAND + 3} {z} sea_lantern"
     yield from lectern(0, 17)
     yield from board(["Supply room", "Right-click the lectern, or hold a book"], 0, 22)
 
