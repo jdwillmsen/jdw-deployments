@@ -1031,8 +1031,8 @@ bot2:
   skinTheme: sheriff
 
   # The direction this bot looks once spawned (north, south, east, west or yaw
-  # degrees). Needs afkbot 1.11.0; older images simply ignore it, so rolling back is safe.
-  # West faces the chairs.
+  # degrees, quoted: an unquoted 0 reads as unset). Needs afkbot 1.11.0; older
+  # images simply ignore it, so rolling back is safe. West faces the chairs.
   facing: west
 
   # The gamertag this account plays as is afk-bot-2's in global.actors. It was
