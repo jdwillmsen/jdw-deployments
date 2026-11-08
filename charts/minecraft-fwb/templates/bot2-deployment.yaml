@@ -67,6 +67,10 @@ spec:
               value: {{ .Values.bot2.skinTheme | default .Values.skins.theme | quote }}
             - name: SKIN_DIR
               value: /skins
+            {{- with .Values.bot2.facing }}
+            - name: FACING
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.global.presence.enabled }}
             {{- $actor := include "actors.forValuesKey" (dict "root" . "key" "bot2") | fromJson }}
             # PRESENCE_DEFAULT is what the bot acts on until the agent first
