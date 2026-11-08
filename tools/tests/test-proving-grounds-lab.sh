@@ -45,13 +45,27 @@ while queue:
         queue.append(n)
 assert len(seen) > 1000, len(seen)
 assert any(y >= sealed_below for _, y, _ in seen), "the dome has no open top"
+# nothing may sit in the opening itself, or a flyer is blocked while the flood still reaches it
+assert all(y < sealed_below for _, y, _ in solid), "glass in the dome opening"
 PY
-# Roofs are open on purpose (fly in): no pen, cage or yard stall may carry a glass lid.
+# Roofs are open on purpose (fly in): every glass column in a pen, cage, stall or bay must stand on the floor,
+# so a lid (glass that only exists at the top) fails however many fills it is split into.
 for section in wildlife safety breeding armor; do
-  python3 "$here/tools/proving-grounds-lab.py" build "$section" | awk -v s="$section" '
-    $1 == "fill" && $3 == $6 && $8 == "glass" && ($5 - $2) > 3 && ($7 - $4) > 3 { print "FAIL: " s ": glass lid: " $0; bad = 1 }
-    END { exit bad }'
+  python3 "$here/tools/proving-grounds-lab.py" build "$section" | python3 -c '
+import sys
+cols = {}
+for line in sys.stdin:
+    f = line.split()
+    if f[0] == "fill" and f[7] == "glass":
+        x1, y1, z1, x2, y2, z2 = map(int, f[1:7])
+        for x in range(min(x1, x2), max(x1, x2) + 1):
+            for z in range(min(z1, z2), max(z1, z2) + 1):
+                cols.setdefault((x, z), set()).update(range(min(y1, y2), max(y1, y2) + 1))
+lids = [c for c, ys in cols.items() if -60 not in ys]
+if lids:
+    sys.exit("FAIL: " + sys.argv[1] + ": glass lid over " + str(sorted(lids)[:3]))
+' "$section"
 done
 # every chest fits its 27 slots
-python3 "$here/tools/proving-grounds-lab.py" build all | awk '$1 == "replaceitem" && $7 > 26 { print "FAIL: slot " $7 " is outside a chest: " $0; bad = 1 } END { exit bad }'
+python3 "$here/tools/proving-grounds-lab.py" build all | awk '$1 == "replaceitem" && ($7 < 0 || $7 > 26) { print "FAIL: slot " $7 " is outside a chest: " $0; bad = 1 } END { exit bad }'
 echo "PASS: proving-grounds laboratory generator"

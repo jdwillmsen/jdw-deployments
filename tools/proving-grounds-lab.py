@@ -36,6 +36,7 @@ PENS = [
 ]
 STAGE0 = [("training_dummy_brute", 42), ("werewolf", 58), ("ground_dragon", 74)]
 SPAWNABLE_IDS = [p[0] for p in PENS] + [s[0] for s in STAGE0]
+VANILLA_MOBS = ["zombie", "skeleton", "creeper", "wolf", "horse", "sheep", "cow", "pig", "chicken", "rabbit"]
 FOODS = ["beef", "rabbit", "mutton", "chicken", "salmon", "rotten_flesh"]
 
 
@@ -133,6 +134,9 @@ PAD = (24, 26)  # the teleport pad outside the dome: x range, z -1..1
 def clear():
     for t in ("armor_stand", "item"):
         yield f"kill @e[type={t},x=-70,y=-64,z=-80,dx=160,dy=40,dz=155]"
+    # vanilla mobs a tester spawned from the egg chest
+    for sp in VANILLA_MOBS:
+        yield f"kill @e[type={sp},x=-70,y=-64,z=-80,dx=160,dy=40,dz=155]"
     for sp in [p[0] for p in PENS] + [s[0] for s in STAGE0]:
         yield f"kill @e[type=gameops:{sp},x=-70,y=-64,z=-80,dx=160,dy=40,dz=155]"
 
@@ -183,7 +187,8 @@ def plaza():
     yield from fill(0, STAND + 2, 0, 0, STAND + 7, 0, "quartz_pillar")
     yield from fill(0, STAND + 8, 0, 0, STAND + 8, 0, "sea_lantern")
     # lamp posts along the four paths so each way out is visibly lit
-    posts = [(sx * 2, z) for sx in (-1, 1) for z in (-20, -26, 20, 26)]
+    # none south of the plaza: the supply room is built over that stretch and would clear them
+    posts = [(sx * 2, z) for sx in (-1, 1) for z in (-20, -26)]
     posts += [(x, sz * 2) for sz in (-1, 1) for x in (-20, -26, 19, 30)]
     for x, z in posts:
         yield from fill(x, STAND, z, x, STAND + 2, z, "quartz_pillar")
@@ -306,10 +311,7 @@ def supply():
     # spawn eggs: every mob, plus a second chest with the cub-friendly extras
     yield from chest(EGGS_AT, STAND, 29, [(f"gameops:{sp}_spawn_egg", 16) for sp in SPAWNABLE_IDS] + [("book", 4)])
     yield from label("Spawn eggs and guide books", EGGS_AT, 28)
-    yield from chest(EGGS_AT + 2, STAND, 29, [("zombie_spawn_egg", 4), ("skeleton_spawn_egg", 4), ("creeper_spawn_egg", 2),
-                                              ("wolf_spawn_egg", 4), ("horse_spawn_egg", 4), ("sheep_spawn_egg", 8),
-                                              ("cow_spawn_egg", 8), ("pig_spawn_egg", 8), ("chicken_spawn_egg", 8),
-                                              ("rabbit_spawn_egg", 8)])
+    yield from chest(EGGS_AT + 2, STAND, 29, [(f"{m}_spawn_egg", 4) for m in VANILLA_MOBS])
     yield from label("Vanilla mobs: prey, rivals, riders", EGGS_AT + 2, 28)
     yield from lectern(0, 17)
     yield from board(["Supply room", "Right-click the lectern, or hold a book"], 0, 22)
@@ -384,6 +386,11 @@ def armor():
     for i, x in enumerate((9, 17, 25, 33)):
         yield from fill(x - 2, FLOOR, 53, x + 2, FLOOR, 59, "white_concrete" if i == 0 else "light_gray_concrete")
         yield from label("Control: no armor" if i == 0 else f"Fit: {ARMOR_TIERS[i - 1][0]}", x, 55)
+        # fenced apart, so a tiger cannot wander onto the next tier's platform before it is tamed
+        yield from walls(x - 3, 52, x + 3, 60, 4, "glass")
+        yield from fill(x - 1, STAND, 52, x + 1, STAND + 1, 52, "air")
+        for gx in (x - 1, x, x + 1):
+            yield f"setblock {gx} {STAND} 52 fence_gate"
         yield f"summon gameops:tiger {x} {STAND} 57"
     yield from chest(21, STAND, 60, [("beef", 64), ("golden_apple", 8), ("diamond_sword", 1), ("iron_sword", 1),
                                       ("wooden_sword", 1), ("bow", 1), ("arrow", 64)])
