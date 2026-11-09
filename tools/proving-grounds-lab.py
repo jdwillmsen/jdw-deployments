@@ -288,10 +288,10 @@ SUPPLY_CHESTS = [
                    ("totem_of_undying", 1)]),
     (-6, "Weapons to compare damage", [("wooden_sword", 1), ("stone_sword", 1), ("iron_sword", 1), ("diamond_sword", 1),
                                         ("netherite_sword", 1), ("iron_axe", 1), ("trident", 1), ("crossbow", 1),
-                                        ("bow", 1), ("arrow", 64), ("spectral_arrow", 32), ("flint_and_steel", 1)]),
+                                        ("bow", 1), ("arrow", 64), ("shield", 1), ("flint_and_steel", 1)]),
     (-4, "Animal armor", [(a, 4) for a in ARMORS] + [("saddle", 2), ("lead", 8), ("name_tag", 8)]),
     (-2, "Tools", [("compass", 1), ("clock", 1), ("spyglass", 1), ("elytra", 1), ("firework_rocket", 64),
-                    ("shears", 1), ("fishing_rod", 1), ("water_bucket", 1), ("lava_bucket", 1), ("cobweb", 8),
+                    ("shears", 1), ("fishing_rod", 1), ("water_bucket", 1), ("lava_bucket", 1), ("web", 8),
                     ("torch", 64), ("oak_planks", 64), ("white_wool", 16), ("oak_fence", 16), ("fence_gate", 8),
                     ("hay_block", 16)]),
 ]
