@@ -131,7 +131,8 @@ def senv(dep):
 for uid, name in other.items():
     dep = all_deps[uid]
     e = senv(dep)
-    assert dep["spec"]["replicas"] == 0, "a unit on another server must not start by itself"
+    assert dep["spec"]["replicas"] == 1, "crew-23 is switched on"
+    assert e["CAMERA_ENABLED"] == "false", "the public console must not show another server's players"
     assert e["MC_USERNAME"] == name and e["CREW_ID"] == uid
     assert e["MC_HOST"] == "http://192.168.1.163" and e["MC_PORT"] == "31301" and e["MC_OFFLINE"] == "false", e
     assert e["AUTH_CACHE_DIR"] == f"/data/{uid}/auth"
@@ -142,11 +143,11 @@ for uid, name in other.items():
     assert [t["template"] for t in plan] == ["goto", "gather_and_deposit"], plan
     assert plan[1]["item"] == "oak_log" and plan[1]["chest"] == {"x": 168, "y": 64, "z": 250}, plan
     assert all(isinstance(plan[0]["to"][k], int) for k in "xyz"), "y must reach the plan as a number key"
-    # The lab's unit-kit pack, rebuild job and gate, and crew-control's roster,
-    # must not name it: the first three would restart the lab or skip a real
-    # player, and the last lists a camera that is not running.
+    # The lab's unit-kit pack, rebuild job and gate must not name it: they
+    # would restart the lab or skip a real player. crew-control's roster lists
+    # it once it runs, so that one is expected.
     for d in docs:
-        if d["metadata"]["name"] != uid:
+        if d["metadata"]["name"] not in (uid, "crew-control"):
             assert name not in json.dumps(d), (name, d["kind"], d["metadata"]["name"])
 
 # A unit whose first lookups stall must get minutes to answer /healthz once
@@ -194,7 +195,7 @@ import sys, yaml
 reps = {d["metadata"]["name"]: d["spec"]["replicas"]
         for d in yaml.safe_load_all(open(sys.argv[1]))
         if d and d.get("kind") == "Deployment" and d["metadata"]["labels"].get("app.kubernetes.io/component") == "crew"}
-assert reps == {**{"crew-23": 0}, **{k: (0 if k == "crew-02" else 1) for k in {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein", "crew-24": "Xeno", "crew-25": "Yarrow", "crew-26": "Zinc"}}}, reps
+assert reps == {**{"crew-23": 1}, **{k: (0 if k == "crew-02" else 1) for k in {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein", "crew-24": "Xeno", "crew-25": "Yarrow", "crew-26": "Zinc"}}}, reps
 PY
 
 echo "PASS: crew units render as expected"

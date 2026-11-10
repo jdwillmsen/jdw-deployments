@@ -33,7 +33,7 @@ for u in units:
 if len(sys.argv) > 3:
     sys.exit(0)
 
-assert [u["name"] for u in units] == ["Agate", "Basalt", "Cobble", "Dusty", "Ember", "Flint", "Gravel", "Hazel", "Ingot", "Jasper", "Kettle", "Loam", "Marble", "Nugget", "Onyx", "Pebble", "Quartz", "Rusty", "Slate", "Tinder", "Umber", "Vein", "Xeno", "Yarrow", "Zinc"], units
+assert [u["name"] for u in units] == ["Agate", "Basalt", "Cobble", "Dusty", "Ember", "Flint", "Gravel", "Hazel", "Ingot", "Jasper", "Kettle", "Loam", "Marble", "Nugget", "Onyx", "Pebble", "Quartz", "Rusty", "Slate", "Tinder", "Umber", "Vein", "fwb-afk-bot-2", "Xeno", "Yarrow", "Zinc"], units
 assert dep["spec"]["replicas"] == 1
 assert dep["spec"]["strategy"]["type"] == "Recreate"
 assert c["securityContext"]["readOnlyRootFilesystem"] is True
@@ -113,11 +113,11 @@ assert svc["spec"]["selector"] == {"app": "crew-control"}
 '
 
 render > "$work/rendered.yaml"
-python3 -c "$check" "$work/rendered.yaml" '["crew-01","crew-02","crew-03","crew-04","crew-05","crew-06","crew-07","crew-08","crew-09","crew-10","crew-11","crew-12","crew-13","crew-14","crew-15","crew-16","crew-17","crew-18","crew-19","crew-20","crew-21","crew-22","crew-24","crew-25","crew-26"]' \
+python3 -c "$check" "$work/rendered.yaml" '["crew-01","crew-02","crew-03","crew-04","crew-05","crew-06","crew-07","crew-08","crew-09","crew-10","crew-11","crew-12","crew-13","crew-14","crew-15","crew-16","crew-17","crew-18","crew-19","crew-20","crew-21","crew-22","crew-23","crew-24","crew-25","crew-26"]' \
   || fail "crew-control is not rendered as expected"
 
 render --set 'crew.units[1].replicas=0' > "$work/scaled.yaml"
-python3 -c "$check" "$work/scaled.yaml" '["crew-01","crew-03","crew-04","crew-05","crew-06","crew-07","crew-08","crew-09","crew-10","crew-11","crew-12","crew-13","crew-14","crew-15","crew-16","crew-17","crew-18","crew-19","crew-20","crew-21","crew-22","crew-24","crew-25","crew-26"]' skip \
+python3 -c "$check" "$work/scaled.yaml" '["crew-01","crew-03","crew-04","crew-05","crew-06","crew-07","crew-08","crew-09","crew-10","crew-11","crew-12","crew-13","crew-14","crew-15","crew-16","crew-17","crew-18","crew-19","crew-20","crew-21","crew-22","crew-23","crew-24","crew-25","crew-26"]' skip \
   || fail "a stopped unit is still listed by crew-control"
 
 stop_all=()

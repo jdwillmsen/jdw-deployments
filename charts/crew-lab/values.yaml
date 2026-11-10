@@ -478,7 +478,8 @@ crew:
     # because YAML reads a bare y as true.
     - id: crew-23
       name: fwb-afk-bot-2
-      replicas: 0
+      replicas: 1
+      camera: false
       sharedVolume: true
       server:
         host: "http://192.168.1.163"
