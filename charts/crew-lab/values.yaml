@@ -491,15 +491,15 @@ crew:
       workPlan:
         - template: goto
           to:
-            x: 166
+            x: 228
             "y": 68
-            z: 248
+            z: 240
         - template: gather_and_deposit
           item: oak_log
           qty: 16
           area:
-            min: {x: 120, "y": 55, z: 215}
-            max: {x: 183, "y": 118, z: 278}
+            min: {x: 222, "y": 55, z: 215}
+            max: {x: 285, "y": 118, z: 278}
           chest: *fwbSeedDeliveryChest
     - id: crew-24
       name: Xeno
