@@ -486,13 +486,13 @@ crew:
         port: 31301
       deliveryChest: &fwbSeedDeliveryChest
         x: 168
-        "y": 64
-        z: 250
+        "y": 68
+        z: 248
       workPlan:
         - template: goto
           to:
             x: 166
-            "y": 64
+            "y": 68
             z: 248
         - template: gather_and_deposit
           item: oak_log
