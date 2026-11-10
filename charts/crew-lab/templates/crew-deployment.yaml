@@ -90,7 +90,9 @@ spec:
             - name: STATUS_ADDR
               value: "0.0.0.0:{{ $.Values.crew.statusPort }}"
             - name: CAMERA_ENABLED
-              value: {{ $.Values.crew.camera.enabled | quote }}
+              {{- /* A unit on another server can opt out: the console is
+              public, and a camera would show that server's players' base. */}}
+              value: {{ if hasKey $unit "camera" }}{{ $unit.camera | quote }}{{ else }}{{ $.Values.crew.camera.enabled | quote }}{{ end }}
             - name: CAMERA_MAX_VIEWERS
               value: {{ $.Values.crew.camera.maxViewers | quote }}
             # The atlas depends only on the server version, so units on the
