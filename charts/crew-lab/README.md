@@ -68,6 +68,10 @@ Service and PVC named by its `id`, and joins the server under its `name`.
 | `crew-03` | Cobble |
 | `crew-21` | Umber (mender) |
 | `crew-22` | Vein (builder) |
+| `crew-23` | fwb-afk-bot-2 (another server) |
+| `crew-24` | Xeno (warrior, `lab-bravo` vanguard) |
+| `crew-25` | Yarrow (warrior, `lab-bravo` striker) |
+| `crew-26` | Zinc (warrior, `lab-bravo` ranger) |
 
 The id is fixed for life (volumes, logs, metrics and the task API's identity use
 it); the name is what players see in-game, 16 characters at most. Every crew
@@ -85,6 +89,9 @@ Set `replicas: 0` on one unit to stop it without deleting its volume;
 `crew.replicas` is the default for the rest.
 
 ## Squads
+
+A second squad, `lab-bravo` (`crew-24`-`crew-26`: Xeno, Yarrow, Zinc), has the same
+three roles and gives the bot-vs-bot duels an opponent for `lab-alpha`.
 
 `crew-18`-`crew-20` (Rusty, Slate, Tinder) are not working units: they are
 squad `lab-alpha`'s three warriors (`role: warrior` with `squadRole` vanguard,
@@ -116,8 +123,8 @@ only.
 ### Warriors on NetherNet
 
 The lab server accepts NetherNet only, and it turns an unsigned player away at
-the transport, so a unit cannot join it offline. `crew-18`-`crew-20` set
-`nethernet: true`: they take `crew.nethernet.host` and `.port` as `MC_HOST` and
+the transport, so a unit cannot join it offline. `crew-18`-`crew-20` and
+`crew-24`-`crew-26` set `nethernet: true`: they take `crew.nethernet.host` and `.port` as `MC_HOST` and
 `MC_PORT` and run with `MC_OFFLINE=false`, so each signs in with a Microsoft
 account that owns Minecraft. Every other unit keeps the RakNet address and the
 offline join, and stays unable to connect until it is given an account.

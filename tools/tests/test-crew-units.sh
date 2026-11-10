@@ -29,9 +29,9 @@ def of(kind):
 crew = lambda kind: [d for d in of(kind)
                      if d["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "crew"]
 
-want = {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein"}
+want = {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein", "crew-24": "Xeno", "crew-25": "Yarrow", "crew-26": "Zinc"}
 # The squad members and the role each carries inside it; warriors only.
-squads = {"crew-18": "vanguard", "crew-19": "striker", "crew-20": "ranger"}
+squads = {"crew-18": "vanguard", "crew-19": "striker", "crew-20": "ranger", "crew-24": "vanguard", "crew-25": "striker", "crew-26": "ranger"}
 # Lab-only units: crew refuses them without CREW_LAB and they never join a squad.
 lab_units = {"crew-21": "mender", "crew-22": "builder"}
 own_claim = {"crew-01", "crew-02", "crew-03"}
@@ -76,7 +76,7 @@ for uid, name in want.items():
         # squad env carries the in-squad role, not the yard role.
         assert "WORK_PLAN" not in e, (uid, "warriors must have no WORK_PLAN")
         assert e["CREW_ROLE"]["value"] == squads[uid], (uid, e["CREW_ROLE"])
-        assert e["CREW_SQUAD"]["value"] == "lab-alpha", (uid, e["CREW_SQUAD"])
+        assert e["CREW_SQUAD"]["value"] == ("lab-alpha" if uid <= "crew-20" else "lab-bravo"), (uid, e["CREW_SQUAD"])
         # The warriors join the NetherNet listener signed in; that server
         # turns an unsigned player away at the transport.
         assert e["MC_HOST"]["value"] == "http://192.168.1.163", (uid, e["MC_HOST"])
@@ -118,10 +118,10 @@ def milli(v):
 
 total = sum(milli(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["cpu"])
             for d in deps.values())
-# 22 units at 50m; the namespace sum is worked out in values.yaml.
-assert total <= 1100, f"crew limits.cpu totals {total}m, want <= 1100m"
+# 25 lab units at 50m; the namespace sum is worked out in values.yaml.
+assert total <= 1250, f"crew limits.cpu totals {total}m, want <= 1250m"
 mem = sum(int(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"][:-2]) for d in deps.values())
-assert mem <= 22 * 384, f"crew limits.memory totals {mem}Mi, want <= 8448Mi"
+assert mem <= 25 * 384, f"crew limits.memory totals {mem}Mi, want <= 9600Mi"
 assert len(chests) >= len(want) - len(squads) - len(lab_units)
 
 def senv(dep):
@@ -194,7 +194,7 @@ import sys, yaml
 reps = {d["metadata"]["name"]: d["spec"]["replicas"]
         for d in yaml.safe_load_all(open(sys.argv[1]))
         if d and d.get("kind") == "Deployment" and d["metadata"]["labels"].get("app.kubernetes.io/component") == "crew"}
-assert reps == {**{"crew-23": 0}, **{k: (0 if k == "crew-02" else 1) for k in {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein"}}}, reps
+assert reps == {**{"crew-23": 0}, **{k: (0 if k == "crew-02" else 1) for k in {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein", "crew-24": "Xeno", "crew-25": "Yarrow", "crew-26": "Zinc"}}}, reps
 PY
 
 echo "PASS: crew units render as expected"
