@@ -134,6 +134,17 @@ Do this in your own terminal, not through an agent. The token is kept under
 Use a different account for each warrior: one account cannot be in the world
 twice. Check Microsoft's terms and rate limits for the accounts you use.
 
+### Units on another server
+
+A unit with `server` (`host`, `port`) joins that NetherNet server, signed in,
+instead of the lab: `MC_HOST`, `MC_PORT` and `MC_OFFLINE=false` come from the
+unit, not from `crew.nethernet` or `crew.offline`, so it is unaffected by
+`values-raknet.yaml`. It is left out of everything the lab owns: the unit-kit
+pack's equip and restock functions, the lab rebuild and unit-kit gate player
+lists, the join stagger and the kit chest. The lab server's rendered output does
+not change, so adding or removing such a unit never restarts it. Its standing
+work is `workPlan`, a list of task bodies rendered as `WORK_PLAN`.
+
 ### Warrior training switch
 
 The squad id carries a `lab-` prefix on purpose: the squad service only hands a

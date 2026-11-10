@@ -73,17 +73,18 @@ spec:
               drop: ["ALL"]
           env:
             - name: MC_HOST
-              value: {{ if and $unit.nethernet $.Values.crew.nethernet.enabled }}{{ $.Values.crew.nethernet.host | quote }}{{ else }}{{ include "crew.serverHost" $ }}{{ end }}
+              value: {{ if $unit.server }}{{ $unit.server.host | quote }}{{ else if and $unit.nethernet $.Values.crew.nethernet.enabled }}{{ $.Values.crew.nethernet.host | quote }}{{ else }}{{ include "crew.serverHost" $ }}{{ end }}
             - name: MC_PORT
-              value: {{ if and $unit.nethernet $.Values.crew.nethernet.enabled }}{{ $.Values.crew.nethernet.port | quote }}{{ else }}{{ index $.Values "minecraft-bedrock" "minecraftServer" "serverPort" | quote }}{{ end }}
+              value: {{ if $unit.server }}{{ $unit.server.port | quote }}{{ else if and $unit.nethernet $.Values.crew.nethernet.enabled }}{{ $.Values.crew.nethernet.port | quote }}{{ else }}{{ index $.Values "minecraft-bedrock" "minecraftServer" "serverPort" | quote }}{{ end }}
             - name: CREW_ID
               value: {{ $unit.id | quote }}
             - name: MC_USERNAME
               value: {{ $unit.name | quote }}
             - name: MC_OFFLINE
               {{- /* A NetherNet server turns an unsigned player away at the
-              transport, so these units sign in. */}}
-              value: {{ if and $unit.nethernet $.Values.crew.nethernet.enabled }}"false"{{ else }}{{ $.Values.crew.offline | quote }}{{ end }}
+              transport, so these units sign in. A unit on another server
+              always does: the lab's offline switch is not its. */}}
+              value: {{ if or $unit.server (and $unit.nethernet $.Values.crew.nethernet.enabled) }}"false"{{ else }}{{ $.Values.crew.offline | quote }}{{ end }}
             - name: MC_VIEW_DISTANCE
               value: {{ $.Values.crew.viewDistance | quote }}
             - name: STATUS_ADDR
@@ -103,7 +104,12 @@ spec:
               value: {{ printf "/data/%s/auth" $unit.id | quote }}
             {{- end }}
             {{- $lab := include "crew.labRole" $unit }}
-            {{- if and $unit.role (ne $unit.role "warrior") (not $lab) }}
+            {{- if $unit.workPlan }}
+            {{- /* Standing work given outright, for a unit that is not in the
+            lab's yards. */}}
+            - name: WORK_PLAN
+              value: {{ $unit.workPlan | toJson | quote }}
+            {{- else if and $unit.role (ne $unit.role "warrior") (not $lab) }}
             {{- /* A warrior is off the idle rotation: WORK_PLAN is what a unit
             mines and chops when idle, and squadRole would put it in its yard
             instead of the arena. A mender or builder idles until tasked. */}}
@@ -139,11 +145,15 @@ spec:
             {{- end }}
             {{- end }}
             {{- with $.Values.crew.joinStaggerSeconds }}
+            {{- if include "crew.onLab" $unit }}
             - name: JOIN_DELAY_S
               value: {{ mul (sub (atoi (trimPrefix "crew-" $unit.id)) 1) . | quote }}
             {{- end }}
+            {{- end }}
             {{- with $.Values.crew.kit }}
-            {{- if .chest }}
+            {{- /* The kit chest is a lab coordinate; on another world it would
+            send the unit walking to nowhere whenever it had no sword. */}}
+            {{- if and .chest (include "crew.onLab" $unit) }}
             - name: KIT_CHEST
               value: {{ .chest | quote }}
             - name: KIT_FOOD

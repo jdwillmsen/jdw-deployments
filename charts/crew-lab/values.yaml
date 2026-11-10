@@ -340,6 +340,15 @@ crew:
   #
   # A unit may set `replicas: 0` to stop alone without losing its volume.
   #
+  # A unit with `server` (host, port) works on another server than the lab: it
+  # joins that NetherNet server signed in, whatever `nethernet` and `offline`
+  # say, and it is not a lab unit. The unit-kit pack, the lab rebuild and its
+  # gate, the yards and the kit chest ignore it, so none of them restarts the
+  # lab or sends the unit to lab coordinates. A `workPlan` (a list of task
+  # bodies, as the task API takes them) is rendered as its WORK_PLAN instead of
+  # a yard plan. The unit's `name` is only the key of its sign-in cache file
+  # (MC_USERNAME), not the gamertag other players see.
+  #
   # `role` gives a unit standing work in its own plot of the yards below
   # (miner, chopper, hauler or shaft; templates/_helpers.tpl). `warrior` is
   # the exception, not a work role: a fighter. Its plot stays unused (the
