@@ -3,7 +3,9 @@
 {{- $serverPod := printf "%s-minecraft-bedrock-0" .Release.Name }}
 {{- $nonHumanPlayers := list }}
 {{- range .Values.crew.units }}
+{{- if include "crew.onLab" . }}
 {{- $nonHumanPlayers = append $nonHumanPlayers .name }}
+{{- end }}
 {{- end }}
 {{- range .Values.labRebuild.nonHumanPlayerPatterns }}
 {{- $nonHumanPlayers = append $nonHumanPlayers . }}

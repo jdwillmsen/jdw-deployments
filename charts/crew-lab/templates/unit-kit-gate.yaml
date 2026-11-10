@@ -11,7 +11,7 @@
 {{- end }}
 {{- if not $rev }}{{ fail "unitKitGate needs UNIT_KIT_REV on the install-unit-kit init container" }}{{ end }}
 {{- $nonHuman := list }}
-{{- range .Values.crew.units }}{{ $nonHuman = append $nonHuman .name }}{{ end }}
+{{- range .Values.crew.units }}{{ if include "crew.onLab" . }}{{ $nonHuman = append $nonHuman .name }}{{ end }}{{ end }}
 {{- range .Values.labRebuild.nonHumanPlayerPatterns }}{{ $nonHuman = append $nonHuman . }}{{ end }}
 # Holds a sync that would restart the lab server (a changed UNIT_KIT_REV) until
 # no human is online. The hook and its RBAC are PreSync resources so the

@@ -282,6 +282,7 @@ data:
   # rather than put in a slot, which could hold a piece of the kit.
   equip.mcfunction: |
     {{- range $unit := .Values.crew.units }}
+    {{- if include "crew.onLab" $unit }}
     {{- $n := $unit.name | quote }}
     {{- $lab := include "crew.labRole" $unit }}
     {{- if and (not $unit.hard) (ne $unit.role "warrior") (not $lab) }}
@@ -352,6 +353,7 @@ data:
     {{- end }}
     {{- end }}
     {{- end }}
+    {{- end }}
     {{- with .Values.crew.kit.chest }}
     {{- /* The units take their food from the kit chest, which would otherwise
     run dry; the last slot is kept full of bread. */}}
@@ -371,8 +373,9 @@ data:
   restock.mcfunction: |
     {{- range $unit := .Values.crew.units }}
     {{- /* A warrior has no yard to supply: it never walks a plot, so building
-    and emptying chests there would be a structure nobody opens. */}}
-    {{- if and $unit.role (ne $unit.role "warrior") (not (include "crew.labRole" $unit)) }}
+    and emptying chests there would be a structure nobody opens. A unit on
+    another server has no yard here at all. */}}
+    {{- if and (include "crew.onLab" $unit) $unit.role (ne $unit.role "warrior") (not (include "crew.labRole" $unit)) }}
     {{- $p := include "crew.plot" (dict "id" $unit.id "yards" $.Values.crew.yards) | fromJson }}
     {{- $x := int64 $p.x }}
     {{- $z := int64 $p.z }}

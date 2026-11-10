@@ -11,6 +11,18 @@ app: {{ . }}
 app.kubernetes.io/component: crew
 {{- end -}}
 
+{{/*
+Whether a unit plays on the lab server. A unit with `server` joins another one
+and is left out of everything the lab owns: the unit-kit pack, the lab rebuild
+and its gate, and the yards. Takes the unit and renders "true" or nothing, so
+it reads as a condition through `include`.
+*/}}
+{{- define "crew.onLab" -}}
+{{- if not .server -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- define "crew.control.dbSecret.name" -}}
 crew-control-db
 {{- end -}}
