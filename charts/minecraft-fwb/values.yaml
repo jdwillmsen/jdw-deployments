@@ -1017,7 +1017,7 @@ bot2:
     # 1.2.1 (the presence release, first built from gameops), the same as bot
     # above and for the same reason. 1.2.2 and 1.5.2 likewise.
     # 1.6.1: gophertunnel v1.63 for Bedrock 1.26.60, as for bot above.
-    tag: "1.12.0"
+    tag: "1.13.0"
     pullPolicy: IfNotPresent
 
   # Distinct from bot.username so the two token caches never collide.
