@@ -61,7 +61,7 @@ live = c["livenessProbe"]["initialDelaySeconds"]
 assert int(live) == 30, f"liveness delay must be the normal 30s, not a year: {live}"
 assert not any(d["kind"] == "Service" and d["metadata"]["name"].endswith("-nethernet") for d in over), "the NetherNet Service goes"
 uo = units(over)
-assert len(uo) == 23, len(uo)
+assert len(uo) == 26, len(uo)
 # crew-23 plays on another server (fwb-seed) with its own address, so neither
 # the lab's transport nor this overlay is its to change.
 other = uo.pop("crew-23")

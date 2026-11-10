@@ -20,7 +20,7 @@ import re, sys, yaml
 
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 units = [d for d in docs if d["kind"] == "Deployment" and re.fullmatch(r"crew-\d\d", d["metadata"]["name"])]
-assert len(units) == 23, f"want 23 units, got {len(units)}"
+assert len(units) == 26, f"want 26 units, got {len(units)}"
 
 claims = {d["metadata"]["name"]: d for d in docs if d["kind"] == "PersistentVolumeClaim"}
 shared_dirs = set()

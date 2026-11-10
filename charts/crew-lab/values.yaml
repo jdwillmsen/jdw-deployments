@@ -32,7 +32,8 @@ minecraft-bedrock:
   # With 20 units each sending an input every 50 ms and loading its own chunks,
   # the server gets 2000m (JDW-128). Limits then total 7100m - 1000m + 2000m +
   # 17 new units x 50m = 8950m of 12000m, which leaves 3050m for the 2000m of
-  # jobs. Memory stays at 2Gi: 643Mi was in use with three units, and the
+  # jobs (historical: written at 20 units; the current sums are under
+  # crew.resources). Memory stays at 2Gi: 643Mi was in use with three units, and the
   # namespace's memory limits (see crew.resources) have only 3.3Gi to spare.
   resources:
     requests:
@@ -177,7 +178,7 @@ minecraft-bedrock:
       # players, so unitKitGate holds the sync until none are online.
       env:
         - name: UNIT_KIT_REV
-          value: "a7fa190958ce"
+          value: "4a7ec664c7ef"
       command:
         - sh
         - -ec
@@ -499,6 +500,27 @@ crew:
             min: {x: 120, "y": 55, z: 215}
             max: {x: 183, "y": 118, z: 278}
           chest: *fwbSeedDeliveryChest
+    - id: crew-24
+      name: Xeno
+      role: warrior
+      nethernet: true
+      squadRole: vanguard
+      squad: lab-bravo
+      sharedVolume: true
+    - id: crew-25
+      name: Yarrow
+      role: warrior
+      nethernet: true
+      squadRole: striker
+      squad: lab-bravo
+      sharedVolume: true
+    - id: crew-26
+      name: Zinc
+      role: warrior
+      nethernet: true
+      squadRole: ranger
+      squad: lab-bravo
+      sharedVolume: true
 
   # Where a mender stands after it joins: the open floor at the centre of the
   # Colosseum (centre -300 64 -758, floor at y 63), two blocks up so it lands
@@ -589,15 +611,16 @@ crew:
   # (2-4m CPU idle, 176-257Mi measured on 2026-10-20 with the camera on). The
   # memory limit leaves a third over the peak for building the atlas from the
   # extracted pack and for camera viewers' sub-chunk replay. Both limits count
-  # against the namespace quota, and the 22 units together are what
-  # decides what is left for the CronJobs:
-  #   limits.cpu     8950m + 2 x 50m = 9050m of 12000m, so 2950m remain for
-  #                  the backup (1000m) beside the version-check and
-  #                  volume-recovery jobs (500m each)
-  #   limits.memory  21248Mi + 2 x 384Mi = 22016Mi of 24576Mi, so 2560Mi remain
-  #                  for the jobs (about 1Gi at once)
-  #   requests.cpu   3210m + 2 x 20m = 3250m of 6000m
-  #   requests.memory 8720Mi + 2 x 128Mi = 8976Mi of 12288Mi
+  # against the namespace quota, and the 25 lab units together are what
+  # decides what is left for the CronJobs. With the whole namespace counted
+  # (2026-11-07, quota 12 cores / 26Gi limits, 6 cores / 12Gi requests), and the
+  # three lab-bravo warriors included:
+  #   limits.cpu      10700m of 12000m, so 1300m remain for the jobs. At 04:00
+  #                   the backup, volume-recovery and the watchdog want 1600m, so
+  #                   one waits for the others and its Job controller retries it
+  #   limits.memory   25216Mi of 26624Mi, so 1408Mi remain for the jobs
+  #   requests.cpu    3810m of 6000m
+  #   requests.memory 10384Mi of 12288Mi
   # Raise the quota before raising any of these.
   resources:
     requests:

@@ -63,7 +63,7 @@ assert env["LAB"] == f"k8s:jdwillmsen-prd/{server}", env["LAB"]
 # worker, and listing it would have the rebuild skip a real player.
 lab_crew = [d for d in crew if d["metadata"]["name"] != "crew-23"]
 units = {e["value"] for d in lab_crew for e in d["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"] == "MC_USERNAME"}
-assert set(env["NON_HUMAN"].split()) == units | {"load-*"} and len(units) == 22, env["NON_HUMAN"]
+assert set(env["NON_HUMAN"].split()) == units | {"load-*"} and len(units) == 25, env["NON_HUMAN"]
 assert "fwb-afk-bot-2" not in env["NON_HUMAN"].split(), env["NON_HUMAN"]
 assert main["command"] == ["/work/nightly.sh"]
 

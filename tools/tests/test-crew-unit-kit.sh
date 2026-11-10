@@ -53,7 +53,7 @@ for name in ('Pebble', 'Quartz'):
 # unit has no netherite chestplate anywhere (join, death, restart), plus a
 # top-up of golden apples. No plain diamond or iron line is left, nothing sends
 # a warrior to its plot, and its yard and chest stay unbuilt.
-squad_kit = {"Rusty": "vanguard", "Slate": "duelist", "Tinder": "ranger"}
+squad_kit = {"Rusty": "vanguard", "Slate": "duelist", "Tinder": "ranger", "Xeno": "vanguard", "Yarrow": "duelist", "Zinc": "ranger"}
 WORN = "{item=netherite_chestplate,location=slot.armor.chest,quantity=0}"
 for name, role in squad_kit.items():
     got = [l.strip() for l in equip.splitlines() if f'name="{name}"' in l]
@@ -89,7 +89,7 @@ for name in ("Umber", "Vein"):
     assert f'name="{name}"' not in restock, name
 
 # Yards are kept supplied: every working plot gets two chests, and a working
-# unit is sent to its plot (17 units; the three warriors get neither).
+# unit is sent to its plot (17 units; the six warriors get neither).
 assert restock.count("chest [] keep") == 34, restock.count("chest [] keep")
 # The mender is sent to its home from the hub too, so 18 tps in all.
 assert equip.count("run tp @s") == 18
@@ -168,7 +168,7 @@ assert 0 < equip.count("tag=kitted] run give @s bread") == equip.count("tag=!kit
 # Every kit function the equip tick calls ships in the catalog.
 for fn in re.findall(r"run function (kits/\w+/t\d)", equip):
     assert f"functions/{fn}.mcfunction" in names, fn
-assert len(re.findall(r"run function kits/", equip)) == 3
+assert len(re.findall(r"run function kits/", equip)) == 6
 assert "MOB_GEAR" in cm["main.js"] and "EquipmentSlot.Head" in cm["main.js"]
 
 assert any(v["name"] == "unit-kit" and v["configMap"]["name"] == "crew-lab-unit-kit" for v in sts["volumes"])
