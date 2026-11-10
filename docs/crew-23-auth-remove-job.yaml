@@ -1,0 +1,65 @@
+# One-off: deletes the sign-in file crew-23 holds on crew-shared, the rollback
+# of crew-23-auth-import-job.yaml. It touches only that file and never reads it.
+# Applied by hand (not synced by Argo CD). Stop crew-23 first, or it rewrites the
+# file on its next refresh.
+#
+# To clear afk-bot-2's own login instead, after it has been retired and it
+# prints "auth" errors on every reconnect (crew-fwb-seed-unit.md, "If afk-bot-2
+# loses its login"), change the two lines marked CHANGE to:
+#   claimName: jdwillmsen-minecraft-fwb-prd-afk-bot-2
+#   dir=/dst/auth
+# Stop afk-bot-2 first for the same reason (replicas 0 in minecraft-fwb values,
+# or kubectl scale if Argo CD's self-heal is paused), then start it again and
+# read the device code from its log in your own terminal.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: crew-23-auth-remove
+  namespace: jdwillmsen-prd
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: crew-23-auth-remove
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: remove
+          image: alpine/k8s:1.37.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - sh
+            - -ceu
+            - |
+              dir=/dst/crew-23/auth   # CHANGE
+              name=token-fwb-afk-bot-2-db037fe8.json
+              [ -f "$dir/$name" ] || { echo "no $name in $dir: nothing to remove"; exit 0; }
+              rm -- "$dir/$name"
+              echo "removed $name from $dir"
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 5m
+            limits:
+              memory: 64Mi
+              cpu: 50m
+          volumeMounts:
+            - name: dst
+              mountPath: /dst
+      volumes:
+        - name: dst
+          persistentVolumeClaim:
+            claimName: crew-shared   # CHANGE

@@ -143,7 +143,9 @@ unit, not from `crew.nethernet` or `crew.offline`, so it is unaffected by
 pack's equip and restock functions, the lab rebuild and unit-kit gate player
 lists, the join stagger and the kit chest. The lab server's rendered output does
 not change, so adding or removing such a unit never restarts it. Its standing
-work is `workPlan`, a list of task bodies rendered as `WORK_PLAN`.
+work is `workPlan`, a list of task bodies rendered as `WORK_PLAN`. `crew-23` is
+the one today, held at `replicas: 0` until the owner's test; see
+`docs/crew-fwb-seed-unit.md`.
 
 ### Warrior training switch
 

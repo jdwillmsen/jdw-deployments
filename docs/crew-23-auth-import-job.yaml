@@ -1,0 +1,80 @@
+# One-off: COPIES afk-bot-2's cached Xbox sign-in onto crew-shared as crew-23's.
+# Applied by hand (not synced by Argo CD). afk-bot-2 keeps running and its file
+# is mounted read-only, so nothing of it is moved or changed. Prints file names
+# and sizes, never contents. See crew-fwb-seed-unit.md before running it: after
+# the copy the two files are separate logins that can retire each other.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: crew-23-auth-import
+  namespace: jdwillmsen-prd
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: crew-23-auth-import
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: copy
+          image: alpine/k8s:1.37.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - sh
+            - -ceu
+            - |
+              # afk-bot-2 and crew-23 both derive this name from
+              # MC_USERNAME=fwb-afk-bot-2: token-<slug>-<first 4 bytes of the
+              # name's sha256, hex>.json.
+              name=token-fwb-afk-bot-2-db037fe8.json
+              src=/src/auth/$name
+              dir=/dst/crew-23/auth
+              dst=$dir/$name
+
+              [ -f "$src" ] || { echo "no $name in afk-bot-2's cache: nothing to copy"; exit 1; }
+              # The same shape crew's loader insists on, checked without
+              # printing a byte of it.
+              grep -q '"refresh_token":"[^"]' "$src" || { echo "source has no refresh token"; exit 1; }
+              grep -q '"expiry":"' "$src" || { echo "source has no expiry"; exit 1; }
+              ! grep -q '"expiry":"0001-' "$src" || { echo "source expiry is unset"; exit 1; }
+              [ ! -e "$dst" ] || { echo "$dst already exists: refusing to overwrite a login crew-23 may have rotated"; exit 1; }
+
+              mkdir -p -m 700 "$dir"
+              cp "$src" "$dst.tmp"
+              chmod 600 "$dst.tmp"
+              mv "$dst.tmp" "$dst"
+              echo "copied $name ($(wc -c < "$dst") bytes) to crew-shared:crew-23/auth"
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 5m
+            limits:
+              memory: 64Mi
+              cpu: 50m
+          volumeMounts:
+            - name: src
+              mountPath: /src
+              readOnly: true
+            - name: dst
+              mountPath: /dst
+      volumes:
+        - name: src
+          persistentVolumeClaim:
+            claimName: jdwillmsen-minecraft-fwb-prd-afk-bot-2
+            readOnly: true
+        - name: dst
+          persistentVolumeClaim:
+            claimName: crew-shared

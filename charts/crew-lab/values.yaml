@@ -457,6 +457,48 @@ crew:
       name: Vein
       role: builder
       sharedVolume: true
+    # The Xbox account FWB's afk-bot-2 plays on (Dotablaze7321) as a worker on
+    # the fwb-seed server, chopping oak for the player Dotablaze. afk-bot-2
+    # stays on FWB; this is a second session for the same account, and the two
+    # programs each refresh their own copy of one sign-in token. Whether that
+    # holds is unverified and may cost afk-bot-2 its login, so this unit does
+    # not start by itself: replicas 0 until the test in
+    # docs/crew-fwb-seed-unit.md. `name` is only the key of the token file
+    # (MC_USERNAME); the gamertag in game is the account's.
+    #
+    # fwb-seed has no unit-kit pack, so the unit needs its axe by hand, and
+    # crew has no give-to-player task: the wood goes to `deliveryChest`, a
+    # chest that does not exist yet, and the owner hands it over. Place one,
+    # read its real coordinates, and set them here with the goto and the
+    # grove. A task cannot walk outside x, z -500..499, and a goto only paths
+    # over chunks already sent (the unit joins at the world spawn, 0 0, 300
+    # blocks from the base), so the unit is moved there once by hand. The
+    # village is X96-199, Z189-298; the base is near X168, Z248. `y` is quoted
+    # because YAML reads a bare y as true.
+    - id: crew-23
+      name: fwb-afk-bot-2
+      replicas: 0
+      sharedVolume: true
+      server:
+        host: "http://192.168.1.163"
+        port: 31301
+      deliveryChest: &fwbSeedDeliveryChest
+        x: 168
+        "y": 64
+        z: 250
+      workPlan:
+        - template: goto
+          to:
+            x: 166
+            "y": 64
+            z: 248
+        - template: gather_and_deposit
+          item: oak_log
+          qty: 16
+          area:
+            min: {x: 120, "y": 55, z: 215}
+            max: {x: 183, "y": 118, z: 278}
+          chest: *fwbSeedDeliveryChest
 
   # Where a mender stands after it joins: the open floor at the centre of the
   # Colosseum (centre -300 64 -758, floor at y 63), two blocks up so it lands

@@ -37,9 +37,15 @@ lab_units = {"crew-21": "mender", "crew-22": "builder"}
 own_claim = {"crew-01", "crew-02", "crew-03"}
 roles = {"miner", "chopper", "hauler", "shaft"}
 
-deps = {d["metadata"]["name"]: d for d in crew("Deployment")}
-assert sorted(deps) == sorted(want), f"deployments: {sorted(deps)}"
-assert sorted(d["metadata"]["name"] for d in crew("Service")) == sorted(want)
+# Units on another server (templates/_helpers.tpl, crew.onLab): a person's
+# account on fwb-seed, held at 0 replicas until the owner tests it. They get a
+# Deployment and a Service like any unit but none of the lab's wiring.
+other = {"crew-23": "fwb-afk-bot-2"}
+
+all_deps = {d["metadata"]["name"]: d for d in crew("Deployment")}
+assert sorted(all_deps) == sorted(want | other), f"deployments: {sorted(all_deps)}"
+assert sorted(d["metadata"]["name"] for d in crew("Service")) == sorted(want | other)
+deps = {k: v for k, v in all_deps.items() if k in want}
 # The namespace caps claims at 20, so units past the third share one.
 assert sorted(d["metadata"]["name"] for d in crew("PersistentVolumeClaim")) == sorted(own_claim | {"crew-shared"})
 
@@ -118,6 +124,31 @@ mem = sum(int(d["spec"]["template"]["spec"]["containers"][0]["resources"]["limit
 assert mem <= 22 * 384, f"crew limits.memory totals {mem}Mi, want <= 8448Mi"
 assert len(chests) >= len(want) - len(squads) - len(lab_units)
 
+def senv(dep):
+    c = dep["spec"]["template"]["spec"]["containers"][0]
+    return {e["name"]: e.get("value") for e in c["env"]}
+
+for uid, name in other.items():
+    dep = all_deps[uid]
+    e = senv(dep)
+    assert dep["spec"]["replicas"] == 0, "a unit on another server must not start by itself"
+    assert e["MC_USERNAME"] == name and e["CREW_ID"] == uid
+    assert e["MC_HOST"] == "http://192.168.1.163" and e["MC_PORT"] == "31301" and e["MC_OFFLINE"] == "false", e
+    assert e["AUTH_CACHE_DIR"] == f"/data/{uid}/auth"
+    # Lab coordinates and lab wiring: none of it belongs on another world.
+    for lab_only in ("KIT_CHEST", "KIT_FOOD", "JOIN_DELAY_S", "CREW_LAB", "CREW_ROLE", "CREW_SQUAD", "CREW_UNIT_ROLE"):
+        assert lab_only not in e, (uid, lab_only)
+    plan = json.loads(e["WORK_PLAN"])
+    assert [t["template"] for t in plan] == ["goto", "gather_and_deposit"], plan
+    assert plan[1]["item"] == "oak_log" and plan[1]["chest"] == {"x": 168, "y": 64, "z": 250}, plan
+    assert all(isinstance(plan[0]["to"][k], int) for k in "xyz"), "y must reach the plan as a number key"
+    # The lab's unit-kit pack, rebuild job and gate, and crew-control's roster,
+    # must not name it: the first three would restart the lab or skip a real
+    # player, and the last lists a camera that is not running.
+    for d in docs:
+        if d["metadata"]["name"] != uid:
+            assert name not in json.dumps(d), (name, d["kind"], d["metadata"]["name"])
+
 # A unit whose first lookups stall must get minutes to answer /healthz once
 # before liveness may restart it.
 for uid, dep in deps.items():
@@ -163,7 +194,7 @@ import sys, yaml
 reps = {d["metadata"]["name"]: d["spec"]["replicas"]
         for d in yaml.safe_load_all(open(sys.argv[1]))
         if d and d.get("kind") == "Deployment" and d["metadata"]["labels"].get("app.kubernetes.io/component") == "crew"}
-assert reps == {k: (0 if k == "crew-02" else 1) for k in {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein"}}, reps
+assert reps == {**{"crew-23": 0}, **{k: (0 if k == "crew-02" else 1) for k in {"crew-01": "Agate", "crew-02": "Basalt", "crew-03": "Cobble", "crew-04": "Dusty", "crew-05": "Ember", "crew-06": "Flint", "crew-07": "Gravel", "crew-08": "Hazel", "crew-09": "Ingot", "crew-10": "Jasper", "crew-11": "Kettle", "crew-12": "Loam", "crew-13": "Marble", "crew-14": "Nugget", "crew-15": "Onyx", "crew-16": "Pebble", "crew-17": "Quartz", "crew-18": "Rusty", "crew-19": "Slate", "crew-20": "Tinder", "crew-21": "Umber", "crew-22": "Vein"}}}, reps
 PY
 
 echo "PASS: crew units render as expected"
