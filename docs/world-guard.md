@@ -47,7 +47,7 @@ Every outcome is one log line, `world-guard: {json}`, with an `event`:
 |---|---|
 | `clean`, `absent` | nothing wrong, or no world yet; server starts |
 | `inconclusive` | could not decide; server starts |
-| `would_hold` | damaged, `warn` mode: **the server starts**; this is what `enforce` would have held |
+| `would_hold` | damaged, `warn` mode: **the server starts**; this is what `enforce` would have held. Printed again every 2 s for 30 s (`repeat: true`) before the server may start (`WARN_LINGER_SECONDS`, capped at 120; startup is that much slower only when damage is found): the log shipper only reads lines written after it finds a container's log, so a single line from a container that exits at once is never shipped |
 | `held` | damaged, `enforce` mode: pod stays `Init:0/N`, re-checked every 30 s |
 | `released` | was held, the world now checks clean (an undecided or missing-world recheck keeps the hold) |
 | `accepted` | an operator let the server open a damaged world |

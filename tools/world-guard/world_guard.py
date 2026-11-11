@@ -24,6 +24,7 @@ Environment (guard mode):
   GUARD_MODE          "enforce" holds the server; anything else only reports (default warn)
   RECHECK_SECONDS     seconds between checks while held, default 30
   CHECK_TIMEOUT       seconds before a check is abandoned as inconclusive, default 120
+  WARN_LINGER_SECONDS seconds a warn-mode finding is repeated before the server starts, default 30
 """
 import json
 import os
@@ -37,6 +38,7 @@ BLOCK = 32768
 HEADER = 7
 TABLE_SUFFIXES = (".ldb", ".sst")
 MAX_LISTED = 5
+LINGER_STEP = 2
 MAX_MANIFEST_BYTES = 48 * 1024 * 1024
 
 
@@ -442,6 +444,8 @@ def guard(env, sleep=time.sleep, now=time.time):
     mode = "enforce" if env.get("GUARD_MODE") == "enforce" else "warn"
     recheck = _int(env, "RECHECK_SECONDS", 30)
     limit = _int(env, "CHECK_TIMEOUT", 120)
+    # capped: warn mode must never hold the server, whatever the setting says
+    linger = min(_int(env, "WARN_LINGER_SECONDS", 30), 120)
     if not level:
         emit("inconclusive", mode=mode, reason="LEVEL_NAME is not set")
         return 0
@@ -488,6 +492,13 @@ def guard(env, sleep=time.sleep, now=time.time):
             return 0
         if mode != "enforce":
             emit("would_hold", mode=mode, **_summary(report))
+            # The pod log is shipped by a tailer that starts at the END of a file it has just
+            # discovered (a scan every ~10 s), so a line printed in the first instant of a
+            # container that then exits is never shipped, and the page built on it would
+            # never fire. Say it again for a while; this only happens when damage is found.
+            for _ in range(linger // LINGER_STEP):
+                sleep(LINGER_STEP)
+                emit("would_hold", mode=mode, repeat=True, **_summary(report))
             return 0
         if held_since is None:
             held_since = now()
