@@ -149,8 +149,8 @@ rendered. Unpin once the public client catches up.
 
 **NetherNet probes.** The subchart's probes run `mc-monitor status-bedrock` in
 `auto` mode, which tries NetherNet first, so readiness passes and the pod is
-Ready. As in the lab, startup is off and liveness is delayed a year, and the
-NetherNet Service keeps `publishNotReadyAddresses`. The `mc-monitor` exporter
+Ready. The startup probe is on (about 10 minutes to come up); liveness is
+delayed a year, and the NetherNet Service keeps `publishNotReadyAddresses`. The `mc-monitor` exporter
 is RakNet-only and is not deployed here. See the minecraft-fwb README,
 "NetherNet transition".
 

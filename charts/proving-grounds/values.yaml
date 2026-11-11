@@ -89,7 +89,8 @@ minecraft-bedrock:
     nodePort: 31200
 
     # The subchart's probes are an unconnected ping, which Bedrock answers only
-    # with LAN visibility on. They still cannot pass on NetherNet (see below).
+    # with LAN visibility on. The `auto` mode tries NetherNet first, so they
+    # pass on NetherNet too (see the probe note below).
     enableLanVisibility: true
 
   extraEnv:
@@ -218,8 +219,9 @@ minecraft-bedrock:
 
   # The subchart's probes run `mc-monitor status-bedrock` in `auto` mode, which
   # tries NetherNet first, so they pass on a NetherNet server and the pod is
-  # Ready. The startup probe is on: it holds the pod back until the server
-  # answers (10 minutes at most), and it hands over to the readiness probe.
+  # Ready. The startup probe is on so a server that never comes up is
+  # restarted rather than left NotReady; the numbers equal the subchart
+  # defaults and pin them (about 10.5 minutes before the kubelet gives up).
   # Liveness stays a year out because the subchart hardcodes a 1s timeout with
   # 3 failures, so enabling it is a rollout to soak, not a given. See
   # charts/minecraft-fwb/README.md, "NetherNet transition".

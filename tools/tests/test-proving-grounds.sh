@@ -64,9 +64,12 @@ vct = sts["spec"]["volumeClaimTemplates"][0]
 assert vct["spec"]["storageClassName"] == "truenas-iscsi", vct["spec"]["storageClassName"]
 assert vct["spec"]["resources"]["requests"]["storage"] == "5Gi", vct["spec"]["resources"]
 
-# Startup probe off and liveness a year out, as shipped. Readiness stays: the
-# subchart's `auto` mode probe passes on NetherNet.
-assert "startupProbe" not in server, "a startup probe would kill a healthy NetherNet server"
+# Startup probe on (10 min budget) and liveness a year out, as shipped. The
+# subchart's `auto` mode probe passes on NetherNet, so the startup probe does
+# not kill a healthy server.
+sp = server["startupProbe"]
+assert (sp["initialDelaySeconds"], sp["periodSeconds"], sp["failureThreshold"]) == (30, 10, 60), sp
+assert "31200" in sp["exec"]["command"], sp
 assert server["livenessProbe"]["initialDelaySeconds"] == 31536000, server["livenessProbe"]
 assert "readinessProbe" in server
 
