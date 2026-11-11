@@ -155,6 +155,99 @@ past it. Both are true statements about the world while they last.
   rule reads the same two log lines through the bridge's gauge, so one
   corruption event raises both.
 
+## World guard held
+
+**Symptom.** One of these, both critical:
+
+| Alert | Reads | Means |
+|---|---|---|
+| `JdwillmsenMinecraftWorldGuardHeld` | the cluster's state metrics: the `world-guard` init container has been running for 3 minutes | `GUARD_MODE: enforce`. The pod is `Init:0/2`, the server has **not** opened its database, nobody can join |
+| `JdwillmsenMinecraftWorldGuardWouldHold` | the guard's log line through Loki | `GUARD_MODE: warn`. Same finding, but the server **was started**; its own repair will drop the damaged tables |
+
+What the guard is, what it checks and how it fails open are in
+[docs/world-guard.md](../../docs/world-guard.md). Short version: after a host loses
+power, tables the database's MANIFEST names can be missing, empty or short, and the
+server drops them in a repair minutes after it opens the database. The guard looks
+first.
+
+### Look
+
+```bash
+N=jdwillmsen-prd; POD=jdwillmsen-minecraft-fwb-prd-minecraft-bedrock-0
+kubectl -n $N get pod $POD                       # Init:0/2 while held
+kubectl -n $N logs $POD -c world-guard | tail -3 # world-guard: {"event": "held", ...}
+kubectl -n $N exec $POD -c world-guard -- cat /data/.world-guard/report.json     # while held
+# warn mode (or after it has exited): the guard is gone, the file is on the volume
+kubectl -n $N exec $POD -c jdwillmsen-minecraft-fwb-prd-minecraft-bedrock -- cat /data/.world-guard/report.json
+kubectl -n $N logs $POD -c world-guard                                           # the init container's log stays readable
+```
+
+The report names the bad tables, how many bytes of records they held, and the first
+and last modification time of the lost files (the crash happened inside that window).
+The 2026-11-06 crash would have read: 30 tables, `zero-byte`, 61,647,259 bytes,
+modified 20:36:14 to 20:36:36.
+
+### Held (enforce)
+
+Do not delete the pod; the guard runs again and holds again. Suspend the backup so it
+cannot rotate the last good archive away (the first step of [World chunk
+loss](#world-chunk-loss)), then pick one:
+
+1. **Restore a good world** (the default). The map's retained generation is minutes old:
+   choose it as in [Restoring from a retained generation](#restoring-from-a-retained-generation),
+   step 2, then
+
+   ```bash
+   tools/world-restore --release jdwillmsen-minecraft-fwb-prd --level FWB \
+     --source generation:a --taken-at <takenAt exactly as the map printed it>   # prints the plan
+   tools/world-restore --release jdwillmsen-minecraft-fwb-prd --level FWB \
+     --source generation:a --taken-at <takenAt as above> --yes
+   ```
+
+   It does steps 3 to 5 of that section and the runbook's steps 2 to 4 in one go and stops
+   at the first thing that looks wrong; the damaged world stays on the scratch claim as
+   `FWB-damaged-<UTC>`. Afterwards do that section's step 6: the map's ledger still
+   remembers the chunks the damaged world was missing, and clearing it takes the
+   internal token, which the tool deliberately does not touch.
+2. **Accept the loss.** Let the server open the damaged world and repair it, dropping
+   the tables the guard named:
+
+   ```bash
+   kubectl -n $N exec $POD -c world-guard -- touch /data/.world-guard-accept
+   ```
+
+   Any agent may do this on a page; log it on JDW-341 with the report. The guard uses the
+   file once and deletes it.
+
+### Would hold (warn)
+
+This page is best effort. The guard prints the finding every 2 s for 30 s before the
+server may start, and the log shipper only reads lines written after it finds a container's
+log. After a host power loss the shipper on that node may itself start more than 30 s after
+the guard, and the line is then never shipped. Do not read a quiet `WouldHold` as a clean
+world on a day the node rebooted: look at the guard's own log (`kubectl logs $POD -c
+world-guard`) and `report.json`. The server's own corruption alerts and the chunk census
+still fire as before. The enforce page does not have this gap (it reads state metrics).
+
+The server is already running on the damaged database. Treat it as [World chunk
+loss](#world-chunk-loss) from the top, using the guard's report for the size of it:
+suspend the backup, do not restart the server (its repair is the loss), restore from a
+generation.
+
+### Rolling the guard back, and turning it on
+
+- Blocking wrongly: accept it (above), then set `GUARD_MODE: warn` in
+  `values-map-pack.yaml` (one line, announced like any change to this pod). Setting
+  `enforce` again after that needs the owner's sign-off.
+- Removing the init container (and the `world-sync` sidecar, if it has been turned on with
+  `global.worldSync.enabled` in `values-prd.yaml`; it ships off) is chart-only and touches no data. The guard writes only
+  `/data/.world-guard/report.json` and consumes `/data/.world-guard-accept`; it never
+  writes under `worlds/`.
+- The script in `values-map-pack.yaml` is generated: edit
+  `tools/world-guard/world_guard.py`, run `tools/world-guard/embed.py --write`.
+- It ships `warn`. A week of understood reports, then a separate small change sets
+  `enforce`.
+
 ## Restoring from a retained generation
 
 The map holds the last two world snapshots it proved whole, on its own PVC
@@ -986,6 +1079,9 @@ tools/tests/test-tick-rate-alerts.sh
 tools/tests/test-deploy-announce.sh          # the deploy-announce hook's decisions and digests
 tools/tests/test-map.sh                      # the map's exposure, the pack's init step, the map and live alerts, the browser checks
 tools/tests/test-map-admin.sh                # the map's admin alerts and their Loki copy
+tools/tests/test-world-guard.sh              # the checker's unit tests; the guard and sidecar in both Bedrock charts
+tools/tests/test-world-guard-alerts.sh       # promtool for the Held page; the would_hold line against its Loki rule
+tools/tests/test-world-restore.sh            # what the restore tool's pods may touch
 ```
 
 Every `tools/tests/test-*.sh` is discovered and run by CI. The alert suites skip
