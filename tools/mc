@@ -80,6 +80,7 @@ cmd_status() {
   echo "  $SELF say <message>              broadcast a plain message"
   echo "  $SELF announce <message>         broadcast it highlighted"
   echo "  $SELF players                    who is online"
+  echo "  $SELF where [player]             position, facing and bearings between players"
   echo "  $SELF run <command> [args...]    any console command"
 }
 
@@ -105,6 +106,43 @@ cmd_players() {
   echo "players: ${count:-unknown}"
   echo "online:"
   echo "$names" | tr ',' '\n' | sed 's/^ *//;s/^/  - /'
+}
+
+cmd_where() {
+  local pod; pod="$(server_pod)" || exit 1
+  local who="${1:-}"
+  # The map's live layer already publishes every player's position and yaw
+  # several times a second, so this reads that instead of asking the console,
+  # whose replies to querytarget and list are not echoed to the log.
+  kubectl logs -n "$NAMESPACE" "$pod" --since=10s 2>/dev/null | tr -d '\000' \
+    | grep -a 'MCMAP1 {.*"dim":"overworld","kind":"players"' | tail -1 \
+    | WHO="$who" python3 -c '
+import json, math, os, re, sys
+line = sys.stdin.read()
+m = re.search(r"MCMAP1 (\{.*\})", line)
+if not m:
+    print("players: unknown"); print("reason: no live-layer players frame in the last 10s"); sys.exit(1)
+items = json.loads(m.group(1))["items"]
+who = os.environ.get("WHO", "")
+rows = [i for i in items if not who or i["n"].lower() == who.lower()]
+if not rows:
+    print("players: none matched"); sys.exit(1)
+def facing(r):
+    # yaw 0 is south, 90 west, 180 north, 270 east
+    return ["south", "west", "north", "east"][int(((r % 360) + 45) // 90) % 4]
+def bearing(a, b):
+    return math.degrees(math.atan2(-(b["x"] - a["x"]), b["z"] - a["z"])) % 360
+print("players: %d" % len(rows))
+for i in rows:
+    print("  - %s  x=%.1f y=%.1f z=%.1f  yaw=%d (%s)" % (i["n"], i["x"], i["y"], i["z"], i["r"] % 360, facing(i["r"])))
+if len(rows) > 1:
+    print("bearings (yaw that points a at b):")
+    for a in rows:
+        for b in rows:
+            if a is not b:
+                d = math.hypot(b["x"] - a["x"], b["z"] - a["z"])
+                print("  %s -> %s  yaw=%d  distance=%.1f" % (a["n"], b["n"], bearing(a, b), d))
+'
 }
 
 cmd_say() {
@@ -1107,6 +1145,7 @@ $SELF — console access to the Minecraft Bedrock server
   $SELF say <message>              broadcast a plain message
   $SELF announce <message>         broadcast it highlighted
   $SELF players                    who is online
+  $SELF where [player]             position, facing and bearings between players
   $SELF run <command> [args...]    any console command
   $SELF presence [ls|park|unpark]  park or restore the bots and the agent
   $SELF cull --types <a,b> ...     remove mob types world-wide
@@ -1122,6 +1161,7 @@ case "${1:-}" in
   say)        shift; cmd_say "$@" ;;
   announce)   shift; cmd_announce "$@" ;;
   players)    shift; cmd_players ;;
+  where)      shift; cmd_where "$@" ;;
   run)        shift; cmd_run "$@" ;;
   presence)   shift; cmd_presence "$@" ;;
   cull)       shift; cmd_cull "$@" ;;
