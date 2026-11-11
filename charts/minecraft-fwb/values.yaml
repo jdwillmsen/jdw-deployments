@@ -286,14 +286,20 @@ minecraft-bedrock:
   # pod is Ready. Readiness is therefore a real health signal here, and the
   # jobs that wait on Ready (backup, census, scheduled restart) rely on it.
   #
-  # Startup stays off and liveness a year out on purpose, not because they
-  # would fail. The subchart hardcodes the probe timeout at 1s with 3
-  # failures, so one stalled tick (a backup's `save hold`, a GC pause, a node
-  # hang like 2026-11-06) would let the kubelet SIGKILL a LevelDB world with a
-  # corruption history, and the restarted container can come up with no
+  # Liveness stays a year out on purpose (owner decision, 2026-11-11), not
+  # because it would fail. The subchart hardcodes the probe timeout at 1s with
+  # 3 failures, so one stalled tick (a backup's `save hold`, a GC pause, a
+  # node hang like 2026-11-06) would let the kubelet SIGKILL a LevelDB world
+  # with a corruption history, and the restarted container can come up with no
   # listener. The listener watchdog restarts gracefully instead. Turning
   # liveness on with tunable timings needs the workload template vendored out
   # of the subchart, which Renovate can then no longer bump.
+  #
+  # The startup probe only acts while the server has not come up yet, so a
+  # stalled tick later cannot trip it. It gives up after about 15.5 minutes,
+  # longer than the watchdog's latest action on a boot with no listener (6
+  # minutes of age plus its 5 minute schedule): the graceful stop must win
+  # over the kubelet's kill. A boot normally takes about 30 seconds.
   #
   # What is NOT transport-aware is the mc-monitor sidecar below:
   # `export-for-prometheus` pings over RakNet only, so under NetherNet its
@@ -301,7 +307,10 @@ minecraft-bedrock:
   # pod readiness, the signaling TCP probe and mc_joinprobe_joinable instead.
   # See charts/minecraft-fwb/README.md, "NetherNet transition".
   startupProbe:
-    enabled: false
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 90
   livenessProbe:
     initialDelaySeconds: "31536000"
 
