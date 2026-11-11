@@ -1,0 +1,68 @@
+{{- if .Values.worldGuard.alerts.enabled }}
+# Pages for the world guard (init container `world-guard`, values-map-pack.yaml;
+# docs/world-guard.md). Two views of one finding -- tables the MANIFEST names
+# that the disk does not have -- because the two modes show it differently:
+#
+#  * enforce: the guard holds the pod in Init. The container is *running* for as
+#    long as it holds, which the cluster's own state metrics report, so the page
+#    needs nothing from the (not yet started) server or its sidecars.
+#  * warn: the guard logs `would_hold` and exits 0, so it is never running for
+#    minutes. The log line is the only evidence, so that arm reads Loki.
+#
+# tools/tests/test-world-guard-alerts.sh unit-tests the first against promtool.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-world-guard
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: minecraft-fwb-world-guard
+      rules:
+        - alert: JdwillmsenMinecraftWorldGuardHeld
+          # Pinned to the server pod and the init container's name so that a
+          # one-off pod (the restore tool's) cannot raise it. `for` is the
+          # patience: a clean check ends in under a second, so a guard that is
+          # still running three minutes after the pod started is holding.
+          expr: |
+            max(kube_pod_init_container_status_running{namespace="{{ .Release.Namespace }}", pod="{{ include "backup.serverStatefulSet" . }}-0", container="world-guard"}) == 1
+          for: {{ .Values.worldGuard.alerts.heldFor }}
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: "Minecraft FWB is held before its world opens"
+            description: "The world guard found tables the database's MANIFEST names that are missing, empty or the wrong size, and is holding the server in Init so it cannot repair them away. Nobody can join until this is resolved. The guard's log line and /data/.world-guard/report.json name the files and the bytes. Restore a good world with tools/world-restore (preferred), or let the server repair and accept the loss with `touch /data/.world-guard-accept` in the world-guard container, and log which on JDW-341. Do not delete the pod. charts/minecraft-fwb/README.md, \"World guard held\"."
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-guard-held"
+{{- end }}
+{{- if and .Values.worldGuard.alerts.enabled .Values.worldIntegrity.enabled .Values.worldIntegrity.loki.enabled }}
+---
+# The warn-mode arm: the guard found damage and let the server start. Selected
+# by container, not pod (this cluster's log pipeline ships no `pod` label), and
+# anchored on the guard's own prefix and event name so that a player typing the
+# words cannot raise it, and on this world's path because proving-grounds, in the
+# same namespace, has a container of the same name.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-world-guard-loki-rules
+  namespace: {{ .Release.Namespace }}
+  labels:
+    loki_rule: "true"
+data:
+  minecraft-fwb-world-guard.yaml: |
+    groups:
+      - name: minecraft-fwb-world-guard
+        interval: 1m
+        rules:
+          - alert: JdwillmsenMinecraftWorldGuardWouldHold
+            expr: |
+              sum(count_over_time({namespace="{{ .Release.Namespace }}", container="world-guard"} |= `worlds/FWB/db` |~ `^world-guard: \{.*"event": "would_hold"` [{{ .Values.worldGuard.alerts.loggedWindow }}])) > 0
+            labels:
+              severity: critical
+              namespace: {{ .Release.Namespace }}
+            annotations:
+              summary: "Minecraft FWB world guard found damage and let the server start"
+              description: "The world guard is in warn mode: it found tables the database's MANIFEST names that are missing, empty or the wrong size, and the server was started anyway, so it will drop them in its repair. This is the loss the guard exists to stop; in enforce mode the pod would be held. Stop the backup before it rotates the last good archive away, do not restart the server, and restore: tools/world-restore, or charts/minecraft-fwb/README.md, \"World guard held\" and \"World chunk loss\"."
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-guard-held"
+{{- end }}
