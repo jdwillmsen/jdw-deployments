@@ -5,7 +5,7 @@ Three parts, each switchable per release:
 | Part | What | Switch |
 |---|---|---|
 | **World guard** (init container `world-guard`) | Checks the world's LevelDB before the server opens it; reports, or holds the pod | Presence of the container in `minecraft-bedrock.initContainers`; `GUARD_MODE: warn` or `enforce` |
-| **World sync** (sidecar `world-sync`) | `sync -f /data` every 2 s, so a power loss costs seconds of writes, not 30 | `global.worldSync.enabled`, `global.worldSync.intervalSeconds` |
+| **World sync** (sidecar `world-sync`) | `sync -f /data` every 2 s, so a power loss finds less dirty data, seconds' worth rather than 30 s (best effort; the guard and the backups stay the recovery) | `global.worldSync.enabled`, `global.worldSync.intervalSeconds` |
 | **Assisted restore** (`tools/world-restore`) | One command: copy a known-good world over a damaged one, with checks | You run it |
 
 Source of truth for the guard is `tools/world-guard/world_guard.py`. Each chart carries
@@ -37,8 +37,8 @@ Before the server opens the db, read-only, in about 0.1 s for a 450-table world:
 Only a positive finding holds the pod. These are reported but never hold it, because
 LevelDB itself tolerates them: a MANIFEST cut off or zero-padded at its end, tables nothing
 references (it deletes them at open), a `lost/` directory from an earlier repair. A missing
-world (first boot), an unreadable directory, a MANIFEST the parser cannot decode, a check
-that exceeds `CHECK_TIMEOUT` (120 s) and any crash of the guard itself are `inconclusive`:
+world (first boot), an unreadable directory, a MANIFEST the parser cannot decode,
+a live table that cannot be stat'ed or read (`unchecked_tables` in the report: it is never called clean, so it cannot release a hold either), a check that exceeds `CHECK_TIMEOUT` (120 s) and any crash of the guard itself are `inconclusive`:
 logged, and the server starts. The guard's own bug must never be what keeps a world down.
 
 Every outcome is one log line, `world-guard: {json}`, with an `event`:
