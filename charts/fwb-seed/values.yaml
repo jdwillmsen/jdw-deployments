@@ -107,7 +107,9 @@ netherNet:
 # templates/listener-watchdog.yaml for the failure it exists for.
 listenerWatchdog:
   enabled: true
-  schedule: "*/5 * * * *"
+  # Offset from the other servers' watchdogs and the :00 CronJobs, whose pods
+  # share a tight namespace quota.
+  schedule: "3-59/5 * * * *"
   # Longer than any restart in this chart, so it never acts on one in progress.
   minAgeSeconds: 360
   image: alpine/k8s:1.37.1
