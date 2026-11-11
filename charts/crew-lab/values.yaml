@@ -490,19 +490,31 @@ crew:
         x: 168
         "y": 68
         z: 248
+      # Its own image: tree search and planting are newer than the tag the rest
+      # of the lab runs.
+      imageTag: "1.86.0"
       workPlan:
-        - template: goto
-          to:
-            x: 228
-            "y": 68
-            z: 240
         - template: gather_and_deposit
           item: oak_log
           qty: 16
-          area:
-            min: {x: 222, "y": 55, z: 215}
-            max: {x: 285, "y": 118, z: 278}
+          search: &fwbSeedTreeSearch
+            min: {x: 80, "y": 55, z: 150}
+            max: {x: 330, "y": 120, z: 420}
           chest: *fwbSeedDeliveryChest
+        - template: gather_and_deposit
+          item: oak_sapling
+          qty: 4
+          search: *fwbSeedTreeSearch
+          chest: *fwbSeedDeliveryChest
+        - template: withdraw
+          items: {oak_sapling: 4}
+          chest: *fwbSeedDeliveryChest
+        - template: plant_trees
+          item: oak_sapling
+          qty: 4
+          area:
+            min: {x: 176, "y": 60, z: 224}
+            max: {x: 207, "y": 72, z: 255}
     - id: crew-24
       name: Xeno
       role: warrior
