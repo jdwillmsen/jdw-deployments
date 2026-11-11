@@ -77,10 +77,6 @@ http://{{ .Values.netherNet.clientHost }}:{{ .Values.netherNet.signalingNodePort
 {{ .Release.Name }}-version-check-candidate
 {{- end -}}
 
-{{- define "mcMonitor.host" -}}
-{{ .Release.Name }}-mc-monitor.{{ .Release.Namespace }}.svc.cluster.local
-{{- end -}}
-
 {{- define "consoleBridge.name" -}}
 {{ .Release.Name }}-console-bridge
 {{- end -}}
