@@ -64,7 +64,7 @@ spec:
       {{- end }}
       containers:
         - name: crew
-          image: "{{ $.Values.crew.image.repository }}:{{ $.Values.crew.image.tag }}"
+          image: "{{ $.Values.crew.image.repository }}:{{ $unit.imageTag | default $.Values.crew.image.tag }}"
           imagePullPolicy: {{ $.Values.crew.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false

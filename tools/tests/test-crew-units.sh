@@ -140,9 +140,23 @@ for uid, name in other.items():
     for lab_only in ("KIT_CHEST", "KIT_FOOD", "JOIN_DELAY_S", "CREW_LAB", "CREW_ROLE", "CREW_SQUAD", "CREW_UNIT_ROLE"):
         assert lab_only not in e, (uid, lab_only)
     plan = json.loads(e["WORK_PLAN"])
-    assert [t["template"] for t in plan] == ["goto", "gather_and_deposit"], plan
-    assert plan[1]["item"] == "oak_log" and plan[1]["chest"] == {"x": 168, "y": 68, "z": 248}, plan
-    assert all(isinstance(plan[0]["to"][k], int) for k in "xyz"), "y must reach the plan as a number key"
+    assert [t["template"] for t in plan] == ["gather_and_deposit", "gather_and_deposit", "withdraw", "plant_trees"], plan
+    chest = {"x": 168, "y": 68, "z": 248}
+    assert plan[0]["item"] == "oak_log" and plan[0]["chest"] == chest, plan
+    assert plan[1]["item"] == "oak_sapling" and plan[1]["chest"] == chest, plan
+    assert plan[2]["chest"] == chest and plan[2]["items"] == {"oak_sapling": 4}, plan
+    assert plan[0]["search"] == plan[1]["search"], "one search box for logs and saplings"
+    lo, hi = plan[0]["search"]["min"], plan[0]["search"]["max"]
+    assert all(isinstance(v, int) for v in (*lo.values(), *hi.values())), "y must reach the plan as a number key"
+    assert all(hi[k] - lo[k] < 400 and -500 <= lo[k] and hi[k] <= 499 for k in "xz"), "search box must fit the template limits"
+    g = plan[3]["area"]
+    assert all(g["max"][k] - g["min"][k] < 64 for k in "xyz"), "grove span"
+    # Newer than the lab tag, so only this unit runs it.
+    img = dep["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert img.endswith(":1.86.0"), img
+    for oid, od in all_deps.items():
+        if oid != uid and "crew" in od["spec"]["template"]["spec"]["containers"][0]["image"]:
+            assert od["spec"]["template"]["spec"]["containers"][0]["image"].endswith(":1.79.0"), oid
     # The lab's unit-kit pack, rebuild job and gate must not name it: they
     # would restart the lab or skip a real player. crew-control's roster lists
     # it once it runs, so that one is expected.
