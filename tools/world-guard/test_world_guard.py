@@ -492,17 +492,37 @@ class GuardLoop(Base):
         write_table(d.db, 1002, 0)
         rc, ev, sleeps = self.run_guard(d, "warn")
         self.assertEqual(rc, 0)
-        self.assertEqual([e["event"] for e in ev], ["would_hold"])
+        self.assertEqual({e["event"] for e in ev}, {"would_hold"})
         self.assertEqual(ev[0]["bad_tables"], 2)
-        self.assertEqual(sleeps, [])
+        self.assertNotIn("repeat", ev[0])
+        # said again every 2 s for 30 s, so the log shipper (which tails from the end of a file it
+        # has just found) sees it
+        self.assertEqual(len(ev), 1 + 15)
+        self.assertTrue(all(e["repeat"] for e in ev[1:]))
+        self.assertEqual(sleeps, [2] * 15)
         with open(self.report_path(d)) as f:
             self.assertEqual(json.load(f)["bad_tables"], 2)
+
+    def test_warn_linger_can_be_shortened_or_turned_off(self):
+        d = self.make()
+        write_table(d.db, 1001, 0)
+        rc, ev, sleeps = self.run_guard(d, "warn", extra_env={"WARN_LINGER_SECONDS": "6"})
+        self.assertEqual((len(ev), sleeps), (4, [2, 2, 2]))
+        rc, ev, sleeps = self.run_guard(d, "warn", extra_env={"WARN_LINGER_SECONDS": "0"})
+        self.assertEqual(([e["event"] for e in ev], sleeps), (["would_hold"], []))
+        rc, ev, sleeps = self.run_guard(d, "warn", extra_env={"WARN_LINGER_SECONDS": "999999"})
+        self.assertEqual(len(sleeps), 60, "capped at 120 s")
+
+    def test_a_clean_world_never_lingers(self):
+        d = self.make()
+        rc, ev, sleeps = self.run_guard(d, "warn")
+        self.assertEqual(([e["event"] for e in ev], sleeps), (["clean"], []))
 
     def test_unset_or_unknown_mode_is_warn(self):
         d = self.make()
         write_table(d.db, 1001, 0)
         for mode in ("", "ENFORCE", "block"):
-            rc, ev, _ = self.run_guard(d, mode)
+            rc, ev, _ = self.run_guard(d, mode, extra_env={"WARN_LINGER_SECONDS": "0"})
             self.assertEqual((rc, ev[0]["event"], ev[0]["mode"]), (0, "would_hold", "warn"))
 
     def test_enforce_holds_and_rechecks_until_the_world_is_repaired(self):
@@ -649,17 +669,16 @@ class GuardLoop(Base):
         touch(os.path.join(d.dir, ".world-guard"))  # a file where the directory goes
         rc, ev, _ = self.run_guard(d, "warn")
         self.assertEqual(rc, 0)
-        self.assertEqual([e["event"] for e in ev], ["report_write_failed", "would_hold"])
+        self.assertEqual([e["event"] for e in ev][:2], ["report_write_failed", "would_hold"])
 
     def test_every_log_line_is_one_json_object_after_the_prefix(self):
         d = self.make()
         write_table(d.db, 1001, 0)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            wg.guard({"DATA_DIR": d.dir, "LEVEL_NAME": "FWB", "GUARD_MODE": "warn"})
+            wg.guard({"DATA_DIR": d.dir, "LEVEL_NAME": "FWB", "GUARD_MODE": "warn"}, sleep=lambda s: None)
         lines = buf.getvalue().splitlines()
-        self.assertEqual(len(lines), 1)
-        self.assertTrue(lines[0].startswith("world-guard: {"))
+        self.assertTrue(lines and all(ln.startswith("world-guard: {") for ln in lines))
 
 
 class Cli(Base):
