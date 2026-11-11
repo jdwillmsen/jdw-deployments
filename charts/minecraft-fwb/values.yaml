@@ -296,10 +296,11 @@ minecraft-bedrock:
   # of the subchart, which Renovate can then no longer bump.
   #
   # The startup probe only acts while the server has not come up yet, so a
-  # stalled tick later cannot trip it. It gives up after about 15.5 minutes,
-  # longer than the watchdog's latest action on a boot with no listener (6
-  # minutes of age plus its 5 minute schedule): the graceful stop must win
-  # over the kubelet's kill. A boot normally takes about 30 seconds.
+  # stalled tick later cannot trip it. It gives up after about 20 minutes,
+  # which outlasts the watchdog's first eligible run on a boot with no
+  # listener (6 minutes of age plus its 5 minute schedule, and one missed run
+  # on top). The kubelet's stop is graceful too, but it is SIGKILLed after
+  # 30 seconds if the save has not finished. A boot normally takes seconds.
   #
   # What is NOT transport-aware is the mc-monitor sidecar below:
   # `export-for-prometheus` pings over RakNet only, so under NetherNet its
@@ -310,7 +311,7 @@ minecraft-bedrock:
     enabled: true
     initialDelaySeconds: 30
     periodSeconds: 10
-    failureThreshold: 90
+    failureThreshold: 120
   livenessProbe:
     initialDelaySeconds: "31536000"
 
