@@ -159,3 +159,19 @@ nodePort is 31201: the apiserver rejects reusing 31200 because the subchart's
 UDP Service already holds it, as in the lab. Gameplay UDP is pinned to
 31210-31229 by `SERVER_UDP_PORTS` and exposed one to one; the public
 ports 19180-19199 map to them in order.
+
+## World guard
+
+This server is where the world guard, the sync sidecar and the assisted restore are
+rehearsed before the main server runs them (JDW-341; [docs/world-guard.md](../../docs/world-guard.md)).
+
+- **`world-guard`** is the first init container, in `enforce`: a world whose database
+  names a table the disk does not have holds the pod in `Init:0/3` and re-checks every
+  30 s. Let the server open it anyway with
+  `kubectl -n jdwillmsen-prd exec jdwillmsen-proving-grounds-prd-minecraft-bedrock-0 -c world-guard -- touch /data/.world-guard-accept`.
+- **`world-sync`** (`global.worldSync.enabled`, on here) runs `sync -f /data` every 2 s from the
+  server image. `tools/world-guard/tps-ab.py` measures what that costs.
+- **`restoreScratch`** is the claim `tools/world-restore` stages on. It is never pruned: it
+  can hold the only complete copy of a damaged world.
+- There is no backup and no map here, so the restore source is a world put on the scratch
+  claim by hand (`--source scratch:DIR`, the world at `/scratch/DIR/proving-grounds`).

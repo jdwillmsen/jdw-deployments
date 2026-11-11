@@ -29,18 +29,20 @@ docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 kinds = sorted((d["kind"], d["metadata"]["name"]) for d in docs)
 want = [
     ("ConfigMap", "jdwillmsen-proving-grounds-prd-lab-mods-stage0"),
+    ("PersistentVolumeClaim", "jdwillmsen-proving-grounds-prd-restore-scratch"),
     ("Service", "jdwillmsen-proving-grounds-prd-minecraft-bedrock"),
     ("Service", "jdwillmsen-proving-grounds-prd-nethernet"),
     ("StatefulSet", "jdwillmsen-proving-grounds-prd-minecraft-bedrock"),
 ]
 # Nothing else: no crew units or control plane, no CronJob (so no version
-# check that would restart a pinned server every hour), no ConfigMap.
+# check that would restart a pinned server every hour). The scratch claim is
+# what tools/world-restore stages a restore on.
 assert kinds == want, f"want exactly {want}, got {kinds}"
 
 sts = next(d for d in docs if d["kind"] == "StatefulSet")
 pod = sts["spec"]["template"]["spec"]
 server = pod["containers"][0]
-assert len(pod["containers"]) == 1, "the server is the only container"
+assert len(pod["containers"]) == 1, "the server is the only container (the world-sync sidecar is off by default)"
 env = {e["name"]: e.get("value") for e in server["env"]}
 
 # Transport, ports and the public address the client is handed.
@@ -83,9 +85,13 @@ assert server["resources"]["limits"]["memory"] == "1Gi", server["resources"]["li
 # open on purpose: a list would refuse every account the owner signs in with
 assert env["ALLOW_LIST"] == "false", env.get("ALLOW_LIST")
 
-# The lab-packs hook installs into the world the server creates.
+# The world guard runs first, ahead of anything that writes into the world;
+# tools/tests/test-world-guard.sh holds the detail. The lab-packs hook then
+# installs into the world the server creates.
 init = pod["initContainers"]
-assert [i["name"] for i in init] == ["install-lab-packs", "install-lab-mods-stage0"], [i["name"] for i in init]
+assert [i["name"] for i in init] == ["world-guard", "install-lab-packs", "install-lab-mods-stage0"], [i["name"] for i in init]
+guard, init = init[0], init[1:]
+assert {e["name"]: e["value"] for e in guard["env"]}["LEVEL_NAME"] == env["LEVEL_NAME"], "the guard checks another world"
 assert init[0]["args"] == ["/data/worlds/" + env["LEVEL_NAME"]], init[0]["args"]
 assert "/data/worlds/" + env["LEVEL_NAME"] in init[1]["command"][-1], "stage0 installer targets another world"
 image = init[0]["image"]
