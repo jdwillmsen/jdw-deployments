@@ -1,0 +1,537 @@
+#!/usr/bin/env python3
+"""Assisted restore of a Bedrock world from a known-good copy. One command, no unattended use.
+
+  tools/world-restore --release R --level L --source SRC            print the plan, change nothing
+  tools/world-restore --release R --level L --source SRC --yes      run it
+
+  SRC is
+    generation:NAME   the map's retained generation NAME (read-only mount of <R>-map);
+                      pass --taken-at TS to refuse a slot that has been overwritten since you chose
+    scratch:DIR       a world already on the scratch claim at /scratch/DIR/<level>
+
+What it does, in order, stopping at the first refusal:
+  1. scale the server to 0 (and the map, for a generation source), recording its image,
+     node and version first
+  2. copy the source world onto the scratch claim and run the world guard's check on it
+  3. boot a COPY of it on the server's own image and require "Server started" with no
+     corruption or repair line
+  4. save the damaged live world aside on scratch, stage the good one next to the live
+     one, compare sha256 manifests, swap by rename
+  5. scale the server back up and require Ready, a clean guard line and "Server started"
+
+The damaged world is never deleted: it stays on the scratch claim as <level>-damaged-<UTC>.
+Read-only against the source. Nothing here reads a credential. The README's "World guard held"
+section says when to run it and what to do afterwards (the map's ledger needs its
+acknowledgement, which takes the internal token and is deliberately not done here).
+
+Exit: 0 restored (or plan printed), 1 refused or failed before the live world was touched,
+2 failed after the swap began (read the message: do not re-run).
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+GUARD_SRC = os.path.join(HERE, "world-guard", "world_guard.py")
+UTILITY_IMAGE = "alpine/k8s:1.37.1"
+DEFAULT_NS = "jdwillmsen-prd"
+
+POD_SECURITY = {
+    "runAsNonRoot": True,
+    "runAsUser": 1000,
+    "runAsGroup": 3000,
+    "fsGroup": 2000,
+    "seccompProfile": {"type": "RuntimeDefault"},
+}
+CONTAINER_SECURITY = {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
+
+
+class Refused(Exception):
+    pass
+
+
+class Failed(Exception):
+    def __init__(self, msg, after_swap=False):
+        super().__init__(msg)
+        self.after_swap = after_swap
+
+
+def say(msg):
+    print(msg, flush=True)
+
+
+class Ctx:
+    def __init__(self, a):
+        self.a = a
+        self.ns = a.namespace
+        self.rel = a.release
+        self.level = a.level
+        self.sts = "%s-minecraft-bedrock" % a.release
+        self.pod = self.sts + "-0"
+        self.world_pvc = "datadir-%s-0" % self.sts
+        self.scratch_pvc = "%s-restore-scratch" % a.release
+        self.map_pvc = "%s-map" % a.release
+        self.map_deploy = "%s-map" % a.release
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", a.level):
+            raise Refused("--level must be a plain world name")
+        kind, _, rest = a.source.partition(":")
+        if kind not in ("generation", "scratch") or not rest:
+            raise Refused("--source must be generation:NAME or scratch:DIR")
+        self.src_kind, self.src_name = kind, rest
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", rest):
+            raise Refused("--source name must be a plain directory name")
+        if kind == "scratch" and (rest == a.level or rest == a.level + "-verify" or rest.startswith(a.level + "-damaged-")):
+            # Those are the directories this tool removes or replaces on scratch; a source
+            # inside one would be deleted by the overwrite it asks for.
+            raise Refused("--source scratch:%s is a directory this tool manages (%s, %s-verify, %s-damaged-*); move the good world to another directory" % (rest, a.level, a.level, a.level))
+        self.stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        self.info = {}
+        self.scaled_down = False
+        self.swapped = False
+
+    def kubectl(self, *args, stdin=None, check=True):
+        cmd = ["kubectl", "-n", self.ns, *args]
+        p = subprocess.run(cmd, input=stdin, capture_output=True, text=True)
+        if check and p.returncode != 0:
+            raise Failed("kubectl %s: %s" % (" ".join(args[:3]), (p.stderr or p.stdout).strip()), after_swap=self.swapped)
+        return p
+
+    def get(self, kind, name, path):
+        p = self.kubectl("get", kind, name, "-o", "jsonpath=" + path, check=False)
+        return p.stdout.strip() if p.returncode == 0 else None
+
+
+# ----- manifests ---------------------------------------------------------------
+
+def pod_manifest(c, name, purpose, containers, volumes, node=None, init=None):
+    spec = {"restartPolicy": "Never", "securityContext": POD_SECURITY, "containers": containers, "volumes": volumes}
+    if init:
+        spec["initContainers"] = init
+    if node:
+        spec["nodeSelector"] = {"kubernetes.io/hostname": node}
+    return {"apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": name, "namespace": c.ns, "labels": {"purpose": purpose, "ticket": "JDW-341"}},
+            "spec": spec}
+
+
+def worker(name="worker", mounts=(), image=UTILITY_IMAGE, cpu="250m", mem="256Mi", env=None):
+    return {"name": name, "image": image, "command": ["sleep", "7200"],
+            "env": [{"name": k, "value": v} for k, v in (env or {}).items()],
+            "resources": {"limits": {"cpu": cpu, "memory": mem}, "requests": {"cpu": "100m", "memory": "64Mi"}},
+            "securityContext": CONTAINER_SECURITY, "volumeMounts": list(mounts)}
+
+
+def pvc_vol(name, claim, read_only=False):
+    return {"name": name, "persistentVolumeClaim": {"claimName": claim, "readOnly": read_only}}
+
+
+def pod_name(c, purpose):
+    # Release-prefixed: the namespace is shared by several servers, and creating a pod
+    # deletes any of the same name.
+    return ("%s-restore-%s" % (c.rel, purpose))[:63]
+
+
+def copy_pod(c):
+    mounts = [{"name": "scratch", "mountPath": "/scratch"}]
+    vols = [pvc_vol("scratch", c.scratch_pvc)]
+    if c.src_kind == "generation":
+        mounts.append({"name": "mapdata", "mountPath": "/mapdata", "readOnly": True})
+        vols.append(pvc_vol("mapdata", c.map_pvc, read_only=True))
+    # A self-healed map comes back within seconds of its scale-down; its volume is
+    # RWO, so the copy has to be on the node that holds it.
+    return pod_manifest(c, pod_name(c, "copy"), "restore-copy", [worker(mounts=mounts)], vols, node=c.info.get("map_node"))
+
+
+def verify_pod(c):
+    res = c.info["resources"]
+    # Only the copy being booted is visible to the server: scratch also holds the
+    # <level>-damaged-* copies, which may be the only complete ones.
+    data_mounts = [{"name": "data", "mountPath": "/data"}, {"name": "tmp", "mountPath": "/tmp"},
+                   {"name": "scratch", "mountPath": "/data/worlds/%s-verify" % c.level, "subPath": "%s-verify" % c.level}]
+    init = [{"name": "copy", "image": UTILITY_IMAGE, "command": ["sh", "-ec"],
+             "args": ["rm -rf /scratch/{l}-verify && cp -a /scratch/{l} /scratch/{l}-verify && sync && "
+                      "echo \"db files: $(ls /scratch/{l}/db | wc -l)\"".format(l=c.level)],
+             "resources": {"limits": {"cpu": "500m", "memory": "256Mi"}, "requests": {"cpu": "100m", "memory": "64Mi"}},
+             "securityContext": CONTAINER_SECURITY, "volumeMounts": [{"name": "scratch", "mountPath": "/scratch"}]}]
+    main = {"name": "verify", "image": c.info["image"],
+            "env": [{"name": "EULA", "value": "TRUE"}, {"name": "VERSION", "value": c.info["version"]},
+                    {"name": "LEVEL_NAME", "value": c.level + "-verify"}, {"name": "ALLOW_LIST", "value": "false"}],
+            "resources": res,
+            "securityContext": dict(CONTAINER_SECURITY, readOnlyRootFilesystem=True), "volumeMounts": data_mounts}
+    vols = [pvc_vol("scratch", c.scratch_pvc), {"name": "data", "emptyDir": {}}, {"name": "tmp", "emptyDir": {}}]
+    return pod_manifest(c, pod_name(c, "verify"), "restore-verify", [main], vols, init=init)
+
+
+def promote_pod(c):
+    """The promote script is the pod's own command, so a dropped kubectl session cannot stop it
+    between the two renames."""
+    mounts = [{"name": "world", "mountPath": "/world"}, {"name": "scratch", "mountPath": "/scratch"}]
+    vols = [pvc_vol("world", c.world_pvc), pvc_vol("scratch", c.scratch_pvc)]
+    ctr = worker(mounts=mounts)
+    ctr["command"] = ["bash", "-c", PROMOTE_SCRIPT, "promote", c.level, c.stamp]
+    return pod_manifest(c, pod_name(c, "promote"), "restore-promote", [ctr], vols, node=c.info["node"])
+
+
+# ----- stage scripts (sh, fed to the worker pod on stdin) ----------------------
+
+COPY_SCRIPT = r'''
+set -eu
+SCRATCH=${SCRATCH:-/scratch}; MAPDATA=${MAPDATA:-/mapdata}
+LEVEL="$1"; KIND="$2"; NAME="$3"; TAKEN="$4"; OVERWRITE="$5"
+if [ "$KIND" = generation ]; then
+  GEN=$MAPDATA/generations/$NAME
+  [ -f "$GEN/generation.json" ] || { echo "FATAL: $GEN is not a complete generation"; exit 1; }
+  if [ -n "$TAKEN" ]; then
+    grep -qF "\"takenAt\":\"$TAKEN\"" "$GEN/generation.json" || { echo "FATAL: slot $NAME no longer holds the snapshot taken at $TAKEN; choose again. Nothing copied."; cat "$MAPDATA"/generations/*/generation.json; exit 1; }
+  fi
+  cat "$GEN/generation.json"; echo
+  BEFORE=$(cat "$GEN/generation.json")
+  SRC=$GEN/$LEVEL
+else
+  SRC=$SCRATCH/$NAME/$LEVEL
+fi
+[ -d "$SRC/db" ] || { echo "FATAL: $SRC/db does not exist"; exit 1; }
+if [ -e "$SCRATCH/$LEVEL" ]; then
+  [ "$OVERWRITE" = true ] || { echo "FATAL: $SCRATCH/$LEVEL already exists; save it aside or pass --overwrite-scratch. Nothing copied."; exit 1; }
+  rm -rf "$SCRATCH/$LEVEL"
+fi
+cp -a "$SRC" "$SCRATCH/$LEVEL"
+sync
+if [ "$KIND" = generation ]; then
+  # The map may come back (its Deployment is self-healed) and rewrite the slot while
+  # this copies; a changed marker means the copy may mix two snapshots.
+  [ "$(cat "$GEN/generation.json")" = "$BEFORE" ] || { rm -rf "$SCRATCH/$LEVEL"; echo "FATAL: generation $NAME changed while it was being copied; copy discarded. Nothing on the live volume was touched."; exit 1; }
+fi
+echo "copied $(find "$SCRATCH/$LEVEL" -type f | wc -l) files, $(du -sb "$SCRATCH/$LEVEL" | cut -f1) bytes from $SRC"
+echo "db files: $(ls "$SCRATCH/$LEVEL/db" | wc -l)"
+'''
+
+PROMOTE_SCRIPT = r'''
+set -euo pipefail
+cd /
+SCRATCH=${SCRATCH:-/scratch}; WORLD=${WORLD:-/world}
+LEVEL="$1"; STAMP="$2"
+ASIDE=$SCRATCH/$LEVEL-damaged-$STAMP
+LIVE=$WORLD/worlds/$LEVEL
+INCOMING=$WORLD/worlds/$LEVEL-incoming
+OUTGOING=$WORLD/worlds/$LEVEL-outgoing
+manifest() { (cd "$1" && find . -type f -print0 | sort -z | xargs -0 -r sha256sum | sha256sum | cut -d' ' -f1); }
+count() { find "$1" -type f | wc -l; }
+echo '== before'; ls -la "$WORLD/worlds"; df -h "$WORLD" "$SCRATCH" | tail -2
+[ ! -e "$OUTGOING" ] || { echo "FATAL: $OUTGOING exists: an earlier promotion stopped mid-swap. Do not re-run; see the runbook."; exit 1; }
+[ -d "$LIVE" ] || { echo "FATAL: $LIVE is missing; nothing to save aside. Do not re-run."; exit 1; }
+rm -rf "$SCRATCH/$LEVEL-verify" "$INCOMING"
+echo '== saving the damaged world aside on scratch'
+[ ! -e "$ASIDE" ] || { echo "FATAL: $ASIDE already exists. Live world untouched."; exit 1; }
+cp -a "$LIVE" "$ASIDE"
+DAMAGED=$(manifest "$LIVE")
+[ "$DAMAGED" = "$(manifest "$ASIDE")" ] || { echo 'FATAL: damaged copy differs from the live world; live world untouched'; exit 1; }
+echo "damaged copy: $ASIDE, $(count "$ASIDE") files, manifest $DAMAGED"
+WANT=$(manifest "$SCRATCH/$LEVEL")
+echo "restored manifest: $WANT, $(count "$SCRATCH/$LEVEL") files"
+echo '== staging the restored world next to the live one'
+cp -a "$SCRATCH/$LEVEL" "$INCOMING"
+sync
+GOT=$(manifest "$INCOMING")
+echo "staged manifest:   $GOT, $(count "$INCOMING") files"
+[ "$WANT" = "$GOT" ] || { echo 'FATAL: staged copy does not match the restored copy; live world untouched'; exit 1; }
+echo '== swapping'
+mv "$LIVE" "$OUTGOING"
+mv "$INCOMING" "$LIVE"
+sync
+GOT=$(manifest "$LIVE")
+echo "live manifest:     $GOT, $(count "$LIVE") files"
+[ "$WANT" = "$GOT" ] || { echo 'FATAL: live world does not match the restored copy (swapping)'; exit 1; }
+[ "$(manifest "$OUTGOING")" = "$DAMAGED" ] || { echo "FATAL: the outgoing world no longer matches the aside copy; keeping $OUTGOING"; exit 1; }
+rm -rf "$OUTGOING"
+sync
+echo PROMOTED
+'''
+
+
+# ----- stages ------------------------------------------------------------------
+
+def wait_phase(c, pod, want, timeout):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        ph = c.get("pod", pod, "{.status.phase}")
+        if ph in want:
+            return ph
+        if ph == "Failed":
+            return ph
+        time.sleep(3)
+    return None
+
+
+def create_pod(c, manifest):
+    name = manifest["metadata"]["name"]
+    c.kubectl("delete", "pod", name, "--ignore-not-found", "--wait=true")
+    c.kubectl("create", "-f", "-", stdin=json.dumps(manifest))
+    return name
+
+
+def ready(c, pod, timeout=180):
+    p = c.kubectl("wait", "--for=condition=Ready", "pod/" + pod, "--timeout=%ds" % timeout, check=False)
+    if p.returncode != 0:
+        raise Failed("pod %s did not become Ready: %s" % (pod, p.stderr.strip()))
+
+
+def exec_sh(c, pod, script, *args, container=None):
+    cmd = ["exec", "-i", pod] + (["-c", container] if container else []) + ["--", "sh", "-s", "--", *args]
+    p = c.kubectl(*cmd, stdin=script, check=False)
+    sys.stdout.write(p.stdout)
+    if p.returncode != 0:
+        sys.stderr.write(p.stderr)
+    return p.returncode
+
+
+def record(c):
+    sts = c.sts
+    if c.get("sts", sts, "{.metadata.name}") is None:
+        raise Refused("statefulset %s not found in %s" % (sts, c.ns))
+    for kind, name in (("pvc", c.world_pvc), ("pvc", c.scratch_pvc)):
+        if c.get(kind, name, "{.status.phase}") != "Bound":
+            raise Refused("%s %s is not Bound" % (kind, name))
+    if c.src_kind == "generation" and c.get("pvc", c.map_pvc, "{.status.phase}") != "Bound":
+        raise Refused("pvc %s is not Bound; this release has no map to restore a generation from" % c.map_pvc)
+    cont = json.loads(c.kubectl("get", "sts", sts, "-o", "json").stdout)["spec"]["template"]["spec"]
+    main = cont["containers"][0]
+    env = {e["name"]: e.get("value") for e in main.get("env", []) if "value" in e}
+    node = c.get("pod", c.pod, "{.spec.nodeName}")
+    if not node:
+        terms = (cont.get("affinity", {}).get("nodeAffinity", {})
+                 .get("requiredDuringSchedulingIgnoredDuringExecution", {}).get("nodeSelectorTerms", []))
+        for t in terms:
+            for m in t.get("matchExpressions", []):
+                if m.get("key") == "kubernetes.io/hostname" and m.get("values"):
+                    node = m["values"][0]
+    if c.a.node:
+        node = c.a.node
+    if not node:
+        raise Refused("cannot tell which node holds the world volume; pass --node")
+    version = c.a.version or env.get("VERSION", "LATEST")
+    if c.get("pod", c.pod, "{.metadata.name}"):
+        logv = c.kubectl("logs", c.pod, "-c", main["name"], check=False).stdout
+        for line in logv.splitlines():
+            if "INFO] Version: " in line:
+                version = line.split("INFO] Version: ", 1)[1].strip()
+                break
+    resources = main.get("resources") or {"limits": {"cpu": "1", "memory": "1Gi"}, "requests": {"cpu": "250m", "memory": "512Mi"}}
+    c.info.update(image=main["image"], node=node, version=version, resources=resources, container=main["name"],
+                  replicas=c.get("sts", sts, "{.spec.replicas}"))
+    if c.src_kind == "generation":
+        c.info["map_replicas"] = c.get("deploy", c.map_deploy, "{.spec.replicas}") or "0"
+        c.info["map_node"] = c.kubectl("get", "pod", "-l", "app=" + c.map_deploy, "-o", "jsonpath={.items[0].spec.nodeName}", check=False).stdout.strip() or None
+
+
+def guard_report(c):
+    """The guard's own finding, if the pod is held; informational, never a gate."""
+    p = c.kubectl("exec", c.pod, "-c", "world-guard", "--", "cat", "/data/.world-guard/report.json", check=False)
+    if p.returncode != 0:
+        return None
+    try:
+        r = json.loads(p.stdout)
+    except ValueError:
+        return None
+    return {k: r.get(k) for k in ("status", "mode", "bad_tables", "bad_bytes") if k in r}
+
+
+def plan(c):
+    say("world-restore plan (nothing changed)")
+    say("  release      %s (namespace %s)" % (c.rel, c.ns))
+    say("  level        %s" % c.level)
+    say("  server       %s image=%s node=%s version=%s replicas=%s" % (
+        c.sts, c.info["image"], c.info["node"], c.info["version"], c.info["replicas"]))
+    say("  source       %s:%s%s" % (c.src_kind, c.src_name, " (read-only)" if c.src_kind == "generation" else ""))
+    say("  scratch      %s -> /scratch/%s (refused if it exists; --overwrite-scratch replaces)" % (c.scratch_pvc, c.level))
+    say("  damaged      kept as /scratch/%s-damaged-%s" % (c.level, c.stamp))
+    rep = guard_report(c)
+    say("  guard        %s" % (json.dumps(rep) if rep else "no report readable from the pod"))
+    say("stages: scale-down, copy+check, verify (boot a copy), promote (aside, stage, sha256, swap), scale-up")
+    say("run it with --yes")
+
+
+def stage_down(c):
+    say("== scale %s to 0" % c.sts)
+    c.scaled_down = True
+    c.kubectl("scale", "sts", c.sts, "--replicas=0")
+    c.kubectl("wait", "--for=delete", "pod/" + c.pod, "--timeout=240s", check=False)
+    if c.get("pod", c.pod, "{.metadata.name}"):
+        raise Failed("pod %s is still there after 240s" % c.pod)
+    if c.src_kind == "generation" and c.info.get("map_replicas", "0") != "0":
+        say("== scale %s to 0 (its volume is read-only mounted below)" % c.map_deploy)
+        c.kubectl("scale", "deploy", c.map_deploy, "--replicas=0")
+        c.kubectl("wait", "--for=delete", "pod", "-l", "app=" + c.map_deploy, "--timeout=240s", check=False)
+
+
+def stage_copy(c):
+    say("== copy the source onto scratch")
+    pod = create_pod(c, copy_pod(c))
+    try:
+        ready(c, pod)
+        rc = exec_sh(c, pod, COPY_SCRIPT, c.level, c.src_kind, c.src_name, c.a.taken_at or "",
+                     "true" if c.a.overwrite_scratch else "false")
+        if rc != 0:
+            raise Failed("copy refused or failed (nothing on the live volume was touched)")
+        say("== world guard check on the copy")
+        with open(GUARD_SRC) as f:
+            src = f.read()
+        p = c.kubectl("exec", "-i", pod, "--", "python3", "-I", "-", "check", "/scratch/%s/db" % c.level, stdin=src, check=False)
+        try:
+            rep = json.loads(p.stdout) if p.stdout.strip().startswith("{") else {}
+        except ValueError:
+            rep = {}
+        say("   guard says %s (live tables %s)" % (rep.get("status", "unknown"), rep.get("live_tables")))
+        # Not just "not damaged": an empty db is "absent", and a server booted on it would
+        # make a brand-new world that the next steps would promote over the real one.
+        if rep.get("status") != "clean" or not rep.get("live_tables"):
+            raise Failed("the restore source is not a clean, non-empty database (guard: %s %s)" % (
+                rep.get("status", "no answer"), json.dumps(rep.get("problems", [])[:5])))
+    finally:
+        c.kubectl("delete", "pod", pod, "--ignore-not-found", "--wait=true", check=False)
+
+
+def stage_verify(c):
+    say("== verify: boot a copy on %s (version %s)" % (c.info["image"], c.info["version"]))
+    pod = create_pod(c, verify_pod(c))
+    try:
+        t0, logs = time.time(), ""
+        while time.time() - t0 < c.a.verify_timeout:
+            logs = c.kubectl("logs", pod, "-c", "verify", check=False).stdout
+            if "Server started" in logs or "Corruption" in logs or "Trying repair" in logs or "rror opening" in logs:
+                break
+            if c.get("pod", pod, "{.status.phase}") == "Failed":
+                break
+            time.sleep(4)
+        keep = [ln for ln in logs.splitlines() if any(k in ln for k in
+                ("Version:", "Level Name", "Opening level", "LevelDB", "Corruption", "repair", "Server started"))]
+        for ln in keep[:12]:
+            say("   " + ln)
+        bad = [ln for ln in logs.splitlines() if "Corruption" in ln or "Trying repair" in ln]
+        if bad or "Server started" not in logs:
+            raise Failed("the verify server did not open the restored world cleanly (%s)" %
+                         ("corruption/repair line" if bad else "no 'Server started' within %ds" % c.a.verify_timeout))
+    finally:
+        c.kubectl("delete", "pod", pod, "--ignore-not-found", "--wait=true", check=False)
+
+
+def stage_promote(c):
+    say("== promote on node %s" % c.info["node"])
+    if c.get("sts", c.sts, "{.spec.replicas}") != "0":
+        raise Failed("server is not at 0 replicas; refusing to touch its volume")
+    pod = pod_name(c, "promote")
+    c.swapped = True  # from here a failure may have moved the live world
+    create_pod(c, promote_pod(c))
+    ph = wait_phase(c, pod, ("Succeeded",), c.a.promote_timeout)
+    logs = c.kubectl("logs", pod, check=False).stdout
+    sys.stdout.write(logs)
+    if ph == "Succeeded" and "PROMOTED" in logs:
+        c.kubectl("delete", "pod", pod, "--ignore-not-found", "--wait=true", check=False)
+        return
+    now = c.get("pod", pod, "{.status.phase}")
+    if now == "Pending" and "== before" not in logs:
+        # It never started, so it cannot swap later: remove it and say the live world is as it was.
+        c.kubectl("delete", "pod", pod, "--ignore-not-found", "--wait=true", check=False)
+        c.swapped = False
+        raise Failed("the promote pod never started (Pending after %ds: wrong --node, or the volume will not attach); "
+                     "removed. The live world has not been touched." % c.a.promote_timeout)
+    if now == "Running":
+        raise Failed("the promote pod is STILL RUNNING and may swap the world at any moment. Do NOT scale the server up. "
+                     "Watch `kubectl -n %s logs -f %s` until it prints PROMOTED or FATAL." % (c.ns, pod), after_swap=True)
+    # The pod is left in place: its log and the volumes it mounts are the evidence.
+    raise Failed("promote did not finish (phase %s); pod %s kept. If the log shows '== swapping' the live path may "
+                 "hold no world: do NOT re-run, the damaged copy on scratch may be the only complete one. "
+                 "Otherwise the live world is untouched." % (now, pod), after_swap=True)
+
+
+def stage_up(c):
+    say("== scale %s to %s" % (c.sts, c.info["replicas"] if c.info["replicas"] not in (None, "0", "") else "1"))
+    c.kubectl("scale", "sts", c.sts, "--replicas=%s" % (c.info["replicas"] if c.info["replicas"] not in (None, "0", "") else "1"))
+    t0, started = time.time(), False
+    while time.time() - t0 < c.a.up_timeout:
+        logs = c.kubectl("logs", c.pod, "-c", c.info["container"], check=False).stdout
+        if "Corruption" in logs or "Trying repair" in logs:
+            raise Failed("the server logged corruption on the restored world", after_swap=True)
+        if "Server started" in logs:
+            started = True
+            break
+        time.sleep(5)
+    if not started:
+        raise Failed("no 'Server started' within %ds; the world is promoted, look at the pod" % c.a.up_timeout, after_swap=True)
+    guard = c.kubectl("logs", c.pod, "-c", "world-guard", check=False).stdout.strip().splitlines()
+    say("   guard: %s" % (guard[-1] if guard else "no world-guard container in this pod"))
+    if guard and '"event": "clean"' not in guard[-1]:
+        raise Failed("the guard's last line on the restored world is not 'clean'", after_swap=True)
+    w = c.kubectl("wait", "--for=condition=Ready", "pod/" + c.pod, "--timeout=180s", check=False)
+    if w.returncode != 0:
+        raise Failed("the server logged 'Server started' but the pod is not Ready after 180s", after_swap=True)
+    if c.src_kind == "generation" and c.info.get("map_replicas", "0") != "0":
+        say("== scale %s back to %s" % (c.map_deploy, c.info["map_replicas"]))
+        c.kubectl("scale", "deploy", c.map_deploy, "--replicas=" + c.info["map_replicas"])
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--release", required=True)
+    ap.add_argument("--level", required=True)
+    ap.add_argument("--source", required=True)
+    ap.add_argument("--namespace", default=DEFAULT_NS)
+    ap.add_argument("--yes", action="store_true", help="run it; without this only the plan is printed")
+    ap.add_argument("--taken-at", help="generation source: the takenAt you chose, exactly as the map printed it")
+    ap.add_argument("--overwrite-scratch", action="store_true")
+    ap.add_argument("--node", help="node holding the world volume, if the pod is gone and the StatefulSet has no affinity")
+    ap.add_argument("--version", help="server version for the verify boot; default: the log, else the StatefulSet's VERSION")
+    ap.add_argument("--promote-timeout", type=int, default=1800)
+    ap.add_argument("--verify-timeout", type=int, default=420)
+    ap.add_argument("--up-timeout", type=int, default=420)
+    ap.add_argument("--print-manifests", action="store_true", help="print the pod manifests and exit (tests)")
+    a = ap.parse_args(argv[1:])
+    c = None
+    try:
+        c = Ctx(a)
+        if a.print_manifests:
+            c.info.update(image="IMAGE", node="NODE", version="VERSION", resources={"limits": {"cpu": "1", "memory": "1Gi"}})
+            for m in (copy_pod(c), verify_pod(c), promote_pod(c)):
+                print(json.dumps(m))
+            return 0
+        record(c)
+        if not a.yes:
+            plan(c)
+            return 0
+        say("world-restore %s level=%s source=%s:%s" % (c.rel, c.level, c.src_kind, c.src_name))
+        stage_down(c)
+        stage_copy(c)
+        stage_verify(c)
+        stage_promote(c)
+        stage_up(c)
+        say("RESTORED %s from %s:%s; damaged world kept at /scratch/%s-damaged-%s on %s" % (
+            c.level, c.src_kind, c.src_name, c.level, c.stamp, c.scratch_pvc))
+        return 0
+    except Refused as e:
+        say("REFUSED: %s" % e)
+        return 1
+    except (Failed, KeyboardInterrupt, Exception) as e:  # noqa: BLE001 - always say where things stand
+        swapped = getattr(e, "after_swap", False) or (c is not None and c.swapped)
+        if isinstance(e, Failed):
+            say("FAILED: %s" % e)
+        else:
+            say("FAILED: %s: %s" % (type(e).__name__, e))
+        sts = a.release + "-minecraft-bedrock"
+        if swapped:
+            say("The live world may have been replaced. Do not re-run. The server%s may still be at 0: check "
+                "`kubectl -n %s get sts,deploy,pods` and the promote pod's log before scaling anything." % (
+                    " and the map" if str(a.source).startswith("generation") else "", a.namespace))
+            return 2
+        if c is not None and c.scaled_down:
+            say("The live world has not been touched. The server is scaled to 0%s: scale it back with "
+                "`kubectl -n %s scale sts %s --replicas=1` to boot the unchanged world, or fix the cause and re-run." % (
+                    " (and the map, for a generation source)" if c.src_kind == "generation" else "", a.namespace, sts))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
