@@ -196,7 +196,10 @@ PY
 # The stage-0 add-on ships as a copy of the lab's tarball; the two must not drift.
 cmp -s "$here/charts/proving-grounds/files/lab-mods-stage0.tar.gz" "$here/charts/crew-lab/files/lab-mods-stage0.tar.gz" \
   || { echo "FAIL: proving-grounds stage0 tarball differs from crew-lab's"; exit 1; }
-helm template jdwillmsen-proving-grounds-prd "$here/charts/proving-grounds" -n jdwillmsen-prd | grep -q 'name: install-lab-mods-stage0' \
+# Rendered to a file, not piped: under pipefail, grep -q exiting at the first
+# match can kill helm with SIGPIPE once the render outgrows the pipe buffer.
+helm template jdwillmsen-proving-grounds-prd "$here/charts/proving-grounds" -n jdwillmsen-prd > "$work/default.yaml"
+grep -q 'name: install-lab-mods-stage0' "$work/default.yaml" \
   || { echo "FAIL: stage0 installer missing"; exit 1; }
 
 echo "PASS: proving-grounds is a separate NetherNet server with no collisions"
