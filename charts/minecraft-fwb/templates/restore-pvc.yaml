@@ -4,6 +4,11 @@ kind: PersistentVolumeClaim
 metadata:
   name: {{ include "restore.scratchPVC.name" . }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    # tools/world-restore keeps the damaged world it replaced here
+    # (<level>-damaged-<UTC>), and that can be the only complete copy of it, so a
+    # sync must not prune this claim.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   # Block, matching the world PVC's own class. This claim is deliberately
   # separate from datadir-{{ include "backup.serverStatefulSet" . }}-0: a
