@@ -196,12 +196,19 @@ def read_manifest(path):
     state = {"next_file": 0}
     crc_bad = []
     count = 0
-    for payload, ok in _scan(data, tail):
-        if ok:
-            decode_edit(payload, live, state)
-        else:
-            crc_bad.append(count)
-        count += 1
+    try:
+        for payload, ok in _scan(data, tail):
+            if ok:
+                decode_edit(payload, live, state)
+            else:
+                crc_bad.append(count)
+            count += 1
+    except ParseError:
+        # A checksum failure already seen is a positive finding that a later parse problem
+        # must not hide; with none, the parse problem is the (inconclusive) answer.
+        if not crc_bad:
+            raise
+        tail["parse_stopped"] = True
     del data
     # LevelDB's recovery fails the open on a record whose checksum does not match,
     # wherever it sits, and the server answers that by repairing. So any bad record is
@@ -304,6 +311,7 @@ def check_world(db):
         report["warnings"].append({"kind": "manifest-zero-tail", "bytes": tail["zero_bytes"]})
 
     bad_bytes = 0
+    unchecked = 0
     for num, (_lvl, want) in sorted(live.items()):
         name = _table_name(num, db)
         path = os.path.join(db, name)
@@ -315,6 +323,7 @@ def check_world(db):
             continue
         except OSError as e:
             report["warnings"].append({"kind": "unreadable", "file": name, "error": str(e)})
+            unchecked += 1
             continue
         if st.st_size == 0:
             problem(name, "zero-byte", expected=want, mtime=int(st.st_mtime))
@@ -329,6 +338,7 @@ def check_world(db):
                     magic = struct.unpack("<Q", f.read(8))[0]
             except OSError as e:
                 report["warnings"].append({"kind": "unreadable", "file": name, "error": str(e)})
+                unchecked += 1
                 continue
             if magic != TABLE_MAGIC:
                 problem(name, "bad-footer", expected=want, mtime=int(st.st_mtime))
@@ -369,6 +379,11 @@ def check_world(db):
         if mt:
             report["bad_mtime_first"], report["bad_mtime_last"] = min(mt), max(mt)
         return done("damaged")
+    if unchecked:
+        # Not "clean": a table that could not be read has not been shown to be whole, and a
+        # hold must not be released on that. With no hold yet, inconclusive starts the server.
+        report["unchecked_tables"] = unchecked
+        return done("inconclusive")
     return done("clean")
 
 

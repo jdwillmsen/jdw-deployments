@@ -357,6 +357,67 @@ class Tolerated(Base):
         self.assertEqual([w["kind"] for w in r["warnings"]], ["repair-evidence"])
 
 
+class PartialReads(Base):
+    def test_a_checksum_failure_survives_a_later_unparseable_record(self):
+        d = self.make()
+        d.write_manifest(extra_records=[edit(new=[(1, 7000, 10)]), edit(extra=varint(42) + varint(1))])
+        flip(d.path(d.manifest_name), wg.HEADER + 5)  # the snapshot record
+        r = d.check()
+        self.assertEqual((r["status"], self.kinds(r)), ("damaged", ["manifest-checksum"]))
+
+    def test_an_unparseable_record_alone_is_still_inconclusive(self):
+        d = self.make()
+        d.write_manifest(extra_records=[edit(extra=varint(42) + varint(1))])
+        self.assertEqual(d.check()["status"], "inconclusive")
+
+    def test_a_table_that_cannot_be_read_is_not_clean(self):
+        d = self.make()
+        original = os.stat
+        target = d.path("001005.ldb")
+
+        def flaky(path, *a, **kw):
+            if path == target:
+                raise PermissionError("denied")
+            return original(path, *a, **kw)
+
+        os.stat = flaky
+        self.addCleanup(setattr, os, "stat", original)
+        r = d.check()
+        self.assertEqual(r["status"], "inconclusive")
+        self.assertEqual(r["unchecked_tables"], 1)
+
+    def test_a_table_whose_footer_cannot_be_read_is_not_clean(self):
+        d = self.make()
+        import builtins
+        original = builtins.open
+        target = d.path("001005.ldb")
+
+        def flaky(path, *a, **kw):
+            if path == target:
+                raise PermissionError("denied")
+            return original(path, *a, **kw)
+
+        builtins.open = flaky
+        self.addCleanup(setattr, builtins, "open", original)
+        r = d.check()
+        self.assertEqual((r["status"], r["unchecked_tables"]), ("inconclusive", 1))
+
+    def test_a_real_damage_finding_wins_over_an_unreadable_table(self):
+        d = self.make()
+        write_table(d.db, 1001, 0)
+        original = os.stat
+        target = d.path("001005.ldb")
+
+        def flaky(path, *a, **kw):
+            if path == target:
+                raise PermissionError("denied")
+            return original(path, *a, **kw)
+
+        os.stat = flaky
+        self.addCleanup(setattr, os, "stat", original)
+        self.assertEqual(d.check()["status"], "damaged")
+
+
 class Inconclusive(Base):
     def test_unknown_edit_tag_does_not_block(self):
         d = self.make()
@@ -538,6 +599,36 @@ class GuardLoop(Base):
         self.assertEqual([e["event"] for e in ev], ["held", "held", "released"])
         self.assertEqual(len(sleeps), 6)
         self.assertEqual(ev[-1]["status"], "clean")
+
+    def test_an_unreadable_table_on_a_recheck_does_not_release_the_hold(self):
+        d = self.make()
+        write_table(d.db, 1001, 0)
+        original_stat = os.stat
+        original_check = wg.check_world
+        calls = []
+
+        def check(db):
+            calls.append(1)
+            if len(calls) == 2:
+                write_table(d.db, 1001, 4096)  # repaired, but one table cannot be read this time
+                target = d.path("001005.ldb")
+
+                def flaky(path, *a, **kw):
+                    if path == target:
+                        raise PermissionError("denied")
+                    return original_stat(path, *a, **kw)
+
+                os.stat = flaky
+            else:
+                os.stat = original_stat
+            return original_check(db)
+
+        wg.check_world = check
+        self.addCleanup(setattr, wg, "check_world", original_check)
+        self.addCleanup(setattr, os, "stat", original_stat)
+        rc, ev, _ = self.run_guard(d, "enforce", recheck=1)
+        self.assertEqual([e["event"] for e in ev], ["held", "held", "released"])
+        self.assertEqual(ev[1]["reason"], "recheck was inconclusive")
 
     def test_a_recheck_that_cannot_decide_does_not_release_the_hold(self):
         d = self.make()
