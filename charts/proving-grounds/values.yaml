@@ -218,12 +218,16 @@ minecraft-bedrock:
 
   # The subchart's probes run `mc-monitor status-bedrock` in `auto` mode, which
   # tries NetherNet first, so they pass on a NetherNet server and the pod is
-  # Ready. Startup is off and liveness a year out because the NetherNet setup
-  # shipped them off, not because they fail: the subchart hardcodes a 1s
-  # timeout with 3 failures, so enabling them is a rollout to soak, not a
-  # given. See charts/minecraft-fwb/README.md, "NetherNet transition".
+  # Ready. The startup probe is on: it holds the pod back until the server
+  # answers (10 minutes at most), and it hands over to the readiness probe.
+  # Liveness stays a year out because the subchart hardcodes a 1s timeout with
+  # 3 failures, so enabling it is a rollout to soak, not a given. See
+  # charts/minecraft-fwb/README.md, "NetherNet transition".
   startupProbe:
-    enabled: false
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 60
   livenessProbe:
     initialDelaySeconds: "31536000"
 
