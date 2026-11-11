@@ -5,6 +5,21 @@
 # that subchart's context and cannot otherwise see this file's other
 # top-level keys). Everything else lives in its own section as normal.
 global:
+  # Flushes the world volume's dirty pages every few seconds so a host that dies
+  # has less dirty data to lose, a couple of seconds' worth instead of the kernel's 30 s (best effort: a sync can take longer than the interval). See
+  # docs/world-guard.md ("World sync"). Crosses the subchart boundary for the
+  # same reason consoleBridge does: sidecarContainers below is tpl-rendered
+  # there.
+  #
+  # OFF here on purpose. The A/B on the test server (tools/world-guard/tps-ab.py,
+  # JDW-341) put its cost at -0.5% and -1.0% of TPS under a write load well above
+  # this server's, with the 95% bound on the loss not excluding 3%, and showed
+  # more I/O pressure. It goes on in values-prd.yaml after a longer soak on the
+  # test server (where it runs now) says it is free; revert on any new tick-rate
+  # alert or a TPS drop over 2%.
+  worldSync:
+    enabled: false
+    intervalSeconds: 2
   consoleBridge:
     # The one switch for the whole feature -- sidecar, Service and agent gate
     # all read it -- off by default and flipped only by
@@ -369,6 +384,38 @@ minecraft-bedrock:
         readOnlyRootFilesystem: true
         capabilities:
           drop: ["ALL"]
+    {{- if .Values.global.worldSync.enabled }}
+    # `sync -f` is syncfs(2) on the world's filesystem, from the server's own
+    # image (it ships coreutils' sync). In this pod only: no node setting
+    # changes and no other workload is touched. Needs no Secret and opens no
+    # port, so unlike the bridge it cannot hold the server at start.
+    - name: world-sync
+      image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+      command:
+        - sh
+        - -c
+        # trap + wait: as PID 1, sh would otherwise ignore SIGTERM and every pod deletion
+        # would wait out the whole grace period.
+        - "trap 'exit 0' TERM; while :; do sync -f /data || echo 'world-sync: sync -f failed'; sleep {{ .Values.global.worldSync.intervalSeconds }} & wait $!; done"
+      resources:
+        requests:
+          cpu: 5m
+          memory: 8Mi
+        limits:
+          cpu: 50m
+          memory: 32Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        # Read-only is enough: syncfs flushes the filesystem behind the
+        # descriptor, not the mount that opened it.
+        - name: datadir
+          mountPath: /data
+          readOnly: true
+    {{- end }}
     {{- if .Values.global.consoleBridge.enabled }}
     - name: console-bridge
       # sidecarContainers is tpl-rendered inside the minecraft-bedrock
@@ -2792,6 +2839,22 @@ map:
 # world that loses chunks at 04:00 has lost them, and the restart that a
 # corruption shutdown causes is exactly when the evidence disappears, so the
 # windows below are what hold the signal across it.
+# Alerts for the world guard (init container world-guard in values-map-pack.yaml;
+# docs/world-guard.md). Held pages when the guard is holding the server in Init
+# (enforce mode); WouldHold pages when it found damage and, in warn mode, let the
+# server start anyway. Both are the same finding: tables the MANIFEST names that
+# the disk does not have.
+worldGuard:
+  alerts:
+    enabled: true
+    # How long the guard may sit in its hold before it pages. The check itself
+    # takes under a second; a longer run than this is a hold.
+    heldFor: 3m
+    # How far back the log-derived rule looks for a would_hold/held line. The
+    # guard prints one per pod start (warn) or per 30 s (held); the window keeps
+    # the page up through the pod restarts that follow.
+    loggedWindow: 30m
+
 worldIntegrity:
   enabled: true
 

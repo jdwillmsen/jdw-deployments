@@ -1,12 +1,13 @@
-# The game server's one init step: it installs the world map's script pack
-# into the world before the server starts.
+# The game server's init steps, in this order: the world guard checks the
+# world's database before the server may open it, then the map's script pack
+# is installed into the world.
 #
-# It is in a file of its own for one reason. The step's image is the map's
+# They are in a file of their own for one reason. The step's image is the map's
 # image, and Renovate merges map image updates unattended because a map bump
 # restarts only the map pod. An init container on the game server pod breaks
 # that promise: on 2026-10-06 the same unattended update moved this tag and
 # restarted the world. renovate.json disables every update found in this
-# file, so the tag here moves only when someone moves it.
+# file, so the tags here move only when someone moves them.
 #
 # When to move it: when minecraft/mcmap/pack or its installer changed, which
 # the map's release notes say, and never past map.image.tag. An older pack is
@@ -16,81 +17,709 @@
 # The ArgoCD Application must list this file, or the pack is never installed
 # or updated (an installed pack stays on the volume either way).
 minecraft-bedrock:
-  # Puts the map's script pack into the world before the server opens it.
+  # World guard: runs first, before anything that writes into the world and
+  # before the server opens the database. Docs: docs/world-guard.md.
   #
-  # The pack is what the map's live layer draws from: once a second it prints
-  # where every player and mob is to the server's console, the console bridge
-  # keeps those lines, and the map streams them to browsers. It has to be an
-  # init step in this pod because nothing else can write to the world's
-  # volume before the server has it open: the claim is ReadWriteOnce and
-  # mounted here.
+  # A host that loses power can leave table files the MANIFEST names as size-0
+  # files (30 of them, 13,487 chunks, on 2026-11-06); the server opens such a
+  # db without complaint and drops them in a repair minutes later. This looks
+  # first: CURRENT, the MANIFEST's records, and every live table's presence,
+  # size and footer, read-only, in about a tenth of a second.
   #
-  # This is a container that runs ahead of the game server, so anything it
-  # waits on, the server waits on. Three rules follow, and tools/tests/
-  # test-map.sh fails the build on each:
+  # GUARD_MODE is "warn": it logs `would_hold` and alerts
+  # (JdwillmsenMinecraftWorldGuardWouldHold) but the server starts regardless.
+  # After a week of reports that are understood, a separate small change sets it
+  # to "enforce", where damage holds the pod in Init, pages
+  # (JdwillmsenMinecraftWorldGuardHeld) and re-checks every 30 s until the world
+  # is restored (tools/world-restore) or an operator accepts the loss:
+  #   kubectl -n jdwillmsen-prd exec jdwillmsen-minecraft-fwb-prd-minecraft-bedrock-0 \
+  #     -c world-guard -- touch /data/.world-guard-accept
+  # Putting enforce back after it has been set to warn needs the owner's sign-off.
   #
-  #  1. Nothing from a Secret. No secretKeyRef, no envFrom, no secret volume.
-  #     A reference that cannot resolve leaves the pod in
-  #     CreateContainerConfigError with the server never started, which is
-  #     exactly how a sidecar's secret took this world offline for 40 hours
-  #     (docs/incidents/2026-09-06-fwb-console-bridge-secret.md). The
-  #     installer needs no credential and must never be given one.
-  #  2. One mount, the world's volume. A second volume is a second thing that
-  #     has to attach before the server may start.
-  #  3. The map's image, at a tag no newer than map.image.tag. The pack and
-  #     the service that parses its records ship in one image, and the hazard
-  #     is a pack newer than its parser: records the map does not understand
-  #     are dropped. An older pack is safe -- the map ignores fields it does
-  #     not know, and the record sentinel carries the format's own version --
-  #     so this tag stays where it is across map releases that do not change
-  #     the pack. That matters because moving it restarts the game server,
-  #     and with it every client: the agent has taken nine minutes to rejoin.
-  #     Move it when minecraft/mcmap/pack or the installer changed, which the
-  #     map's release notes say.
+  # Everything the rules above say about install-map-pack applies here, and
+  # more strongly: this is a container the server waits on, so it fails open on
+  # anything it cannot decide (no world yet, a MANIFEST it cannot decode, a
+  # timeout, a crash of its own), takes no Secret, mounts only the world's
+  # volume, and uses the CronJobs' alpine/k8s image, which is on this server's
+  # node (pinned by affinity) because its CronJobs run there. Only that node
+  # has it, so a node that lost its image cache while the registry is down
+  # holds the server in Init, exactly as for the map image below. The script is embedded by
+  # tools/world-guard/embed.py from tools/world-guard/world_guard.py; the test
+  # fails the build when the two differ, so edit the source and run --write.
   #
-  # initContainers is rendered by plain toYaml in the vendored subchart's
-  # deployment.yaml (confirmed by reading it), never passed through tpl. So,
-  # unlike sidecarContainers below, nothing in it can be conditional and
-  # nothing can be read from another value: the image is a literal string
-  # for the same reason the console-bridge sidecar's is, and the level name
-  # and mob cap are literals too. It also means this step is in every render,
-  # with or without values-console-bridge.yaml. Without the bridge the pack
-  # still prints its records and nothing reads them, which is waste, not
-  # harm.
+  # An init container runs again when the pod is recreated (node reboot or power
+  # loss, pod delete, rollout) and not when only the server container restarts
+  # in place, which is why this covers the case it was written for.
   #
-  # The installer fails open: a missing world, an unwritable volume, a pack
-  # list it cannot parse, a missing variable or a panic is logged and exits
-  # 0, and the server starts without the pack. Its one non-zero exit is a
-  # replacement it could neither finish nor undo, which the kubelet's retry
-  # repairs on the next attempt. That property is the only reason this step
-  # is allowed here, so do not wrap it: no `command` (a shell that is not in
-  # this distroless image would fail where the installer would not), no
-  # probes, and nothing that waits for the map or the bridge to be up. A
-  # pack that did not install shows up as JdwillmsenMinecraftMapLiveNeverStarted,
-  # not as a server that did not start.
-  #
-  # What this step cannot fail open on is its own image pull. The tag is
-  # pulled once per node and kept (IfNotPresent), and the map pod runs the
-  # same image, but a node that has to fetch it while the registry is down
-  # holds the server in Init until it can.
-  #
-  # Removing this block does NOT remove the pack. The files and the world's
-  # registration of them are on the volume and stay there. To turn the pack
-  # off, change `install-pack` below to `uninstall-pack` and let the server
-  # restart; README, "Live layer", has the procedure and when to use it.
-  #
-  # The pack only loads when the server starts, so everything here -- the
-  # step itself, a new image tag, a changed PACK_MOB_CAP -- takes effect on
-  # the restart that applying it causes, and that restart is announced by the
-  # deploy-announce hook like any other change to this pod.
-  #
-  # A volume with no world on it yet is the one start this step sits out on
-  # purpose: the server creates worlds/FWB on its first run, and the
-  # installer will not write a registration into a world directory the server
-  # did not make. The pack goes in on the second start. A world restored onto
-  # the volume is already there when the pod comes back, so a restore does
-  # not have this gap.
+  # The tag is deliberate: this file is not updated by Renovate.
   initContainers:
+    - name: world-guard
+      image: "alpine/k8s:1.37.1"
+      imagePullPolicy: IfNotPresent
+      command:
+        - python3
+        - -I
+        - -c
+      args:
+        # BEGIN world-guard (generated by tools/world-guard/embed.py from world_guard.py; edit that, then --write)
+        - |
+          #!/usr/bin/env python3
+          """World guard: refuse to let the Bedrock server open a LevelDB it can already tell is damaged.
+
+          Two entry points, one file, standard library only (it also runs as `python3 -I -c "$(cat ...)"`
+          inside an init container with a read-only root filesystem):
+
+            world_guard.py check DB_DIR      print the report as JSON; exit 0 clean, 1 damaged, 2 inconclusive
+            world_guard.py                   run the guard from the environment (init container)
+
+          Why it exists: a host that loses power takes the guest page cache with it. The
+          compaction output tables the MANIFEST already names can then be size-0 files, the
+          inputs are already unlinked, and the server opens the db without complaint (tables
+          are opened lazily) and only repairs, by dropping them, when something first reads one.
+          Everything here is read-only against the db; it only ever writes two markers under
+          DATA_DIR (the report and, on an accept, it removes the operator's accept file).
+
+          Only a positive finding blocks. A parser surprise, an unreadable directory, a timeout or
+          a missing world is reported and the guard exits 0: the guard's own bug must never be
+          what keeps a world offline.
+
+          Environment (guard mode):
+            DATA_DIR            volume mount, default /data
+            LEVEL_NAME          world directory under DATA_DIR/worlds, required
+            GUARD_MODE          "enforce" holds the server; anything else only reports (default warn)
+            RECHECK_SECONDS     seconds between checks while held, default 30
+            CHECK_TIMEOUT       seconds before a check is abandoned as inconclusive, default 120
+            WARN_LINGER_SECONDS seconds a warn-mode finding is repeated before the server starts, default 30
+          """
+          import json
+          import os
+          import signal
+          import struct
+          import sys
+          import time
+
+          TABLE_MAGIC = 0xDB4775248B80FB57
+          BLOCK = 32768
+          HEADER = 7
+          TABLE_SUFFIXES = (".ldb", ".sst")
+          MAX_LISTED = 5
+          LINGER_STEP = 2
+          MAX_MANIFEST_BYTES = 48 * 1024 * 1024
+
+
+          class CheckTimeout(Exception):
+              """Not an OSError: the per-table handlers catch OSError and must not swallow the alarm."""
+
+
+          class ParseError(Exception):
+              """The MANIFEST could not be decoded; the finding is inconclusive, not damage."""
+
+
+          def _crc32c_table():
+              table = []
+              for i in range(256):
+                  c = i
+                  for _ in range(8):
+                      c = (c >> 1) ^ 0x82F63B78 if c & 1 else c >> 1
+                  table.append(c)
+              return table
+
+
+          _CRC = _crc32c_table()
+
+
+          def crc32c(data, crc=0):
+              crc ^= 0xFFFFFFFF
+              for b in data:
+                  crc = _CRC[(crc ^ b) & 0xFF] ^ (crc >> 8)
+              return crc ^ 0xFFFFFFFF
+
+
+          def masked_crc(typ, payload):
+              c = crc32c(payload, crc32c(bytes([typ])))
+              return (((c >> 15) | (c << 17)) + 0xA282EAD8) & 0xFFFFFFFF
+
+
+          def read_varint(buf, i):
+              result = shift = 0
+              while True:
+                  if i >= len(buf):
+                      raise ParseError("varint runs off the end of a record")
+                  c = buf[i]
+                  i += 1
+                  result |= (c & 0x7F) << shift
+                  if not c & 0x80:
+                      return result, i
+                  shift += 7
+                  if shift > 63:
+                      raise ParseError("varint longer than 64 bits")
+
+
+          def _scan(data, tail):
+              """Walk the LevelDB log format, yielding (payload, crc_ok) per complete record.
+
+              Streamed, so a large MANIFEST is decoded edit by edit instead of held as a list of
+              payloads. `tail` is filled in as facts about how the file ends, which a power loss
+              shapes: `truncated` (a record header or body runs off the end), `zero_bytes` (zero
+              padding after the last record) and `pending_fragment`.
+              """
+              pos = 0
+              frag = None
+              frag_ok = True
+              size = len(data)
+              while pos < size:
+                  left_in_block = BLOCK - (pos % BLOCK)
+                  if left_in_block < HEADER:
+                      pos += left_in_block
+                      continue
+                  if pos + HEADER > size:
+                      tail["truncated"] = True
+                      break
+                  crc, length, typ = struct.unpack_from("<IHB", data, pos)
+                  if typ == 0 and length == 0:
+                      # LevelDB's reader skips a zero-type, zero-length header whatever its checksum
+                      # (preallocated or zero-padded space) and goes on to the next block.
+                      tail["zero_bytes"] += min(left_in_block, size - pos)
+                      pos += left_in_block
+                      continue
+                  body_start = pos + HEADER
+                  if body_start + length > size:
+                      # A record that runs past the end of the file is the torn tail of a write that
+                      # never finished; LevelDB treats it as end of file, and so must this, or the
+                      # table check below would be skipped on exactly the db a power loss produced.
+                      tail["truncated"] = True
+                      break
+                  if length > left_in_block - HEADER:
+                      raise ParseError("record at %d crosses a block boundary" % pos)
+                  payload = data[body_start:body_start + length]
+                  ok = masked_crc(typ, payload) == crc
+                  pos = body_start + length
+                  if typ == 1:
+                      yield payload, ok
+                  elif typ == 2:
+                      frag, frag_ok = bytearray(payload), ok
+                  elif typ == 3:
+                      if frag is None:
+                          raise ParseError("middle fragment with no first fragment")
+                      frag += payload
+                      frag_ok = frag_ok and ok
+                  elif typ == 4:
+                      if frag is None:
+                          raise ParseError("last fragment with no first fragment")
+                      frag += payload
+                      done, done_ok = bytes(frag), frag_ok and ok
+                      frag, frag_ok = None, True
+                      yield done, done_ok
+                  else:
+                      raise ParseError("unknown record type %d at %d" % (typ, pos))
+              if frag is not None:
+                  tail["pending_fragment"] = True
+
+
+          def decode_edit(rec, live, state):
+              """Apply one VersionEdit to the live-table map. Tags are LevelDB's version_edit.cc."""
+              i = 0
+              while i < len(rec):
+                  tag, i = read_varint(rec, i)
+                  if tag == 1:  # comparator name
+                      n, i = read_varint(rec, i)
+                      i += n
+                  elif tag in (2, 9):  # log number, previous log number
+                      _, i = read_varint(rec, i)
+                  elif tag == 3:  # next file number
+                      state["next_file"], i = read_varint(rec, i)
+                  elif tag == 4:  # last sequence
+                      _, i = read_varint(rec, i)
+                  elif tag == 5:  # compact pointer: level, internal key
+                      _, i = read_varint(rec, i)
+                      n, i = read_varint(rec, i)
+                      i += n
+                  elif tag == 6:  # deleted file: level, number
+                      _, i = read_varint(rec, i)
+                      num, i = read_varint(rec, i)
+                      live.pop(num, None)
+                  elif tag == 7:  # new file: level, number, size, smallest, largest
+                      lvl, i = read_varint(rec, i)
+                      num, i = read_varint(rec, i)
+                      size, i = read_varint(rec, i)
+                      for _ in range(2):
+                          n, i = read_varint(rec, i)
+                          i += n
+                      live[num] = (lvl, size)
+                  else:
+                      raise ParseError("unknown VersionEdit tag %d" % tag)
+                  if i > len(rec):
+                      raise ParseError("VersionEdit field runs off the end of its record")
+
+
+          def read_manifest(path):
+              """Return (live, state, tail, interior_bad). live maps table number to (level, size)."""
+              with open(path, "rb") as f:
+                  data = f.read()
+              tail = {"truncated": False, "zero_bytes": 0, "pending_fragment": False}
+              live = {}
+              state = {"next_file": 0}
+              crc_bad = []
+              count = 0
+              try:
+                  for payload, ok in _scan(data, tail):
+                      if ok:
+                          decode_edit(payload, live, state)
+                      else:
+                          crc_bad.append(count)
+                      count += 1
+              except ParseError:
+                  # A checksum failure already seen is a positive finding that a later parse problem
+                  # must not hide; with none, the parse problem is the (inconclusive) answer.
+                  if not crc_bad:
+                      raise
+                  tail["parse_stopped"] = True
+              del data
+              # LevelDB's recovery fails the open on a record whose checksum does not match,
+              # wherever it sits, and the server answers that by repairing. So any bad record is
+              # damage; the position is kept only so the report can say whether it was the last.
+              tail["crc_bad_last"] = bool(crc_bad) and crc_bad[-1] == count - 1
+              return live, state, tail, crc_bad
+
+
+          def _table_name(num, db):
+              for suffix in TABLE_SUFFIXES:
+                  name = "%06d%s" % (num, suffix)
+                  if os.path.lexists(os.path.join(db, name)):
+                      return name
+              return "%06d.ldb" % num
+
+
+          def check_world(db):
+              """Check one db directory. Returns a report dict with status clean, damaged, absent or inconclusive."""
+              t0 = time.time()
+              report = {"db": db, "status": "clean", "problems": [], "warnings": []}
+
+              def done(status):
+                  report["status"] = status
+                  report["seconds"] = round(time.time() - t0, 3)
+                  return report
+
+              try:
+                  names = os.listdir(db)
+              except FileNotFoundError:
+                  return done("absent")
+              except OSError as e:
+                  report["warnings"].append({"kind": "unreadable", "error": str(e)})
+                  return done("inconclusive")
+
+              def is_data(n):
+                  if n.endswith(TABLE_SUFFIXES) or n.startswith("MANIFEST-"):
+                      return True
+                  return n.endswith(".log") and os.path.getsize(os.path.join(db, n)) > 0
+
+              try:
+                  has_data = any(is_data(n) for n in names)
+              except OSError as e:
+                  report["warnings"].append({"kind": "unreadable", "error": str(e)})
+                  return done("inconclusive")
+              if not has_data:
+                  return done("absent")
+
+              def problem(file, kind, **extra):
+                  p = {"file": file, "kind": kind}
+                  p.update(extra)
+                  report["problems"].append(p)
+
+              cur_path = os.path.join(db, "CURRENT")
+              try:
+                  with open(cur_path, "rb") as f:
+                      cur = f.read()
+              except FileNotFoundError:
+                  problem("CURRENT", "current-missing")
+                  return done("damaged")
+              except OSError as e:
+                  report["warnings"].append({"kind": "unreadable", "file": "CURRENT", "error": str(e)})
+                  return done("inconclusive")
+              if not cur.endswith(b"\n") or not cur.strip():
+                  problem("CURRENT", "current-invalid", bytes=len(cur))
+                  return done("damaged")
+              manifest = cur.decode("utf-8", "replace").strip()
+              report["manifest"] = manifest
+              if "/" in manifest or not manifest.startswith("MANIFEST-"):
+                  problem("CURRENT", "current-invalid", content=manifest[:40])
+                  return done("damaged")
+              mpath = os.path.join(db, manifest)
+              try:
+                  msize = os.path.getsize(mpath)
+              except FileNotFoundError:
+                  problem(manifest, "manifest-missing")
+                  return done("damaged")
+              if msize == 0:
+                  problem(manifest, "manifest-empty")
+                  return done("damaged")
+
+              if msize > MAX_MANIFEST_BYTES:
+                  # The whole file is read into memory, and the container has 256Mi: past this the
+                  # kernel would kill it, which is not a fail-open exit. LevelDB only starts a new
+                  # MANIFEST when the db is reopened, so a long-running server can get here.
+                  report["warnings"].append({"kind": "manifest-too-large", "bytes": msize})
+                  return done("inconclusive")
+              try:
+                  live, state, tail, interior_bad = read_manifest(mpath)
+              except (ParseError, struct.error, OSError) as e:
+                  report["warnings"].append({"kind": "manifest-unparsed", "error": str(e)})
+                  return done("inconclusive")
+              report["live_tables"] = len(live)
+              if interior_bad:
+                  problem(manifest, "manifest-checksum", records=interior_bad[:MAX_LISTED], last=tail["crc_bad_last"])
+                  # What the rest of this MANIFEST says cannot be trusted, so stop here.
+                  return done("damaged")
+              if tail["truncated"] or tail["pending_fragment"]:
+                  report["warnings"].append({"kind": "manifest-torn-tail"})
+              if tail["zero_bytes"]:
+                  report["warnings"].append({"kind": "manifest-zero-tail", "bytes": tail["zero_bytes"]})
+
+              bad_bytes = 0
+              unchecked = 0
+              for num, (_lvl, want) in sorted(live.items()):
+                  name = _table_name(num, db)
+                  path = os.path.join(db, name)
+                  try:
+                      st = os.stat(path)
+                  except FileNotFoundError:
+                      problem(name, "missing", expected=want)
+                      bad_bytes += want
+                      continue
+                  except OSError as e:
+                      report["warnings"].append({"kind": "unreadable", "file": name, "error": str(e)})
+                      unchecked += 1
+                      continue
+                  if st.st_size == 0:
+                      problem(name, "zero-byte", expected=want, mtime=int(st.st_mtime))
+                      bad_bytes += want
+                  elif st.st_size != want:
+                      problem(name, "size-mismatch", expected=want, actual=st.st_size, mtime=int(st.st_mtime))
+                      bad_bytes += want
+                  else:
+                      try:
+                          with open(path, "rb") as f:
+                              f.seek(-8, 2)
+                              magic = struct.unpack("<Q", f.read(8))[0]
+                      except OSError as e:
+                          report["warnings"].append({"kind": "unreadable", "file": name, "error": str(e)})
+                          unchecked += 1
+                          continue
+                      if magic != TABLE_MAGIC:
+                          problem(name, "bad-footer", expected=want, mtime=int(st.st_mtime))
+                          bad_bytes += want
+
+              orphans, orphan_zero = [], []
+              for n in names:
+                  if not n.endswith(TABLE_SUFFIXES):
+                      continue
+                  try:
+                      num = int(n.split(".")[0])
+                  except ValueError:
+                      continue
+                  if num in live:
+                      continue
+                  try:
+                      sz = os.path.getsize(os.path.join(db, n))
+                  except OSError:
+                      continue
+                  if sz == 0:
+                      orphan_zero.append(n)
+                  elif state["next_file"] and num >= state["next_file"]:
+                      orphans.append(n)
+              # An unreferenced table is something leveldb deletes when it opens the db, so
+              # neither kind loses data on its own. They are the mark of a half-finished
+              # compaction or a MANIFEST that lost its tail, which is why they are reported.
+              if orphan_zero:
+                  report["warnings"].append({"kind": "orphan-zero-byte", "count": len(orphan_zero), "files": sorted(orphan_zero)[:MAX_LISTED]})
+              if orphans:
+                  report["warnings"].append({"kind": "orphan-newer-than-manifest", "count": len(orphans), "files": sorted(orphans)[:MAX_LISTED]})
+              if os.path.isdir(os.path.join(db, "lost")):
+                  report["warnings"].append({"kind": "repair-evidence", "dir": "lost"})
+
+              if report["problems"]:
+                  report["bad_tables"] = len(report["problems"])
+                  report["bad_bytes"] = bad_bytes
+                  mt = [p["mtime"] for p in report["problems"] if "mtime" in p]
+                  if mt:
+                      report["bad_mtime_first"], report["bad_mtime_last"] = min(mt), max(mt)
+                  return done("damaged")
+              if unchecked:
+                  # Not "clean": a table that could not be read has not been shown to be whole, and a
+                  # hold must not be released on that. With no hold yet, inconclusive starts the server.
+                  report["unchecked_tables"] = unchecked
+                  return done("inconclusive")
+              return done("clean")
+
+
+          def _summary(report):
+              """The report cut down to what one log line should carry."""
+              out = {k: report[k] for k in ("status", "db", "manifest", "live_tables", "bad_tables", "bad_bytes", "seconds",
+                                            "bad_mtime_first", "bad_mtime_last") if k in report}
+              if report["problems"]:
+                  out["problems"] = report["problems"][:MAX_LISTED]
+                  kinds = {}
+                  for p in report["problems"]:
+                      kinds[p["kind"]] = kinds.get(p["kind"], 0) + 1
+                  out["kinds"] = kinds
+              if report["warnings"]:
+                  out["warnings"] = report["warnings"][:MAX_LISTED]
+              return out
+
+
+          def emit(event, **fields):
+              fields["event"] = event
+              fields["ts"] = int(time.time())
+              print("world-guard: " + json.dumps(fields, sort_keys=True), flush=True)
+
+
+          def _timeout(_signum, _frame):
+              raise CheckTimeout("check exceeded its time limit")
+
+
+          def safe_check(db, limit):
+              """check_world, but any failure of the guard itself is inconclusive rather than fatal."""
+              if hasattr(signal, "SIGALRM"):
+                  signal.signal(signal.SIGALRM, _timeout)
+                  signal.alarm(limit)
+              try:
+                  return check_world(db)
+              except Exception as e:  # noqa: BLE001 - the guard must not take the world down with it
+                  return {"db": db, "status": "inconclusive", "problems": [],
+                          "warnings": [{"kind": "guard-error", "error": "%s: %s" % (type(e).__name__, e)}]}
+              finally:
+                  if hasattr(signal, "SIGALRM"):
+                      signal.alarm(0)
+
+
+          def write_report(state_dir, report):
+              try:
+                  os.makedirs(state_dir, exist_ok=True)
+                  tmp = os.path.join(state_dir, "report.json.new")
+                  with open(tmp, "w") as f:
+                      json.dump(report, f, indent=1, sort_keys=True)
+                  os.replace(tmp, os.path.join(state_dir, "report.json"))
+                  return True
+              except OSError as e:
+                  emit("report_write_failed", error=str(e))
+                  return False
+
+
+          def _accepted(path):
+              """Only a regular file counts: a directory by that name would never be consumed."""
+              return os.path.isfile(path)
+
+
+          def _int(env, key, default):
+              try:
+                  return max(1, int(env.get(key, default)))
+              except (TypeError, ValueError):
+                  return default
+
+
+          def guard(env, sleep=time.sleep, now=time.time):
+              """The init-container loop. Returns the process exit code (always 0: see module doc)."""
+              data = env.get("DATA_DIR", "/data")
+              level = env.get("LEVEL_NAME", "")
+              mode = "enforce" if env.get("GUARD_MODE") == "enforce" else "warn"
+              recheck = _int(env, "RECHECK_SECONDS", 30)
+              limit = _int(env, "CHECK_TIMEOUT", 120)
+              # capped: warn mode must never hold the server, whatever the setting says
+              linger = min(_int(env, "WARN_LINGER_SECONDS", 30), 120)
+              if not level:
+                  emit("inconclusive", mode=mode, reason="LEVEL_NAME is not set")
+                  return 0
+              db = os.path.join(data, "worlds", level, "db")
+              state_dir = os.path.join(data, ".world-guard")
+              accept = os.path.join(data, ".world-guard-accept")
+              held_since = None
+              while True:
+                  report = safe_check(db, limit)
+                  status = report["status"]
+                  if status != "damaged" and held_since is not None and status != "clean":
+                      # A positive finding is already on record, so an undecided recheck (a timeout, a
+                      # transient read error) or a world that has gone missing mid-repair must not
+                      # release the hold: only a clean check, or an operator's accept, ends it.
+                      if _accepted(accept):
+                          _remove(accept)
+                          emit("accepted", mode=mode, reason="recheck was %s" % status, **_summary(report))
+                          return 0
+                      emit("held", mode=mode, held_seconds=int(now() - held_since), recheck_seconds=recheck,
+                           reason="recheck was %s" % status, **_summary(report))
+                      for _ in range(max(recheck, 1)):
+                          if _accepted(accept):
+                              break
+                          sleep(1)
+                      continue
+                  if status != "damaged":
+                      if os.path.lexists(accept):
+                          # An accept is for the damage it was given for; leaving it would
+                          # wave through the next, different one.
+                          _remove(accept)
+                          emit("accept_discarded", mode=mode, reason="world is not damaged")
+                      event = {"clean": "clean", "absent": "absent"}.get(status, "inconclusive")
+                      if held_since is not None:
+                          emit("released", mode=mode, held_seconds=int(now() - held_since), **_summary(report))
+                      else:
+                          emit(event, mode=mode, **_summary(report))
+                      return 0
+                  report["mode"] = mode
+                  report["checked_at"] = int(now())
+                  write_report(state_dir, report)
+                  if _accepted(accept):
+                      _remove(accept)
+                      emit("accepted", mode=mode, **_summary(report))
+                      return 0
+                  if mode != "enforce":
+                      emit("would_hold", mode=mode, **_summary(report))
+                      # The pod log is shipped by a tailer that starts at the END of a file it has just
+                      # discovered (a scan every ~10 s), so a line printed in the first instant of a
+                      # container that then exits is never shipped, and the page built on it would
+                      # never fire. Say it again for a while; this only happens when damage is found.
+                      for _ in range(linger // LINGER_STEP):
+                          sleep(LINGER_STEP)
+                          emit("would_hold", mode=mode, repeat=True, **_summary(report))
+                      return 0
+                  if held_since is None:
+                      held_since = now()
+                  emit("held", mode=mode, held_seconds=int(now() - held_since), recheck_seconds=recheck, **_summary(report))
+                  for _ in range(max(recheck, 1)):
+                      if _accepted(accept):
+                          break
+                      sleep(1)
+
+
+          def _remove(path):
+              try:
+                  os.remove(path)
+              except OSError as e:
+                  emit("accept_remove_failed", error=str(e))
+
+
+          def main(argv):
+              if len(argv) >= 2 and argv[1] == "check":
+                  if len(argv) != 3:
+                      print("usage: world_guard.py check DB_DIR", file=sys.stderr)
+                      return 64
+                  report = check_world(argv[2])
+                  print(json.dumps(report, indent=1, sort_keys=True))
+                  return {"clean": 0, "absent": 0, "damaged": 1}.get(report["status"], 2)
+              try:
+                  return guard(os.environ)
+              except BaseException as e:  # noqa: BLE001 - the guard failing must never be what holds the world
+                  emit("inconclusive", reason="guard crashed: %s: %s" % (type(e).__name__, e))
+                  return 0
+
+
+          if __name__ == "__main__":
+              sys.exit(main(sys.argv))
+        # END world-guard
+      env:
+        - name: DATA_DIR
+          value: /data
+        # Must equal minecraftServer.levelName below.
+        - name: LEVEL_NAME
+          value: FWB
+        - name: GUARD_MODE
+          value: warn
+        - name: RECHECK_SECONDS
+          value: "30"
+      volumeMounts:
+        # Read-write: it writes /data/.world-guard/report.json, and removes the
+        # operator's accept file when it uses it. It never writes under worlds/.
+        - name: datadir
+          mountPath: /data
+      # 256Mi: the whole MANIFEST is read into memory (one over 48 MiB is declined as
+      # inconclusive), and an OOM kill is not a fail-open exit.
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 3000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      # Puts the map's script pack into the world before the server opens it.
+      #
+      # The pack is what the map's live layer draws from: once a second it prints
+      # where every player and mob is to the server's console, the console bridge
+      # keeps those lines, and the map streams them to browsers. It has to be an
+      # init step in this pod because nothing else can write to the world's
+      # volume before the server has it open: the claim is ReadWriteOnce and
+      # mounted here.
+      #
+      # This is a container that runs ahead of the game server, so anything it
+      # waits on, the server waits on. Three rules follow, and tools/tests/
+      # test-map.sh fails the build on each:
+      #
+      #  1. Nothing from a Secret. No secretKeyRef, no envFrom, no secret volume.
+      #     A reference that cannot resolve leaves the pod in
+      #     CreateContainerConfigError with the server never started, which is
+      #     exactly how a sidecar's secret took this world offline for 40 hours
+      #     (docs/incidents/2026-09-06-fwb-console-bridge-secret.md). The
+      #     installer needs no credential and must never be given one.
+      #  2. One mount, the world's volume. A second volume is a second thing that
+      #     has to attach before the server may start.
+      #  3. The map's image, at a tag no newer than map.image.tag. The pack and
+      #     the service that parses its records ship in one image, and the hazard
+      #     is a pack newer than its parser: records the map does not understand
+      #     are dropped. An older pack is safe -- the map ignores fields it does
+      #     not know, and the record sentinel carries the format's own version --
+      #     so this tag stays where it is across map releases that do not change
+      #     the pack. That matters because moving it restarts the game server,
+      #     and with it every client: the agent has taken nine minutes to rejoin.
+      #     Move it when minecraft/mcmap/pack or the installer changed, which the
+      #     map's release notes say.
+      #
+      # initContainers is rendered by plain toYaml in the vendored subchart's
+      # deployment.yaml (confirmed by reading it), never passed through tpl. So,
+      # unlike sidecarContainers below, nothing in it can be conditional and
+      # nothing can be read from another value: the image is a literal string
+      # for the same reason the console-bridge sidecar's is, and the level name
+      # and mob cap are literals too. It also means this step is in every render,
+      # with or without values-console-bridge.yaml. Without the bridge the pack
+      # still prints its records and nothing reads them, which is waste, not
+      # harm.
+      #
+      # The installer fails open: a missing world, an unwritable volume, a pack
+      # list it cannot parse, a missing variable or a panic is logged and exits
+      # 0, and the server starts without the pack. Its one non-zero exit is a
+      # replacement it could neither finish nor undo, which the kubelet's retry
+      # repairs on the next attempt. That property is the only reason this step
+      # is allowed here, so do not wrap it: no `command` (a shell that is not in
+      # this distroless image would fail where the installer would not), no
+      # probes, and nothing that waits for the map or the bridge to be up. A
+      # pack that did not install shows up as JdwillmsenMinecraftMapLiveNeverStarted,
+      # not as a server that did not start.
+      #
+      # What this step cannot fail open on is its own image pull. The tag is
+      # pulled once per node and kept (IfNotPresent), and the map pod runs the
+      # same image, but a node that has to fetch it while the registry is down
+      # holds the server in Init until it can.
+      #
+      # Removing this block does NOT remove the pack. The files and the world's
+      # registration of them are on the volume and stay there. To turn the pack
+      # off, change `install-pack` below to `uninstall-pack` and let the server
+      # restart; README, "Live layer", has the procedure and when to use it.
+      #
+      # The pack only loads when the server starts, so everything here -- the
+      # step itself, a new image tag, a changed PACK_MOB_CAP -- takes effect on
+      # the restart that applying it causes, and that restart is announced by the
+      # deploy-announce hook like any other change to this pod.
+      #
+      # A volume with no world on it yet is the one start this step sits out on
+      # purpose: the server creates worlds/FWB on its first run, and the
+      # installer will not write a registration into a world directory the server
+      # did not make. The pack goes in on the second start. A world restored onto
+      # the volume is already there when the pod comes back, so a restore does
+      # not have this gap.
     - name: install-map-pack
       # map.image.repository at a tag no newer than map.image.tag; see rule 3
       # above for when to move it.

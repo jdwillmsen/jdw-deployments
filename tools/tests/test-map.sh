@@ -204,6 +204,12 @@ done
 # user the volume refuses, or a pack from a different release than the map
 # that parses it. initContainers is rendered by plain toYaml, so none of it
 # can be derived from another value and every one is a hand-kept literal.
+#
+# The world guard (values-map-pack.yaml, first in the list) is held to the same
+# generic rules -- no Secret, one mount, a user the volume accepts, a locked-down
+# container, limits -- and to its own in test-world-guard.sh. What is specific
+# to the pack installer (the map's image, its entrypoint, its environment) is
+# checked for install-map-pack only.
 python3 - "$work/rendered.yaml" <<'PY' || fail "the pack's init step could hold the game server or would not install the pack, or the map's live settings are out of range"
 import sys, yaml
 
@@ -217,8 +223,8 @@ game = pod["containers"][0]
 map_container = named("Deployment", "-map")[0]["spec"]["template"]["spec"]["containers"][0]
 
 inits = pod.get("initContainers") or []
-if [c["name"] for c in inits] != ["install-map-pack"]:
-    bad.append(f"expected exactly one init container, install-map-pack, found {[c['name'] for c in inits]}")
+if [c["name"] for c in inits] != ["world-guard", "install-map-pack"]:
+    bad.append(f"expected exactly the init containers world-guard then install-map-pack, found {[c['name'] for c in inits]}")
     inits = []
 
 # Volumes the pod template declares, plus the claim templates a StatefulSet
@@ -243,6 +249,7 @@ def secret_refs(node):
     return found
 
 for init in inits:
+    is_pack = init["name"] == "install-map-pack"
     if secret_refs(init):
         bad.append(f"the init step reads from a Secret ({', '.join(secret_refs(init))}); a secret that does not resolve holds the server")
     if "envFrom" in init:
@@ -267,30 +274,31 @@ for init in inits:
     if not any((m["name"], m["mountPath"]) == ("datadir", "/data") and not m.get("readOnly") for m in game["volumeMounts"]):
         bad.append("the game server no longer mounts datadir at /data, which is where the init step installs the pack")
 
-    # Same repository, and a tag no newer than the map's: an older pack is
-    # read by a newer parser, a newer pack is not. Equal tags are not
-    # required, because moving this one restarts the game server.
-    def release(image):
-        repo, _, tag = image.rpartition(":")
-        try:
-            return repo, tuple(int(part) for part in tag.split("."))
-        except ValueError:
-            return repo, None
-    (init_repo, init_tag), (map_repo, map_tag) = release(init["image"]), release(map_container["image"])
-    if init_repo != map_repo:
-        bad.append(f"the init step runs {init['image']}, the map runs {map_container['image']}; the pack must come from the map's own image")
-    elif init_tag is None or map_tag is None or len(init_tag) != 3 or len(map_tag) != 3:
-        bad.append(f"the init step runs {init['image']} and the map {map_container['image']}; both need a plain x.y.z tag to be compared")
-    elif init_tag > map_tag:
-        bad.append(f"the init step runs {init['image']}, newer than the map's {map_container['image']}; a pack newer than its parser has its records dropped")
+    if is_pack:
+        # Same repository, and a tag no newer than the map's: an older pack is
+        # read by a newer parser, a newer pack is not. Equal tags are not
+        # required, because moving this one restarts the game server.
+        def release(image):
+            repo, _, tag = image.rpartition(":")
+            try:
+                return repo, tuple(int(part) for part in tag.split("."))
+            except ValueError:
+                return repo, None
+        (init_repo, init_tag), (map_repo, map_tag) = release(init["image"]), release(map_container["image"])
+        if init_repo != map_repo:
+            bad.append(f"the init step runs {init['image']}, the map runs {map_container['image']}; the pack must come from the map's own image")
+        elif init_tag is None or map_tag is None or len(init_tag) != 3 or len(map_tag) != 3:
+            bad.append(f"the init step runs {init['image']} and the map {map_container['image']}; both need a plain x.y.z tag to be compared")
+        elif init_tag > map_tag:
+            bad.append(f"the init step runs {init['image']}, newer than the map's {map_container['image']}; a pack newer than its parser has its records dropped")
 
-    # The image's entrypoint is the installer's binary. A command replaces
-    # it, and a shell wrapper in a distroless image fails before the
-    # installer can fail open.
-    if "command" in init:
-        bad.append("the init step sets command; it must run the image's own entrypoint")
-    if init.get("args") not in (["install-pack"], ["uninstall-pack"]):
-        bad.append(f"the init step's args are {init.get('args')!r}; only install-pack or uninstall-pack")
+        # The image's entrypoint is the installer's binary. A command replaces
+        # it, and a shell wrapper in a distroless image fails before the
+        # installer can fail open.
+        if "command" in init:
+            bad.append("the init step sets command; it must run the image's own entrypoint")
+        if init.get("args") not in (["install-pack"], ["uninstall-pack"]):
+            bad.append(f"the init step's args are {init.get('args')!r}; only install-pack or uninstall-pack")
     for hook in ("livenessProbe", "readinessProbe", "startupProbe", "lifecycle"):
         if hook in init:
             bad.append(f"the init step has a {hook}; nothing may be able to fail it but the installer")
@@ -298,19 +306,20 @@ for init in inits:
     if "restartPolicy" in init:
         bad.append("the init step has a restartPolicy; it must run once and exit")
 
-    env = {e["name"]: e.get("value") for e in init.get("env") or []}
-    if set(env) != {"DATA_DIR", "LEVEL_NAME", "PACK_MOB_CAP"}:
-        bad.append(f"the init step's environment is {sorted(env)}; the installer reads DATA_DIR, LEVEL_NAME and PACK_MOB_CAP")
-    if env.get("DATA_DIR") != "/data":
-        bad.append(f"DATA_DIR is {env.get('DATA_DIR')!r}, but the world's volume is mounted at /data")
-    level = {e["name"]: e.get("value") for e in game["env"]}["LEVEL_NAME"]
-    if env.get("LEVEL_NAME") != level:
-        bad.append(f"the init step installs into world {env.get('LEVEL_NAME')!r}, the server runs {level!r}")
-    # The installer refuses nothing, it clamps: a cap outside 1..5000 would
-    # run with a different number from the one written here.
-    cap = env.get("PACK_MOB_CAP") or ""
-    if not (cap.isdigit() and 1 <= int(cap) <= 5000):
-        bad.append(f"PACK_MOB_CAP is {cap!r}; the pack supports 1 to 5000")
+    if is_pack:
+        env = {e["name"]: e.get("value") for e in init.get("env") or []}
+        if set(env) != {"DATA_DIR", "LEVEL_NAME", "PACK_MOB_CAP"}:
+            bad.append(f"the init step's environment is {sorted(env)}; the installer reads DATA_DIR, LEVEL_NAME and PACK_MOB_CAP")
+        if env.get("DATA_DIR") != "/data":
+            bad.append(f"DATA_DIR is {env.get('DATA_DIR')!r}, but the world's volume is mounted at /data")
+        level = {e["name"]: e.get("value") for e in game["env"]}["LEVEL_NAME"]
+        if env.get("LEVEL_NAME") != level:
+            bad.append(f"the init step installs into world {env.get('LEVEL_NAME')!r}, the server runs {level!r}")
+        # The installer refuses nothing, it clamps: a cap outside 1..5000 would
+        # run with a different number from the one written here.
+        cap = env.get("PACK_MOB_CAP") or ""
+        if not (cap.isdigit() and 1 <= int(cap) <= 5000):
+            bad.append(f"PACK_MOB_CAP is {cap!r}; the pack supports 1 to 5000")
 
     # Only the server's own user can write into the world's directories.
     uid, gid = effective(init, "runAsUser"), effective(init, "runAsGroup")
@@ -1890,8 +1899,8 @@ if (base.get("minecraft-bedrock") or {}).get("initContainers"):
     bad.append("values.yaml defines minecraft-bedrock.initContainers again; Renovate updates images in that file")
 
 pack = yaml.safe_load(open(f"{chart}/values-map-pack.yaml"))
-if len((pack.get("minecraft-bedrock") or {}).get("initContainers") or []) != 1:
-    bad.append("values-map-pack.yaml does not hold exactly one init container")
+if [c["name"] for c in (pack.get("minecraft-bedrock") or {}).get("initContainers") or []] != ["world-guard", "install-map-pack"]:
+    bad.append("values-map-pack.yaml does not hold exactly the world-guard and install-map-pack init containers, in that order")
 if set(pack) != {"minecraft-bedrock"} or set(pack["minecraft-bedrock"]) != {"initContainers"}:
     bad.append("values-map-pack.yaml holds something besides the init step; whatever else is there stops being updated too")
 
