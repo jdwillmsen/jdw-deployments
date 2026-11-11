@@ -28,9 +28,9 @@ pg="$here/charts/proving-grounds"
 helm template jdwillmsen-proving-grounds-prd "$pg" --namespace jdwillmsen-prd \
   -f "$pg/values.yaml" -f "$pg/values-prd.yaml" > "$work/pg.yaml"
 helm template jdwillmsen-proving-grounds-prd "$pg" --namespace jdwillmsen-prd \
-  -f "$pg/values.yaml" -f "$pg/values-prd.yaml" --set global.worldSync.enabled=true > "$work/pg-sync.yaml"
+  -f "$pg/values.yaml" -f "$pg/values-prd.yaml" --set global.worldSync.enabled=false > "$work/pg-nosync.yaml"
 
-python3 - "$here" "$work/pg.yaml" "$work/pg-sync.yaml" <<'PY' || fail "the proving-grounds guard or sidecar is not what the rules require"
+python3 - "$here" "$work/pg-nosync.yaml" "$work/pg.yaml" <<'PY' || fail "the proving-grounds guard or sidecar is not what the rules require"
 import sys, yaml
 
 here, plain, synced = sys.argv[1:4]

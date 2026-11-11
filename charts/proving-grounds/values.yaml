@@ -1,8 +1,13 @@
 # Crosses into the minecraft-bedrock subchart, which sees nothing else from this
 # file in its tpl-rendered sidecarContainers.
 global:
+  # On here so the sidecar soaks on a server where a regression costs nothing. The A/B
+  # on this server (tools/world-guard/tps-ab.py, JDW-341) put the cost at -0.5% and -1.0%
+  # of TPS under a write load far above the main server's, with the 95% bound on the loss
+  # not excluding 3%, and showed more I/O pressure; it is not on the main server until a
+  # longer soak says it is free.
   worldSync:
-    enabled: false
+    enabled: true
     intervalSeconds: 2
 
 minecraft-bedrock:

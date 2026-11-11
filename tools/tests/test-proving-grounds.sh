@@ -42,7 +42,7 @@ assert kinds == want, f"want exactly {want}, got {kinds}"
 sts = next(d for d in docs if d["kind"] == "StatefulSet")
 pod = sts["spec"]["template"]["spec"]
 server = pod["containers"][0]
-assert len(pod["containers"]) == 1, "the server is the only container (the world-sync sidecar is off by default)"
+assert [c["name"] for c in pod["containers"]][1:] in ([], ["world-sync"]), "the server is the only container, plus the world-sync sidecar"
 env = {e["name"]: e.get("value") for e in server["env"]}
 
 # Transport, ports and the public address the client is handed.
