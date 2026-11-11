@@ -16,15 +16,12 @@
 #     its own Service entry, because a Service port is a single number --
 #     there is no range form.
 #
-# publishNotReadyAddresses is the load-bearing line. Every probe the vendored
-# subchart renders is an `mc-monitor status-bedrock` RakNet ping, and a
-# NetherNet server answers none of them, so this pod reads NotReady for as
-# long as it speaks NetherNet. Without this, the endpoints list is empty and
-# a Service that is otherwise correct routes nothing at all.
-#
-# That is a bridge, not a design. It trades health signal for reachability
-# and says so; the probes have to stop assuming a transport before this can
-# come off. See README, "NetherNet transition".
+# publishNotReadyAddresses stays on although the pod is Ready today (the
+# subchart's `mc-monitor status-bedrock` probes run in `auto` mode and pass on
+# NetherNet). Readiness here is a single 1s exec with 3 failures, so one slow
+# tick would otherwise empty the endpoints and black-hole every player, which
+# is a worse outcome than routing to a pod for a few seconds too long. See
+# README, "NetherNet transition".
 apiVersion: v1
 kind: Service
 metadata:

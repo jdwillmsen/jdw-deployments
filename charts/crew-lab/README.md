@@ -46,8 +46,9 @@ operator.
 ## Transport
 
 The server is pinned to RakNet (`TRANSPORT: raknet`). Bedrock 1.26.51 and later
-default a new world to NetherNet, which opens no RakNet listener; crew dials
-RakNet only, and so do the subchart's own probes.
+default a new world to NetherNet, which opens no RakNet listener, and crew
+dials RakNet only. The subchart's own probes are not why: they run in `auto`
+mode and pass on either transport.
 
 ## The world
 

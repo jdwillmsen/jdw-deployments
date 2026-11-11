@@ -147,10 +147,12 @@ LATEST (1.26.61.1) is ahead of the Windows client. A version-check CronJob would
 see the pin differ from LATEST and restart the server every hour, so none is
 rendered. Unpin once the public client catches up.
 
-**NetherNet probes.** The subchart's probes are RakNet pings, which a NetherNet
-server never answers. As in the lab, startup is off, liveness is delayed a year
-and readiness fails, so the pod reads NotReady and the NetherNet Service sets
-`publishNotReadyAddresses`.
+**NetherNet probes.** The subchart's probes run `mc-monitor status-bedrock` in
+`auto` mode, which tries NetherNet first, so readiness passes and the pod is
+Ready. As in the lab, startup is off and liveness is delayed a year, and the
+NetherNet Service keeps `publishNotReadyAddresses`. The `mc-monitor` exporter
+is RakNet-only and is not deployed here. See the minecraft-fwb README,
+"NetherNet transition".
 
 **Ports.** Signaling is TCP on the server port (31200), but the signaling
 nodePort is 31201: the apiserver rejects reusing 31200 because the subchart's
