@@ -50,7 +50,9 @@ what clients are told to send gameplay UDP to, so it is the WAN address
   with nothing listening (2026-10-31 and 2026-11-01, about 3.4 h). `Accepting
   clients on [::]:<port>` is missing from the startup log. Fixed by the restart
   job re-checking the port and by `listener-watchdog.yaml`, which restarts any
-  server whose container is older than 6 minutes with no listener.
+  server whose container is older than 6 minutes with no listener. Every
+  NetherNet chart ships it (`minecraft-fwb`, `crew-lab`, `proving-grounds`,
+  `fwb-seed`); a new server's chart gets a copy.
 - **Remote players still fail with the VM counters at zero.** `sudo nft list
   table ip minecraft` on the VM: a TCP counter that rises with the UDP counters
   at 0 means the gateway is not forwarding the gameplay range.
@@ -62,3 +64,5 @@ what clients are told to send gameplay UDP to, so it is the WAN address
    (validate with `nft -c -f`, keep a dated backup, apply with `nft -f`).
 3. Add a gateway custom service (UDP, base port = first port) to the VM.
 4. Set the server's `SERVER_UDP_PORTS` to `<WAN address>:<external>:<internal>`.
+5. Copy `templates/listener-watchdog.yaml` and the `listenerWatchdog` values
+   block into the chart, and add the chart to `tools/tests/test-listener-watchdog.sh`.

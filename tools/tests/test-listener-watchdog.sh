@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Exercises the NetherNet listener watchdog's decisions against staged states,
-# for both charts that ship it. The script is extracted from the rendered chart,
+# for every chart that ships it. The script is extracted from the rendered chart,
 # so the test cannot drift from what runs, and kubectl is a shim that records a
 # stop instead of delivering it.
 set -euo pipefail
@@ -33,7 +33,7 @@ exit 0
 SHIM
 chmod +x "$work/bin/kubectl"
 
-for chart in minecraft-fwb crew-lab; do
+for chart in minecraft-fwb crew-lab proving-grounds fwb-seed; do
   helm template x "$here/charts/$chart" -f "$here/charts/$chart/values.yaml" | python3 -c "
 import sys, yaml
 for d in yaml.safe_load_all(sys.stdin):
@@ -64,4 +64,31 @@ for d in yaml.safe_load_all(sys.stdin):
   lacks "a stopped container is skipped" __STOP_CALLED__ FAKE_LISTEN=no FAKE_STARTED=
   has   "an undelivered stop fails loudly" '"event":"failed"' FAKE_LISTEN=no FAKE_STOP_OK=no
 done
+
+# The two side servers are parameterised by release name and port; the shim
+# above cannot see that, so check the rendered wiring against the real releases.
+wiring() {
+  local chart="$1" release="$2" port="$3"
+  helm template "$release" "$here/charts/$chart" -f "$here/charts/$chart/values.yaml" -f "$here/charts/$chart/values-prd.yaml" | python3 -c "
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+name = '$release-listener-watchdog'
+cj = next(d for d in docs if d['kind'] == 'CronJob' and d['metadata']['name'] == name)
+env = {e['name']: e['value'] for e in cj['spec']['jobTemplate']['spec']['template']['spec']['containers'][0]['env']}
+role = next(d for d in docs if d['kind'] == 'Role' and d['metadata']['name'] == name)
+rb = next(d for d in docs if d['kind'] == 'RoleBinding' and d['metadata']['name'] == name)
+pod = '$release-minecraft-bedrock-0'
+assert env['SERVER_POD'] == pod, env
+assert env['SERVER_CONTAINER'] == '$release-minecraft-bedrock', env
+assert env['SIGNAL_PORT'] == '$port', env
+assert cj['spec']['jobTemplate']['spec']['template']['spec']['serviceAccountName'] == name
+assert all(r['resourceNames'] == [pod] and r['verbs'] in (['get'], ['create']) for r in role['rules']), role
+assert rb['subjects'][0]['name'] == name
+sts = [d for d in docs if d['kind'] == 'StatefulSet']
+assert any(d['metadata']['name'] == env['SERVER_CONTAINER'] for d in sts), [d['metadata']['name'] for d in sts]
+" || fail "$chart: rendered watchdog is not wired to $release on port $port"
+  echo "  ok: $chart: wired to $release, signaling port $port"
+}
+wiring proving-grounds jdwillmsen-proving-grounds-prd 31200
+wiring fwb-seed jdwillmsen-fwb-seed-prd 31300
 echo PASS

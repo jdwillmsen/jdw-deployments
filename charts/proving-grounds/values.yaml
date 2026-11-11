@@ -904,3 +904,12 @@ restoreScratch:
   enabled: true
   storageClass: truenas-iscsi
   size: 5Gi
+
+# Restarts a NetherNet server whose signaling port is not listening. See
+# templates/listener-watchdog.yaml for the failure it exists for.
+listenerWatchdog:
+  enabled: true
+  schedule: "*/5 * * * *"
+  # Longer than any restart in this chart, so it never acts on one in progress.
+  minAgeSeconds: 360
+  image: alpine/k8s:1.37.1

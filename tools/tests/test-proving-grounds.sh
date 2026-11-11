@@ -29,14 +29,19 @@ docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 kinds = sorted((d["kind"], d["metadata"]["name"]) for d in docs)
 want = [
     ("ConfigMap", "jdwillmsen-proving-grounds-prd-lab-mods-stage0"),
+    ("CronJob", "jdwillmsen-proving-grounds-prd-listener-watchdog"),
     ("PersistentVolumeClaim", "jdwillmsen-proving-grounds-prd-restore-scratch"),
+    ("Role", "jdwillmsen-proving-grounds-prd-listener-watchdog"),
+    ("RoleBinding", "jdwillmsen-proving-grounds-prd-listener-watchdog"),
     ("Service", "jdwillmsen-proving-grounds-prd-minecraft-bedrock"),
     ("Service", "jdwillmsen-proving-grounds-prd-nethernet"),
+    ("ServiceAccount", "jdwillmsen-proving-grounds-prd-listener-watchdog"),
     ("StatefulSet", "jdwillmsen-proving-grounds-prd-minecraft-bedrock"),
 ]
-# Nothing else: no crew units or control plane, no CronJob (so no version
-# check that would restart a pinned server every hour). The scratch claim is
-# what tools/world-restore stages a restore on.
+# Nothing else: no crew units or control plane, and no version-check CronJob
+# (which would restart a pinned server every hour). The only CronJob is the
+# listener watchdog, which stops a server only when nothing is listening. The
+# scratch claim is what tools/world-restore stages a restore on.
 assert kinds == want, f"want exactly {want}, got {kinds}"
 
 sts = next(d for d in docs if d["kind"] == "StatefulSet")
