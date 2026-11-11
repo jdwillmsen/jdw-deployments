@@ -150,6 +150,8 @@ for uid, name in other.items():
     assert all(isinstance(v, int) for v in (*lo.values(), *hi.values())), "y must reach the plan as a number key"
     assert all(hi[k] - lo[k] < 400 and -500 <= lo[k] and hi[k] <= 499 for k in "xz"), "search box must fit the template limits"
     g = plan[3]["area"]
+    # Houses are oak and search does not limit breaking: stay 24+ blocks south of the village (Z189-298).
+    assert lo["z"] >= 322 and g["min"]["z"] >= 322 - 24, "search box and grove must clear the village"
     assert all(g["max"][k] - g["min"][k] < 64 for k in "xyz"), "grove span"
     # Newer than the lab tag, so only this unit runs it.
     img = dep["spec"]["template"]["spec"]["containers"][0]["image"]
