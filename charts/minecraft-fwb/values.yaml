@@ -276,27 +276,30 @@ minecraft-bedrock:
     # benefit to us either way; on by deliberate choice, not a default.
     emitServerTelemetry: true
 
-  # Every probe the vendored subchart renders is the same thing: an
-  # `mc-monitor status-bedrock` RakNet ping at 127.0.0.1:serverPort. Only the
-  # timings are values; the exec itself is hardcoded in that chart's
-  # deployment.yaml and 2.9.0 is its newest published release, so there is no
-  # NetherNet-aware version to move to.
+  # Every probe the vendored subchart renders is the same exec:
+  # `mc-monitor status-bedrock` against 127.0.0.1:serverPort. Only the timings
+  # are values; the exec is hardcoded in that chart's deployment.yaml, and
+  # 2.9.0 is its newest published release.
   #
-  # Under transport=nethernet the server opens no RakNet listener, so all
-  # three fail forever. Left alone, the startupProbe burns its 60 attempts and
-  # kills the container, and liveness then restarts it every ~60s -- an outage
-  # of our own making on top of the one this transition is fixing.
+  # The image's mc-monitor runs it with `-protocol auto`, which tries NetherNet
+  # first and falls back to RakNet, so it passes on a NetherNet server and the
+  # pod is Ready. Readiness is therefore a real health signal here, and the
+  # jobs that wait on Ready (backup, census, scheduled restart) rely on it.
   #
-  # So: startup off, liveness pushed a year out so it never fires. Readiness
-  # is deliberately left where it is. It fails, this pod reads NotReady, and
-  # that is the honest signal -- nothing here is health-checking the server
-  # any more. The NetherNet Service carries publishNotReadyAddresses so
-  # players still route to a pod nobody is checking.
+  # Startup stays off and liveness a year out on purpose, not because they
+  # would fail. The subchart hardcodes the probe timeout at 1s with 3
+  # failures, so one stalled tick (a backup's `save hold`, a GC pause, a node
+  # hang like 2026-11-06) would let the kubelet SIGKILL a LevelDB world with a
+  # corruption history, and the restarted container can come up with no
+  # listener. The listener watchdog restarts gracefully instead. Turning
+  # liveness on with tunable timings needs the workload template vendored out
+  # of the subchart, which Renovate can then no longer bump.
   #
-  # This is a bridge with a specific exit: probes that do not assume a
-  # transport, which needs the workload template vendored out of the subchart.
-  # Until that lands, this workload is not observable and must not be read as
-  # healthy. See README, "NetherNet transition".
+  # What is NOT transport-aware is the mc-monitor sidecar below:
+  # `export-for-prometheus` pings over RakNet only, so under NetherNet its
+  # minecraft_status_* series read as down while the server is fine. Alert on
+  # pod readiness, the signaling TCP probe and mc_joinprobe_joinable instead.
+  # See charts/minecraft-fwb/README.md, "NetherNet transition".
   startupProbe:
     enabled: false
   livenessProbe:
@@ -314,6 +317,12 @@ minecraft-bedrock:
   # in its one-shot `status-bedrock` mode. `export-for-prometheus` is the same
   # binary in long-running Prometheus-exporter mode — reusing the image means
   # no second image to pin or pull for player-count/reachability metrics.
+  #
+  # Unlike `status-bedrock` it has no protocol option (go-raknet only, still
+  # true in 1.19.0), so under NetherNet minecraft_status_healthy is 0 and
+  # carries no server_version for a server that is up. Kept for the series
+  # that still work once upstream moves to `auto`; nothing here should alert
+  # on it meanwhile.
   #
   # There is no `serve-bedrock` subcommand — that was a guess that shipped
   # without checking `mc-monitor help`, and it crash-looped the sidecar
@@ -1651,13 +1660,15 @@ netherNet:
   # namespace; Prometheus selects Probes and PrometheusRules with empty
   # selectors, so both objects are picked up from this tenant namespace with
   # no change to the platform repo.
-  # On because the server speaks NetherNet, where this TCP connect is the only
-  # check that a player can reach it: the kubelet probes are RakNet pings and
-  # are switched off. It was left off from the RakNet days, so the 2026-11-01
-  # outage -- nothing listening on the signaling port for 3.4 hours after the
-  # nightly restart -- paged nobody. A RakNet server opens no TCP listener
-  # here, so move back to RakNet and this must go off with it, or it reports
-  # probe_success 0 for a server that is serving fine.
+  # On because the server speaks NetherNet, where this TCP connect checks from
+  # outside the cluster what the kubelet cannot: that the signaling port a
+  # player dials is routed and listening. Readiness only proves the server
+  # answers on loopback, and liveness is off on purpose (see the probes above).
+  # It was left off from the RakNet days, so the 2026-11-01 outage -- nothing
+  # listening on the signaling port for 3.4 hours after the nightly restart --
+  # paged nobody. A RakNet server opens no TCP listener here, so move back to
+  # RakNet and this must go off with it, or it reports probe_success 0 for a
+  # server that is serving fine.
   #
   # The Service, the ports and this probe stay in the chart rather than being
   # deleted either way, so the next transport change starts from what was

@@ -1,16 +1,18 @@
 {{- if and .Values.netherNet.enabled .Values.netherNet.probe.enabled }}
-# The only thing watching this server while it speaks NetherNet.
+# The check from outside the cluster that players can reach this server while
+# it speaks NetherNet.
 #
-# Every probe the vendored subchart renders is an `mc-monitor status-bedrock`
-# RakNet ping, so under NetherNet the kubelet's liveness check is switched off
-# and readiness is left failing on purpose (see values.yaml). That leaves
-# nothing to notice if the server dies -- no restart, no alert, and a pod that
-# already reads NotReady so its state cannot get any worse to look at.
+# The kubelet's readiness probe is an `mc-monitor status-bedrock` exec in
+# `auto` mode, so it passes on NetherNet, but it runs on loopback inside the
+# pod and liveness is off on purpose (see values.yaml). Neither sees a dead
+# node or a NodePort that stopped being routed, and a server that dies leaves
+# the pod to be restarted by nothing. The `minecraft_status_*` series cannot
+# stand in: the exporter pings over RakNet only and reads 0 under NetherNet.
 #
-# blackbox's tcp_connect against the signaling NodePort closes that gap from
-# outside the cluster: it is the same connect a client makes first, on the
-# address and port players actually dial, so it fails for a dead server, a
-# dead node, and a NodePort that stopped being routed alike.
+# blackbox's tcp_connect against the signaling NodePort closes that gap: it is
+# the same connect a client makes first, on the address and port players
+# actually dial, so it fails for a dead server, a dead node, and a NodePort
+# that stopped being routed alike.
 #
 # What it does not cover, stated so nobody reads more into it than it says: a
 # server that accepts the TCP connection and then cannot carry a session.

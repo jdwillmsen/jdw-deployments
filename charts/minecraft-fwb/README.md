@@ -921,6 +921,61 @@ Two separate approvals, both the owner's.
 The procedure is in the map's README. It has been exercised against the
 suite's harness only.
 
+## NetherNet transition
+
+The server runs `transport=nethernet`. Not everything that reads its health
+learned that, so which signals to trust depends on who is asking.
+
+**Kubelet probes work.** Every probe the `minecraft-bedrock` subchart renders is
+the same exec, `mc-monitor status-bedrock` at `127.0.0.1:serverPort`. The
+image's mc-monitor (1.18.3) runs it with `-protocol auto`, which tries NetherNet
+first and falls back to RakNet after 3 seconds, so it passes on a NetherNet
+server. The pod is Ready, and the jobs gated on Ready (`scheduled-restart`,
+`backup`, `census-snapshot`, `deploy-announce`) run. Check one by hand:
+`kubectl exec <pod> -c <server> -- mc-monitor status-bedrock --host 127.0.0.1 --port 31132`.
+
+**The exporter does not.** The `mc-monitor` sidecar runs
+`export-for-prometheus`, which pings over RakNet only and has no protocol option
+(still true in 1.19.0). Under NetherNet `minecraft_status_healthy` is 0 for a
+server that is up, and the series carries no `server_version`. Nothing should
+alert on `minecraft_status_*` until upstream gives the exporter the `auto` path
+and the image carries it; re-check then, because the sidecar is kept for that
+day. The consumers still reading it are the dashboard panels, the platform's
+`JdwillmsenMinecraftServerUnreachable` rule, and the agent's `!online` and
+`!version`.
+
+**Read these instead.**
+
+| Signal | Source | Says |
+|---|---|---|
+| Pod container readiness | `kube_pod_container_status_ready` | the server answers on loopback |
+| `JdwillmsenMinecraftUnreachable` | blackbox TCP connect to the signaling NodePort | a player can reach the port |
+| `JdwillmsenMinecraftUnjoinable` | `mc_joinprobe_joinable`, `mc_joinprobe_server_info{version}` | the signaling endpoint answers and what version it advertises |
+
+**Startup and liveness stay off on purpose.** The subchart hardcodes a 1s probe
+timeout with 3 failures and does not let a chart change either. A stalled tick
+(a backup's `save hold`, a GC pause, a node hang) would let the kubelet SIGKILL
+a LevelDB world that has a corruption history. Tuning liveness needs the
+workload template vendored out of the subchart, after which Renovate can no
+longer bump it. See the comment above `minecraft-bedrock.startupProbe` in
+`values.yaml`.
+
+**`publishNotReadyAddresses` stays on.** The pod is Ready today, but a single
+failed readiness exec would otherwise empty the NetherNet Service's endpoints
+and cut every player off for as long as it lasted.
+
+**A restart in place can leave no listener.** A NetherNet server binds its
+signaling port once, at start. After a container restart without a new pod (the
+nightly restart, a crash, an OOM kill) TIME_WAIT sockets from the old process
+can make that bind fail silently, and the server then runs for hours with
+nothing listening. `listenerWatchdog` (`templates/listener-watchdog.yaml`)
+stops the server again once the sockets have expired; `JdwillmsenMinecraftUnreachable`
+is what pages if it does not recover. `crew-lab` has the same watchdog;
+`proving-grounds` and `fwb-seed` have none.
+
+The `crew-lab`, `proving-grounds` and `fwb-seed` charts share the probe
+behaviour above and point here from their `values.yaml`.
+
 ## Tests
 
 ```bash

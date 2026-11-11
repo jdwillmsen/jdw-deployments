@@ -75,9 +75,12 @@ minecraft-bedrock:
     # static, so update it here if the ISP changes it.
     SERVER_UDP_PORTS: "104.53.12.62:19200-19219:31310-31329"
 
-  # The subchart's probes are RakNet pings a NetherNet server never answers:
-  # startup off, liveness a year out, readiness fails and the NetherNet
-  # Service publishes not-ready addresses.
+  # The subchart's probes run `mc-monitor status-bedrock` in `auto` mode, which
+  # tries NetherNet first, so they pass on a NetherNet server and the pod is
+  # Ready. Startup is off and liveness a year out because the NetherNet setup
+  # shipped them off, not because they fail: the subchart hardcodes a 1s
+  # timeout with 3 failures, so enabling them is a rollout to soak, not a
+  # given. See charts/minecraft-fwb/README.md, "NetherNet transition".
   startupProbe:
     enabled: false
   livenessProbe:

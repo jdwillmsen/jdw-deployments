@@ -64,8 +64,8 @@ vct = sts["spec"]["volumeClaimTemplates"][0]
 assert vct["spec"]["storageClassName"] == "truenas-iscsi", vct["spec"]["storageClassName"]
 assert vct["spec"]["resources"]["requests"]["storage"] == "5Gi", vct["spec"]["resources"]
 
-# NetherNet answers no RakNet ping: startup probe off, liveness a year out,
-# readiness left to fail (the Service publishes not-ready addresses).
+# Startup probe off and liveness a year out, as shipped. Readiness stays: the
+# subchart's `auto` mode probe passes on NetherNet.
 assert "startupProbe" not in server, "a startup probe would kill a healthy NetherNet server"
 assert server["livenessProbe"]["initialDelaySeconds"] == 31536000, server["livenessProbe"]
 assert "readinessProbe" in server

@@ -21,12 +21,9 @@
 # on the thing it is checking.
 #
 # The subchart's Service drops the pod from its endpoints the moment readiness
-# fails, and readiness is an `mc-monitor status-bedrock` RakNet ping -- so a
-# probe dialling that Service would find no endpoint at all precisely when the
+# fails, and readiness is an `mc-monitor status-bedrock` ping -- so a probe
+# dialling that Service would find no endpoint at all precisely when the
 # server is in trouble, and would report "unreachable" for every cause alike.
-# Worse, under NetherNet that readiness is switched off and left failing on
-# purpose (see minecraft-bedrock.startupProbe in values.yaml), which would make
-# this a permanent critical page about a healthy server.
 #
 # publishNotReadyAddresses is the same answer nethernet-service.yaml already
 # gives, for the same reason: this route has to reach the pod whatever the

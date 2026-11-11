@@ -1,9 +1,10 @@
 {{- if .Values.netherNet.enabled }}
 # Signaling is TCP on the server's own port; gameplay is UDP from the range
 # pinned by SERVER_UDP_PORTS, one Service port per number because there is no
-# range form. publishNotReadyAddresses is required: the subchart's probes ping
-# RakNet, which a NetherNet server never answers, so the pod is NotReady and
-# would otherwise have no endpoints.
+# range form. publishNotReadyAddresses stays on although the pod is Ready
+# today: it keeps one failed readiness probe from emptying the endpoints and
+# dropping every player. See charts/minecraft-fwb/README.md, "NetherNet
+# transition".
 apiVersion: v1
 kind: Service
 metadata:
