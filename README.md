@@ -62,7 +62,7 @@ The chart keeps everything the attempt produced, switched off:
 |---|---|---|
 | `nethernet-service.yaml` | rendered, unused | NetherNet is where Mojang is going; the nodePort and UDP-range mechanics were expensive to work out |
 | `nethernet-probe.yaml` | `netherNet.probe.enabled: true` | A TCP connect against the signaling port. FWB runs NetherNet, so it is the check that players can reach the server; turn it off if the transport goes back to RakNet |
-| `listener-watchdog.yaml` | `listenerWatchdog.enabled: true` | Restarts a NetherNet server whose signaling port is not listening after an in-place restart; see `docs/minecraft-nethernet-public-route.md` |
+| `listener-watchdog.yaml` | `listenerWatchdog.enabled: true` | Restarts a NetherNet server whose signaling port is not listening after an in-place restart; see `docs/minecraft-nethernet-public-route.md`. `crew-lab`, `proving-grounds` and `fwb-seed` ship the same file |
 
 What a second attempt needs, beyond what is here:
 
