@@ -1041,9 +1041,9 @@ bot2:
 
   # The direction this bot looks once spawned (north, south, east, west or yaw
   # degrees, quoted: an unquoted 0 reads as unset). Needs afkbot 1.11.0; older
-  # images simply ignore it, so rolling back is safe. 96 is the bearing from
-  # the bot to the owner's spot at 123, 229 (due west is 90).
-  facing: "96"
+  # images simply ignore it, so rolling back is safe. 91 is the bearing from
+  # the bot at 128.5, 229.5 to the owner's spot at 123.9, 229.4 (due west is 90).
+  facing: "91"
 
   # The gamertag this account plays as is afk-bot-2's in global.actors. It was
   # recorded here first, as documentation only, because nothing else mapped a
