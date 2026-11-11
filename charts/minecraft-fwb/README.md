@@ -952,13 +952,15 @@ day. The consumers still reading it are the dashboard panels, the platform's
 | `JdwillmsenMinecraftUnreachable` | blackbox TCP connect to the signaling NodePort | a player can reach the port |
 | `JdwillmsenMinecraftUnjoinable` | `mc_joinprobe_joinable`, `mc_joinprobe_server_info{version}` | the signaling endpoint answers and what version it advertises |
 
-**Startup and liveness stay off on purpose.** The subchart hardcodes a 1s probe
-timeout with 3 failures and does not let a chart change either. A stalled tick
-(a backup's `save hold`, a GC pause, a node hang) would let the kubelet SIGKILL
-a LevelDB world that has a corruption history. Tuning liveness needs the
-workload template vendored out of the subchart, after which Renovate can no
-longer bump it. See the comment above `minecraft-bedrock.startupProbe` in
-`values.yaml`.
+**Startup is on; liveness stays off on purpose.** The startup probe only acts
+while the server has not come up, and it gives up after about 15.5 minutes, so
+it never preempts `listenerWatchdog`. Liveness is the owner's call (2026-11-11):
+the subchart hardcodes a 1s probe timeout with 3 failures and does not let a
+chart change either, so a stalled tick (a backup's `save hold`, a GC pause, a
+node hang) would let the kubelet SIGKILL a LevelDB world that has a corruption
+history. Tuning liveness needs the workload template vendored out of the
+subchart, after which Renovate can no longer bump it. See the comment above
+`minecraft-bedrock.startupProbe` in `values.yaml`.
 
 **`publishNotReadyAddresses` stays on.** The pod is Ready today, but a single
 failed readiness exec would otherwise empty the NetherNet Service's endpoints
