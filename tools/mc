@@ -114,14 +114,17 @@ cmd_where() {
   # The map's live layer already publishes every player's position and yaw
   # several times a second, so this reads that instead of asking the console,
   # whose replies to querytarget and list are not echoed to the log.
-  kubectl logs -n "$NAMESPACE" "$pod" --since=10s 2>/dev/null | tr -d '\000' \
+  local logs
+  logs="$(kubectl logs -n "$NAMESPACE" "$pod" --since=10s 2>/dev/null)" \
+    || err "could not read the server log" "the pod may be restarting: $SELF status"
+  printf '%s\n' "$logs" | tr -d '\000' \
     | grep -a 'MCMAP1 {.*"dim":"overworld","kind":"players"' | tail -1 \
     | WHO="$who" python3 -c '
 import json, math, os, re, sys
 line = sys.stdin.read()
 m = re.search(r"MCMAP1 (\{.*\})", line)
 if not m:
-    print("players: unknown"); print("reason: no live-layer players frame in the last 10s"); sys.exit(1)
+    print("players: unknown"); print("reason: no overworld players frame in the last 10s (the map layer may be off, or nobody is in the overworld)"); sys.exit(1)
 items = json.loads(m.group(1))["items"]
 who = os.environ.get("WHO", "")
 rows = [i for i in items if not who or i["n"].lower() == who.lower()]
@@ -132,16 +135,16 @@ def facing(r):
     return ["south", "west", "north", "east"][int(((r % 360) + 45) // 90) % 4]
 def bearing(a, b):
     return math.degrees(math.atan2(-(b["x"] - a["x"]), b["z"] - a["z"])) % 360
-print("players: %d" % len(rows))
+print("players: %d (overworld only)" % len(rows))
 for i in rows:
     print("  - %s  x=%.1f y=%.1f z=%.1f  yaw=%d (%s)" % (i["n"], i["x"], i["y"], i["z"], i["r"] % 360, facing(i["r"])))
 if len(rows) > 1:
-    print("bearings (yaw that points a at b):")
+    print("bearings (yaw that points a at b, distance is horizontal):")
     for a in rows:
         for b in rows:
             if a is not b:
                 d = math.hypot(b["x"] - a["x"], b["z"] - a["z"])
-                print("  %s -> %s  yaw=%d  distance=%.1f" % (a["n"], b["n"], bearing(a, b), d))
+                print("  %s -> %s  yaw=%d  horizontal_distance=%.1f" % (a["n"], b["n"], bearing(a, b), d))
 '
 }
 
