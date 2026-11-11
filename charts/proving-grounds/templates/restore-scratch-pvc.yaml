@@ -1,0 +1,21 @@
+{{- if .Values.restoreScratch.enabled }}
+# The staging claim for tools/world-restore: a good world is copied here,
+# verified, and only then swapped onto the live volume. Separate from the
+# server's own claim so a bad source never has a path to the only copy.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-restore-scratch
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # It can hold the only complete copy of a damaged world (<level>-damaged-<UTC>), so a
+    # sync must never prune it, whatever the values say.
+    argocd.argoproj.io/sync-options: Prune=false
+spec:
+  storageClassName: {{ .Values.restoreScratch.storageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.restoreScratch.size }}
+{{- end }}
