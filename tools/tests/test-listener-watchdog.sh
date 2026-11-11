@@ -82,7 +82,7 @@ assert env['SERVER_POD'] == pod, env
 assert env['SERVER_CONTAINER'] == '$release-minecraft-bedrock', env
 assert env['SIGNAL_PORT'] == '$port', env
 assert cj['spec']['jobTemplate']['spec']['template']['spec']['serviceAccountName'] == name
-assert all(r['resourceNames'] == [pod] and r['verbs'] in (['get'], ['create']) for r in role['rules']), role
+assert sorted((tuple(r['resources']), tuple(r['verbs']), tuple(r['resourceNames'])) for r in role['rules']) == [(('pods',), ('get',), (pod,)), (('pods/exec',), ('create',), (pod,))], role
 assert rb['subjects'][0]['name'] == name
 sts = [d for d in docs if d['kind'] == 'StatefulSet']
 assert any(d['metadata']['name'] == env['SERVER_CONTAINER'] for d in sts), [d['metadata']['name'] for d in sts]
