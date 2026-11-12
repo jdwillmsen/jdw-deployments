@@ -137,25 +137,25 @@ for uid, name in other.items():
     assert e["MC_HOST"] == "http://192.168.1.163" and e["MC_PORT"] == "31301" and e["MC_OFFLINE"] == "false", e
     assert e["AUTH_CACHE_DIR"] == f"/data/{uid}/auth"
     # Lab coordinates and lab wiring: none of it belongs on another world.
-    for lab_only in ("KIT_CHEST", "KIT_FOOD", "JOIN_DELAY_S", "CREW_LAB", "CREW_ROLE", "CREW_SQUAD", "CREW_UNIT_ROLE"):
+    for lab_only in ("JOIN_DELAY_S", "CREW_LAB", "CREW_ROLE", "CREW_SQUAD", "CREW_UNIT_ROLE"):
         assert lab_only not in e, (uid, lab_only)
+    assert e["KIT_CHEST"] != "3,64,-403", "must be its own chest, not the lab's"
     plan = json.loads(e["WORK_PLAN"])
-    assert [t["template"] for t in plan] == ["gather_and_deposit", "gather_and_deposit", "withdraw", "plant_trees"], plan
-    chest = {"x": 168, "y": 68, "z": 248}
-    assert plan[0]["item"] == "oak_log" and plan[0]["chest"] == chest, plan
-    assert plan[1]["item"] == "oak_sapling" and plan[1]["chest"] == chest, plan
-    assert plan[2]["chest"] == chest and plan[2]["items"] == {"oak_sapling": 4}, plan
-    assert plan[0]["search"] == plan[1]["search"], "one search box for logs and saplings"
-    lo, hi = plan[0]["search"]["min"], plan[0]["search"]["max"]
+    assert [t["template"] for t in plan] == ["use_bed", "gather_and_deposit", "gather_and_deposit", "withdraw", "plant_trees"], plan
+    chest = {"x": 112, "y": 69, "z": 330}
+    assert plan[0]["block"] == {"x": 115, "y": 69, "z": 330} and plan[1]["item"] == "oak_log" and plan[1]["chest"] == chest, plan
+    assert plan[2]["item"] == "oak_sapling" and plan[2]["chest"] == chest, plan
+    assert plan[3]["chest"] == chest and plan[3]["items"] == {"oak_sapling": 4}, plan
+    assert plan[1]["search"] == plan[2]["search"], "one search box for logs and saplings"
+    lo, hi = plan[1]["search"]["min"], plan[1]["search"]["max"]
     assert all(isinstance(v, int) for v in (*lo.values(), *hi.values())), "y must reach the plan as a number key"
     assert all(hi[k] - lo[k] < 400 and -500 <= lo[k] and hi[k] <= 499 for k in "xz"), "search box must fit the template limits"
-    g = plan[3]["area"]
-    # Houses are oak and search does not limit breaking: stay 24+ blocks south of the village (Z189-298).
-    assert lo["z"] >= 322 and g["min"]["z"] >= 322 - 24, "search box and grove must clear the village"
+    g = plan[4]["area"]
     assert all(g["max"][k] - g["min"][k] < 64 for k in "xyz"), "grove span"
+    assert e["KIT_CHEST"] == "114,69,331" and e["KIT_GEAR"] == "true" and e["RECOVER_DROPS"] == "true", e
     # Newer than the lab tag, so only this unit runs it.
     img = dep["spec"]["template"]["spec"]["containers"][0]["image"]
-    assert img.endswith(":1.86.0"), img
+    assert img.endswith(":1.87.0"), img
     for oid, od in all_deps.items():
         if oid != uid and "crew" in od["spec"]["template"]["spec"]["containers"][0]["image"]:
             assert od["spec"]["template"]["spec"]["containers"][0]["image"].endswith(":1.79.0"), oid

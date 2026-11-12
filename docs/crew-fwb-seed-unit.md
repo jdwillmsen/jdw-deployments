@@ -91,25 +91,28 @@ inventory in crew-control):
     kubectl -n jdwillmsen-prd exec jdwillmsen-fwb-seed-prd-minecraft-bedrock-0 -- send-command 'give "Dotablaze7321" dirt 32'
 
 The dirt is the pillar it climbs for tall trunks. The unit joins at the world
-spawn (0, 0), about 300 blocks from the base, and a goto only paths over chunks
-already sent, so move it once, with the real ground `y` of the base:
+spawn (0, 0), about 300 blocks from its base, and a walk only paths over chunks
+already sent, so move it once to the base by hand:
 
-    kubectl -n jdwillmsen-prd exec jdwillmsen-fwb-seed-prd-minecraft-bedrock-0 -- send-command 'tp "Dotablaze7321" 166 <y> 248'
-    kubectl -n jdwillmsen-prd exec jdwillmsen-fwb-seed-prd-minecraft-bedrock-0 -- send-command 'spawnpoint "Dotablaze7321" 166 <y> 248'
+    kubectl -n jdwillmsen-prd exec jdwillmsen-fwb-seed-prd-minecraft-bedrock-0 -- send-command 'effect "Dotablaze7321" slow_falling 60 0 true'
+    kubectl -n jdwillmsen-prd exec jdwillmsen-fwb-seed-prd-minecraft-bedrock-0 -- send-command 'tp "Dotablaze7321" 114 90 331'
 
-The second keeps it there after a death.
+It then taps the bed (the plan's first task), which sets its respawn point at
+the base, so a death returns it there, where its gear chest is in reach. No
+`spawnpoint` command is needed. Stock the gear chest at 114 69 331 (sword,
+axe, pickaxe, armour, food).
 
 ## Before it does real work
 
-- **The delivery chest does not exist.** Place a chest near X168 Z248, read its
-  coordinates, and set `deliveryChest` on crew-23 (the plan reads it). The default
-  `y` 64 is a guess, and so is the goto's.
-- **Point the grove away from the houses.** `area` bounds what it may break, but
-  village houses have oak logs; set `area` over trees.
-- Chest, goto and grove must stay inside x, z -500..499.
-- Not verified: a unit joining NetherNet on fwb-seed from inside the cluster (the
-  lab's units do the same against the lab; no client join was tested here), and
-  that the village is where the task bounds say.
+- **This twin world has its own terrain.** The FWB base and village
+  coordinates mean nothing here. The base is a strip of grass beside the oak
+  forest at X89-143, Z310-405: bed at 115 69 329-330, delivery chest 112 69 330,
+  gear chest 114 69 331. Keep every coordinate inside x, z -500..499.
+- `search` only steers where the unit looks for trees; it does not limit what
+  it breaks, so keep the search box away from anything built of oak.
+- Not verified on a live server: that a daytime tap on the bed sets the
+  respawn point, and the shelter, recovery and gear pickup behaviours (all new
+  in crew 1.87.0; recovery and gear are opt-in through `survival`).
 - crew-23 shows in the crew console like any unit. Do not select it for lab Jobs:
   those use lab coordinates. crew-control only reads units and queues tasks; it
   neither kits nor restarts them.

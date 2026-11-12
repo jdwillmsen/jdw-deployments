@@ -162,6 +162,28 @@ spec:
               value: {{ .food | quote }}
             {{- end }}
             {{- end }}
+            {{- with $unit.survival }}
+            {{- /* A unit off the lab keeps its own gear chest and recovers its
+            drops after a death; the lab's shared kit chest is not its own. */}}
+            {{- with .kitChest }}
+            - name: KIT_CHEST
+              value: {{ . | quote }}
+            - name: KIT_GEAR
+              value: "true"
+            {{- end }}
+            {{- with .kitFood }}
+            - name: KIT_FOOD
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .kitReach }}
+            - name: KIT_REACH
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .recoverDrops }}
+            - name: RECOVER_DROPS
+              value: "true"
+            {{- end }}
+            {{- end }}
             {{- if $.Values.crew.control.enabled }}
             # Both or neither: the unit refuses a control URL without a token
             # and exits, so the Secret is required rather than optional; a
