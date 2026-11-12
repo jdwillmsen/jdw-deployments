@@ -95,7 +95,7 @@ spec:
                   value: {{ include "backup.serverStatefulSet" . }}
               command: ["/bin/bash", "/script/snapshot.sh"]
               resources:
-{{- toYaml .Values.census.resources | nindent 16 }}
+{{- toYaml .Values.census.snapshot.resources | nindent 16 }}
               volumeMounts:
                 - name: world
                   mountPath: /data
