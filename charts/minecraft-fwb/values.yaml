@@ -117,7 +117,7 @@ minecraft-bedrock:
     # default rolling tag, which upgrades the server binary underneath a live
     # world; for a GitOps workload whose state is the whole point, that is a
     # silent-change hazard rather than a convenience.
-    tag: "2026.10.2"
+    tag: "2026.11.0"
     pullPolicy: IfNotPresent
 
   # RollingUpdate never runs two writers: a StatefulSet terminates its pod and
@@ -2315,7 +2315,7 @@ map:
     #
     # 1.53.0 lets "and N more" in the player details' tallies open to every
     # row.
-    tag: "1.53.0"
+    tag: "1.54.3"
     pullPolicy: IfNotPresent
 
   # What the route publishes: the page, the login, and the map API and tiles
