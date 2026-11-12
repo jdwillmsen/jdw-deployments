@@ -492,13 +492,17 @@ crew:
         z: 330
       # Its own image: tree search and planting are newer than the tag the rest
       # of the lab runs.
-      imageTag: "1.87.0"
+      imageTag: "1.91.0"
+      role: chopper
       # Gear chest and bed at the base. The bed sets the respawn point so a
       # death returns the unit to the base, where the kit chest is in reach.
       survival:
         kitChest: "114,69,331"
         kitFood: 8
         recoverDrops: true
+        invManage: true
+        nightShelter: true
+        homePos: "114,69,331"
       workPlan:
         - template: use_bed
           block: {x: 115, "y": 69, z: 330}
