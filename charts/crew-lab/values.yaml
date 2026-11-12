@@ -471,13 +471,13 @@ crew:
     # fwb-seed has no unit-kit pack, so the unit needs its axe by hand, and
     # crew has no give-to-player task: the wood goes to `deliveryChest`, and
     # the owner hands it over. A task cannot walk outside x, z -500..499, and
-    # the unit joins at the world spawn (0 0), 300 blocks from the base, so it
-    # is moved to the base once by hand. The village is X96-199, Z189-298 and
-    # the base is near X168, Z248. `search` only steers where the unit looks
-    # for trees, it does not limit what it breaks, and houses are oak: the
-    # search box and the grove therefore stay south of the village, with the
-    # unit's 24-block chopping reach still clear of it. `y` is quoted because
-    # YAML reads a bare y as true.
+    # the unit joins at the world spawn (0 0), 300 blocks away, so it is moved
+    # to the base once by hand. This twin world has different terrain from
+    # FWB, so the FWB base coordinates mean nothing here: the base is a strip
+    # of grass beside the oak forest at X89-143, Z310-405 (bed 115 69 329-330,
+    # delivery chest 112 69 330, gear chest 114 69 331). `search` only steers
+    # where the unit looks for trees, it does not limit what it breaks. `y` is
+    # quoted because YAML reads a bare y as true.
     - id: crew-23
       name: fwb-afk-bot-2
       replicas: 1
@@ -487,19 +487,27 @@ crew:
         host: "http://192.168.1.163"
         port: 31301
       deliveryChest: &fwbSeedDeliveryChest
-        x: 168
-        "y": 68
-        z: 248
+        x: 112
+        "y": 69
+        z: 330
       # Its own image: tree search and planting are newer than the tag the rest
       # of the lab runs.
-      imageTag: "1.86.0"
+      imageTag: "1.87.0"
+      # Gear chest and bed at the base. The bed sets the respawn point so a
+      # death returns the unit to the base, where the kit chest is in reach.
+      survival:
+        kitChest: "114,69,331"
+        kitFood: 8
+        recoverDrops: true
       workPlan:
+        - template: use_bed
+          block: {x: 115, "y": 69, z: 330}
         - template: gather_and_deposit
           item: oak_log
           qty: 16
           search: &fwbSeedTreeSearch
-            min: {x: 80, "y": 55, z: 330}
-            max: {x: 330, "y": 120, z: 420}
+            min: {x: 70, "y": 55, z: 300}
+            max: {x: 200, "y": 120, z: 420}
           chest: *fwbSeedDeliveryChest
         - template: gather_and_deposit
           item: oak_sapling
@@ -513,8 +521,8 @@ crew:
           item: oak_sapling
           qty: 4
           area:
-            min: {x: 150, "y": 60, z: 306}
-            max: {x: 181, "y": 72, z: 337}
+            min: {x: 118, "y": 60, z: 318}
+            max: {x: 141, "y": 80, z: 341}
     - id: crew-24
       name: Xeno
       role: warrior
