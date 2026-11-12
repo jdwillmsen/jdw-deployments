@@ -152,8 +152,11 @@ pack's equip and restock functions, the lab rebuild and unit-kit gate player
 lists, the join stagger and the kit chest. The lab server's rendered output does
 not change, so adding or removing such a unit never restarts it. Its standing
 work is `workPlan`, a list of task bodies rendered as `WORK_PLAN`. `crew-23` is
-the one today, held at `replicas: 0` until the owner's test; see
-`docs/crew-fwb-seed-unit.md`.
+the one today (`docs/crew-fwb-seed-unit.md`). Such a unit may also set
+`imageTag` (its own crew version) and `survival` (`kitChest` as `x,y,z`,
+`kitFood`, `kitReach`, `recoverDrops`), which become `KIT_CHEST`/`KIT_GEAR`/
+`KIT_FOOD`/`KIT_REACH`/`RECOVER_DROPS`. Do not set `survival` on a lab unit: it
+already gets the lab's kit chest.
 
 ### Warrior training switch
 
