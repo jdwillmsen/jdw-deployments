@@ -71,6 +71,14 @@ spec:
             - name: FACING
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.bot2.stow }}
+            - name: STOW
+              value: "true"
+            {{- end }}
+            {{- with .Values.bot2.seat }}
+            - name: SEAT
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.global.presence.enabled }}
             {{- $actor := include "actors.forValuesKey" (dict "root" . "key" "bot2") | fromJson }}
             # PRESENCE_DEFAULT is what the bot acts on until the agent first
