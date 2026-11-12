@@ -137,8 +137,10 @@ for uid, name in other.items():
     assert e["MC_HOST"] == "http://192.168.1.163" and e["MC_PORT"] == "31301" and e["MC_OFFLINE"] == "false", e
     assert e["AUTH_CACHE_DIR"] == f"/data/{uid}/auth"
     # Lab coordinates and lab wiring: none of it belongs on another world.
-    for lab_only in ("JOIN_DELAY_S", "CREW_LAB", "CREW_ROLE", "CREW_SQUAD", "CREW_UNIT_ROLE"):
+    for lab_only in ("JOIN_DELAY_S", "CREW_LAB", "CREW_ROLE", "CREW_SQUAD"):
         assert lab_only not in e, (uid, lab_only)
+    assert e["CREW_UNIT_ROLE"] == "chopper", e
+    assert e["INV_MANAGE"] == "true" and e["NIGHT_SHELTER"] == "true" and e["HOME_POS"] == "114,69,331", e
     assert e["KIT_CHEST"] != "3,64,-403", "must be its own chest, not the lab's"
     plan = json.loads(e["WORK_PLAN"])
     assert [t["template"] for t in plan] == ["use_bed", "gather_and_deposit", "gather_and_deposit", "withdraw", "plant_trees"], plan
@@ -155,7 +157,7 @@ for uid, name in other.items():
     assert e["KIT_CHEST"] == "114,69,331" and e["KIT_GEAR"] == "true" and e["RECOVER_DROPS"] == "true", e
     # Newer than the lab tag, so only this unit runs it.
     img = dep["spec"]["template"]["spec"]["containers"][0]["image"]
-    assert img.endswith(":1.87.0"), img
+    assert img.endswith(":1.91.0"), img
     for oid, od in all_deps.items():
         if oid != uid and "crew" in od["spec"]["template"]["spec"]["containers"][0]["image"]:
             assert od["spec"]["template"]["spec"]["containers"][0]["image"].endswith(":1.79.0"), oid
