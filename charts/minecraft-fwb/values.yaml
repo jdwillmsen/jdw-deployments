@@ -1837,13 +1837,32 @@ census:
       # The scan holds every entity in memory at once -- about 22,600 on the
       # production world, which is small. The ceiling is sized for the archive
       # extraction and the LevelDB read rather than the entity slice.
-      memory: 1Gi
+      #
+      # Kept low on purpose: the namespace's tenant-quota caps limits.memory
+      # and the pod is refused outright, with no pod and no log, once the
+      # headroom drops below the pod's summed limits. At 1Gi the pod (census
+      # plus the 128Mi publisher sidecar, which the quota counts alongside it)
+      # asked for 1152Mi and three nights in a row were refused with 992Mi
+      # free, surfacing only as DeadlineExceeded.
+      memory: 512Mi
       # The namespace quota caps limits.cpu at 8000m, of which the server
       # holds 4000m and the backup, volume-recovery and version-check jobs can
       # claim 2000m between them if they land together. 500m for a job that
       # runs once a day, an hour after the backup has finished, fits without
       # reopening that fight.
       cpu: 500m
+
+  # The snapshot init container only runs kubectl and head, so it gets a
+  # fraction of the census's budget. It runs before the sidecar starts, so the
+  # pod's quota cost is the larger of this and census + sidecar, never the sum.
+  snapshot:
+    resources:
+      requests:
+        memory: 64Mi
+        cpu: 50m
+      limits:
+        memory: 192Mi
+        cpu: 250m
 
 # Restarts the server nightly, because on Bedrock 1.26.51.1 tick rate decays
 # with process age -- 20.00 TPS after a restart, about 3.5 TPS/day lost
