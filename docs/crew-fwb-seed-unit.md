@@ -92,7 +92,9 @@ inventory in crew-control):
 
 The dirt is the pillar it climbs for tall trunks. The unit joins at the world
 spawn (0, 0), about 300 blocks from its base, and a walk only paths over chunks
-already sent, so move it once to the base by hand:
+already sent, so after every restart check where it is (the unit's position
+in the console) and, if it is still near spawn, move it to the base by hand and
+confirm it arrives before work resumes:
 
     kubectl -n jdwillmsen-prd exec jdwillmsen-fwb-seed-prd-minecraft-bedrock-0 -- send-command 'effect "Dotablaze7321" slow_falling 60 0 true'
     kubectl -n jdwillmsen-prd exec jdwillmsen-fwb-seed-prd-minecraft-bedrock-0 -- send-command 'tp "Dotablaze7321" 114 90 331'
