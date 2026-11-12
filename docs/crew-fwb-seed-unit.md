@@ -2,13 +2,13 @@
 
 `crew-23` is a crew worker that joins the `fwb-seed` server (NetherNet, online
 mode, `http://192.168.1.163:31301`) as the Xbox account FWB's `afk-bot-2` plays
-on, Dotablaze7321. afk-bot-2 stays on FWB, untouched. The unit walks to the
-village, fells oak and deposits the logs in a chest. It is a `crew-lab` chart
+on, Dotablaze7321. afk-bot-2 stays on FWB, untouched. The unit searches for
+oak near its base, fells it and deposits the logs in a chest. It is a `crew-lab` chart
 unit with a `server` override (`charts/crew-lab/README.md`, "Units on another
-server"); the lab's unit-kit pack, rebuild job, gate, yards and kit chest ignore
-it, so the lab server is not restarted.
+server"); the lab's unit-kit pack, rebuild job, gate and yards ignore it, and it has
+its own gear chest through `survival`, so the lab server is not restarted.
 
-It ships at `replicas: 0` and cannot start by itself.
+It runs at `replicas: 1`; set `replicas: 0` (not `kubectl scale`, Argo reverts it) to stop it.
 
 ## Can one account be on two servers? (read from the code, not run)
 
@@ -111,8 +111,9 @@ axe, pickaxe, armour, food).
 - `search` only steers where the unit looks for trees; it does not limit what
   it breaks, so keep the search box away from anything built of oak.
 - Not verified on a live server: that a daytime tap on the bed sets the
-  respawn point, and the shelter, recovery and gear pickup behaviours (all new
-  in crew 1.87.0; recovery and gear are opt-in through `survival`).
+  respawn point, and the death recovery and gear pickup (new in crew 1.87.0 and
+  opt-in through `survival`). Night shelter exists as a task but nothing starts
+  it yet.
 - crew-23 shows in the crew console like any unit. Do not select it for lab Jobs:
   those use lab coordinates. crew-control only reads units and queues tasks; it
   neither kits nor restarts them.
