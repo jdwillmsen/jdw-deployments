@@ -1835,8 +1835,9 @@ census:
       cpu: 100m
     limits:
       # The scan holds every entity in memory at once -- about 22,600 on the
-      # production world, which is small. The ceiling is sized for the archive
-      # extraction and the LevelDB read rather than the entity slice.
+      # production world, which is small. 512Mi is an estimate from the code,
+      # not a measurement: the first run that takes the archive-fallback path
+      # is the one to check for OOMKilled.
       #
       # Kept low on purpose: the namespace's tenant-quota caps limits.memory
       # and the pod is refused outright, with no pod and no log, once the
