@@ -15,7 +15,7 @@ minecraft-bedrock:
     repository: itzg/minecraft-bedrock-server
     # Pinned, as in the other two Bedrock charts: the tag versions the
     # container tooling, the server binary is chosen by minecraftServer.version.
-    tag: "2026.10.2"
+    tag: "2026.11.0"
     pullPolicy: IfNotPresent
 
   # A StatefulSet waits for the old pod to go before starting the new one, so
@@ -792,7 +792,7 @@ minecraft-bedrock:
     # install-lab-packs: both only add or replace their own entries in the pack
     # lists. The server image is used for its tar and jq only.
     - name: install-lab-mods-stage0
-      image: "itzg/minecraft-bedrock-server:2026.10.2"
+      image: "itzg/minecraft-bedrock-server:2026.11.0"
       command:
         - sh
         - -ec
