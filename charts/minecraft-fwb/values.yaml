@@ -2380,7 +2380,13 @@ map:
     # pinning tables the mirror has since compacted away: about three worlds
     # plus the tiles and the renderer, around 2.4 GiB, half of this claim.
     # JdwillmsenMinecraftVolumeNearFull is the signal to expand it.
-    size: 5Gi
+    #
+    # Measured on prd 2026-11-22: 4.29 GiB used, 88.5% of the claim. The
+    # generations directory held 3.6 GiB: the live pair plus four
+    # operator-kept copies (a damaged snapshot and three keep-* freezes) of
+    # 0.5 to 0.9 GiB each, so the ceiling above was reached. Expanded online;
+    # the claim cannot shrink back.
+    size: 10Gi
 
   resources:
     requests:
