@@ -50,6 +50,7 @@ gate() {
   fi
 }
 
+# shellcheck disable=SC2329 # only called from by-name gates
 need() {
   command -v "$1" >/dev/null 2>&1 && return 0
   echo "   SKIP: $1 is not installed" >&2
@@ -58,6 +59,7 @@ need() {
 
 # --- gates, one per ci.yml job -------------------------------------------
 
+# shellcheck disable=SC2329 # dispatched by name
 g_lint() {
   local chart
   for chart in charts/*/; do
@@ -66,6 +68,7 @@ g_lint() {
   done
 }
 
+# shellcheck disable=SC2329 # dispatched by name
 g_template() {
   local chart name values_file
   for chart in charts/*/; do
@@ -78,6 +81,7 @@ g_template() {
   done
 }
 
+# shellcheck disable=SC2329 # dispatched by name
 g_vendored_dependencies() {
   local rc=0 chart name version _repo status
   for chart in charts/*/; do
@@ -96,6 +100,7 @@ g_vendored_dependencies() {
   return "$rc"
 }
 
+# shellcheck disable=SC2329 # dispatched by name
 g_validate_config() {
   need yq || return 1
   local rc=0 config apps i name ns chart_path value_files j vf
@@ -130,6 +135,7 @@ g_validate_config() {
 # comparison point is origin/main, which is the same question a pull request
 # asks. Booting a real server image is the slowest gate by far, so it stays
 # conditional rather than becoming a reason not to run this script.
+# shellcheck disable=SC2329 # dispatched by name
 g_smoke_test() {
   need yq || return 1
   need docker || return 1
@@ -158,6 +164,7 @@ g_smoke_test() {
 # independent -- each renders its own chart copy into its own mktemp directory
 # and shims its own PATH -- and sequentially they are 88s against a 21s
 # longest. Output is buffered per suite so a failure reads as one block.
+# shellcheck disable=SC2329 # dispatched by name
 g_tools_tests() {
   local rc=0 i status
   local -a pids names
@@ -181,12 +188,14 @@ g_tools_tests() {
 # when Docker is missing, so this script stays useful on a machine that has
 # none -- a skipped scanner is visible in the output and an absent one is not.
 
+# shellcheck disable=SC2329 # dispatched by name
 g_gitleaks() {
   need docker || return 1
   docker run --rm -v "$here:/repo" -w /repo \
     zricethezav/gitleaks:latest detect --source=/repo --no-banner --redact --exit-code 1
 }
 
+# shellcheck disable=SC2329 # dispatched by name
 g_trivy() {
   need docker || return 1
   # Advisory in CI (fail-on-findings defaults false), so advisory here: the
@@ -200,6 +209,7 @@ g_trivy() {
 # verify-pr-signatures asserts server-side using GitHub's own `verified` field.
 # Locally the keyring is the only thing available, so this checks that a
 # signature exists and is not bad -- weaker than the real gate, and it says so.
+# shellcheck disable=SC2329 # dispatched by name
 g_signatures() {
   local bad=0 sha status
   while read -r sha status; do
@@ -218,6 +228,7 @@ g_signatures() {
 # A gate added to ci.yml and not here is the failure this script would cause:
 # a merge that looks locally green while a real check it never ran would have
 # failed. Cheaper to refuse to run than to be quietly incomplete.
+# shellcheck disable=SC2329 # dispatched by name
 g_in_sync_with_ci() {
   local expected actual
   expected=$(awk '/^jobs:/{f=1;next} f && /^  [a-z][a-z0-9-]*:$/{gsub(/[ :]/,"");print}' .github/workflows/ci.yml | sort)
