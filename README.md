@@ -623,6 +623,11 @@ tiles have stopped updating; the page itself keeps serving what it has.
 `JdwillmsenMinecraftSaveResumeOwed` is the one that matters for the world: it
 means the bridge paused saving for a snapshot and the server has not
 confirmed the resume for ten minutes. Run `save resume` from the console.
+If the server is also not ready, it is most likely stuck half-stopped (a
+`stop` that arrived during a hold, as on 2026-11-18) and no longer reads its
+console: the hold-wedge watchdog kills its process after fifteen minutes not
+ready, and the kubelet restarts it in place. Its job log says which condition
+held it back if it did not.
 
 **History.** With `map.history.enabled` the map (1.24.0 and later) also keeps
 the tiles as they were on each day, on a second claim, `<release>-map-history`.
