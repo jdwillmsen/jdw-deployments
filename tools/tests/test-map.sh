@@ -5,10 +5,11 @@
 # themselves, over kubectl exec, where the console bridge cannot see it. The
 # map pauses and resumes saving for its own snapshots, so a snapshot that
 # overlapped one of those jobs could resume saving under that job's copy and
-# leave a backup that is silently inconsistent. The map is kept away by the
-# clock (map.quietUTC), and a schedule and a window are two values in two
-# places: move the backup to 03:00 and everything still renders, syncs and
-# looks healthy. This fails instead.
+# leave a backup that is silently inconsistent. The daily restart is the
+# third: its stop, landing during a snapshot's hold, leaves a server that never
+# exits. The map is kept away by the clock (map.quietUTC), and a schedule and a
+# window are two values in two places: move the backup to 03:00 and everything
+# still renders, syncs and looks healthy. This fails instead.
 #
 # Second, what is published: see the exposure check below.
 #
@@ -47,7 +48,7 @@ helm template minecraft-fwb "$chart" \
 # Ten minutes before each job starts, because a snapshot that began just
 # before it must be finished and resumed by then: the bridge caps one hold at
 # five minutes.
-MARGIN_BEFORE_MINUTES=10 python3 - "$work/rendered.yaml" <<'PY' || fail "the map's quiet windows do not cover the jobs that pause saving"
+MARGIN_BEFORE_MINUTES=10 python3 - "$work/rendered.yaml" <<'PY' || fail "the map's quiet windows do not cover the jobs that pause saving or stop the server"
 import os, sys, yaml
 
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
@@ -65,7 +66,7 @@ def quiet(minute):
 
 margin = int(os.environ["MARGIN_BEFORE_MINUTES"])
 bad = False
-for suffix in ("-backup", "-census"):
+for suffix in ("-backup", "-census", "-scheduled-restart"):
     job = by("CronJob", suffix)
     minute, hour, *rest = job["spec"]["schedule"].split()
     if not (minute.isdigit() and hour.isdigit() and rest == ["*", "*", "*"]):
@@ -1922,4 +1923,4 @@ for line in bad:
 sys.exit(1 if bad else 0)
 PY
 
-echo "PASS: map quiet windows cover the backup and census, the internal token is generated once, only the public port is published and only behind the login, the pack's init step cannot hold the server, the map and live alerts fire when they should, and the browser checks are off, cannot be turned on in a namespace that is not enforced, are contained when on, rotate their secret from git, and tell when a run fails, never finishes or stops being started"
+echo "PASS: map quiet windows cover the backup, census and daily restart, the internal token is generated once, only the public port is published and only behind the login, the pack's init step cannot hold the server, the map and live alerts fire when they should, and the browser checks are off, cannot be turned on in a namespace that is not enforced, are contained when on, rotate their secret from git, and tell when a run fails, never finishes or stops being started"
