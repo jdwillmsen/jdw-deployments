@@ -2372,8 +2372,16 @@ map:
   # minutes before each start, and past the backup's 3600s deadline and the
   # census's 900s timeout.
   #
-  # tools/tests/test-map.sh fails if either schedule moves outside a window.
-  quietUTC: "03:50-05:10,05:30-06:10"
+  # The scheduled restart (16:40) gets a window for a different reason: a
+  # `stop` that lands while saving is held never finishes, and the server sits
+  # half-stopped until its process is killed. That is what took FWB down on
+  # 2026-11-18, when the restart's stop arrived 250ms into a snapshot's hold.
+  # Its window runs to the job's 1200s deadline, because a heal can send a
+  # second stop that late.
+  #
+  # tools/tests/test-map.sh fails if any of the three schedules moves outside
+  # a window.
+  quietUTC: "03:50-05:10,05:30-06:10,16:30-17:05"
 
   # Chunks rendered at once. One, because the pod's CPU limit is the binding
   # constraint, not this; more only adds memory.
