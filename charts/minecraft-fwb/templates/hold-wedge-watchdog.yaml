@@ -2,6 +2,17 @@
 {{- $name := printf "%s-hold-wedge-watchdog" .Release.Name }}
 {{- $serverPod := include "backup.serverPod" . }}
 {{- $serverContainer := include "backup.serverStatefulSet" . }}
+{{- /* A value the script cannot compare must stop the render: the kill is
+the one action here, so a typo like "15m" may not reach it. */ -}}
+{{- range $k, $floor := dict "wedgeSeconds" 300 "backoffSeconds" 3600 }}
+{{- $v := toString (index $.Values.holdWedgeWatchdog $k) }}
+{{- if not (regexMatch "^[0-9]+$" $v) }}
+{{- fail (printf "holdWedgeWatchdog.%s must be a plain integer number of seconds, got %q" $k $v) }}
+{{- end }}
+{{- if lt (int64 $v) (int64 $floor) }}
+{{- fail (printf "holdWedgeWatchdog.%s must be at least %d seconds, got %s" $k (int64 $floor) $v) }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -59,7 +70,10 @@ subjects:
 # probe's to judge. The hard bound is the previous container: if it exited
 # non-zero within backoffSeconds -- a kill from here, or any crash -- this
 # reports and leaves the server alone, so at most one kill per window can come
-# from here and a second wedge is the alert's, for a person. Non-zero rather
+# from here and a second wedge is the alert's, for a person. The window is per
+# container lifetime, not a rolling six hours of history: lastState holds only
+# the previous container's exit, so after one more restart of any kind the
+# record of the kill is gone. Non-zero rather
 # than 137 alone, because the container's exit code is its entrypoint's, not
 # necessarily the signal the server died of.
 apiVersion: batch/v1
@@ -129,6 +143,10 @@ spec:
               args:
                 - |
                   set -uo pipefail
+                  # Anything but plain integers cannot be compared, and a failed
+                  # (( )) would read as "not under the limit" and go on to the
+                  # kill, so refuse to act at all.
+                  [[ $WEDGE_SECONDS =~ ^[0-9]+$ && $BACKOFF_SECONDS =~ ^[0-9]+$ ]] || { echo "{\"event\":\"skipped\",\"detail\":\"wedge or backoff seconds is not an integer\"}"; exit 0; }
                   NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
                   emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
                   in_server() { timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- sh -c "$1" 2>/dev/null; }

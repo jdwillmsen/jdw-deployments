@@ -75,12 +75,15 @@ for suffix in ("-backup", "-census", "-scheduled-restart"):
         continue
     start = int(hour) * 60 + int(minute)
     deadline = job["spec"]["jobTemplate"]["spec"]["activeDeadlineSeconds"]
-    # Every minute from the margin before the start to the job's deadline:
-    # the job may hold saving at any point in its run.
-    uncovered = [m for m in range(start - margin, start + -(-deadline // 60) + 1) if not quiet(m)]
+    # A run admitted late by startingDeadlineSeconds starts that much after
+    # its schedule, and then runs to its own deadline.
+    late = job["spec"].get("startingDeadlineSeconds", 0)
+    # Every minute from the margin before the start to the latest the job can
+    # still be running: the job may hold saving at any point in its run.
+    uncovered = [m for m in range(start - margin, start + -(-(late + deadline) // 60) + 1) if not quiet(m)]
     if uncovered:
         first = uncovered[0] % 1440
-        print(f"{suffix[1:]} runs {int(hour):02d}:{int(minute):02d} UTC for up to {deadline}s, "
+        print(f"{suffix[1:]} runs {int(hour):02d}:{int(minute):02d} UTC, up to {late}s late, for up to {deadline}s, "
               f"but {first // 60:02d}:{first % 60:02d} UTC is outside map.quietUTC ({env['QUIET_UTC']})")
         bad = True
 sys.exit(1 if bad else 0)
@@ -1132,7 +1135,7 @@ tests:
               namespace: jdwillmsen-prd
             exp_annotations:
               summary: "Minecraft FWB may have world saving paused"
-              description: "The console bridge paused saving for a map snapshot and the server has not confirmed the resume for ten minutes. The bridge keeps retrying and refuses new snapshots meanwhile. Check the server log for \"Changes to the world are resumed\"; if it is missing, run `save resume` from the console. The nightly backup also resumes saving when it finishes. If the server is also not ready it is stuck mid-stop and ignores the console; the hold-wedge watchdog kills its process after 900s not ready."
+              description: "The console bridge paused saving for a map snapshot and the server has not confirmed the resume for ten minutes. The bridge keeps retrying and refuses new snapshots meanwhile. Check the server log for \"Changes to the world are resumed\"; if it is missing, run `save resume` from the console. The nightly backup also resumes saving when it finishes. If the server is also not ready it is stuck mid-stop and ignores the console. The hold-wedge watchdog kills its process after 900s not ready."
 
   # History. A map that keeps its days has a gauge no more than a day and a
   # cycle behind the clock; one tracking the clock is the limit of that.
