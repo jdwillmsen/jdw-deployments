@@ -396,9 +396,11 @@ spec:
               server log for "Changes to the world are resumed"; if it is
               missing, run `save resume` from the console. The nightly backup
               also resumes saving when it finishes. If the server is also not
-              ready it is stuck mid-stop and ignores the console; the
+              ready it is stuck mid-stop and ignores the console.
+{{- if .Values.holdWedgeWatchdog.enabled }} The
               hold-wedge watchdog kills its process after
               {{ .Values.holdWedgeWatchdog.wedgeSeconds }}s not ready.
+{{- end }}
 {{- if .Values.map.history.enabled }}
         - alert: JdwillmsenMinecraftMapHistoryMissed
           # A day is kept at the first cycle after 00:00 UTC, so the newest

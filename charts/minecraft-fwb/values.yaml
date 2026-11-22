@@ -2376,12 +2376,13 @@ map:
   # `stop` that lands while saving is held never finishes, and the server sits
   # half-stopped until its process is killed. That is what took FWB down on
   # 2026-11-18, when the restart's stop arrived 250ms into a snapshot's hold.
-  # Its window runs to the job's 1200s deadline, because a heal can send a
-  # second stop that late.
+  # Its window runs to 17:15: a run admitted as late as its 600s
+  # startingDeadlineSeconds starts at 16:50, and a heal in it can send a second
+  # stop until the job's 1200s deadline, 17:10.
   #
   # tools/tests/test-map.sh fails if any of the three schedules moves outside
   # a window.
-  quietUTC: "03:50-05:10,05:30-06:10,16:30-17:05"
+  quietUTC: "03:50-05:10,05:30-06:10,16:30-17:15"
 
   # Chunks rendered at once. One, because the pod's CPU limit is the binding
   # constraint, not this; more only adds memory.
@@ -3012,7 +3013,11 @@ holdWedgeWatchdog:
   # instead of four days later.
   wedgeSeconds: 900
   # No kill while the previous container's non-zero exit (a kill from here,
-  # or a crash) is younger than this. Six hours: one automatic recovery covers a one-off race, and a
-  # server that wedges again that soon has a cause a kill will not fix.
+  # or a crash) is younger than this. Six hours: one automatic recovery covers
+  # a one-off race, and a server that wedges again that soon has a cause a
+  # kill will not fix. This is per container lifetime, not a rolling window:
+  # lastState holds only the last exit, so any later restart erases the record
+  # and the next wedge may be killed again. Both values must be plain integers
+  # (at least 300 and 3600); the chart refuses to render otherwise.
   backoffSeconds: 21600
   image: alpine/k8s:1.37.2

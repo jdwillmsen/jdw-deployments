@@ -147,4 +147,18 @@ has   "a clean previous exit does not hold the kill" __KILL_CALLED__ FAKE_LAST_E
 has   "no server process fails loudly" '"event":"failed"' FAKE_PROC=no
 has   "a kill that restarts nothing fails loudly" '"event":"failed"' FAKE_RESTARTS=no
 has   "a recreated pod fails loudly" 'not restarted in place' FAKE_NEW_UID=uid-2
+# A value bash cannot compare must hold the kill back, not pass the gate it
+# guards.
+lacks "a non-integer wedgeSeconds does not kill" __KILL_CALLED__ WEDGE_SECONDS=15m
+lacks "a non-integer backoffSeconds does not kill" __KILL_CALLED__ BACKOFF_SECONDS=6h
+lacks "an empty wedgeSeconds does not kill" __KILL_CALLED__ WEDGE_SECONDS=
+lacks "a non-integer backoffSeconds does not kill after a crash" __KILL_CALLED__ BACKOFF_SECONDS=6h FAKE_LAST_EXIT=137
+
+# The chart refuses such values before they reach the job.
+for bad in 'wedgeSeconds=15m' 'backoffSeconds=6h' 'wedgeSeconds=60' 'backoffSeconds=60'; do
+  if render -f "$chart/values-console-bridge.yaml" -f "$chart/values-map-pack.yaml" --set "holdWedgeWatchdog.$bad" >/dev/null 2>&1; then
+    fail "the chart rendered with holdWedgeWatchdog.$bad"
+  fi
+  echo "  ok: the chart refuses holdWedgeWatchdog.$bad"
+done
 echo PASS
