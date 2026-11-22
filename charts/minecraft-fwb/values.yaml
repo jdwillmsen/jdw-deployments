@@ -2384,8 +2384,8 @@ map:
     # Measured on prd 2026-11-22: 4.29 GiB used, 88.5% of the claim. The
     # generations directory held 3.6 GiB: the live pair plus four
     # operator-kept copies (a damaged snapshot and three keep-* freezes) of
-    # 0.5 to 0.9 GiB each, so the ceiling above was reached. Expanded online;
-    # the claim cannot shrink back.
+    # 0.5 to 0.9 GiB each, so the ceiling above was reached. The storage class
+    # expands a claim online, but a claim cannot shrink back.
     size: 10Gi
 
   resources:
