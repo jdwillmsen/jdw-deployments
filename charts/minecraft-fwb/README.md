@@ -1192,6 +1192,7 @@ tools/tests/test-map-admin.sh                # the map's admin alerts and their 
 tools/tests/test-world-guard.sh              # the checker's unit tests; the guard and sidecar in both Bedrock charts
 tools/tests/test-world-guard-alerts.sh       # promtool for the Held page; the would_hold line against its Loki rule
 tools/tests/test-world-restore.sh            # what the restore tool's pods may touch
+tools/tests/test-hold-wedge-watchdog.sh      # each gate that holds back killing a server stuck mid-stop
 ```
 
 Every `tools/tests/test-*.sh` is discovered and run by CI. The alert suites skip

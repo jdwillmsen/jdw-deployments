@@ -2996,3 +2996,23 @@ listenerWatchdog:
   # one in progress.
   minAgeSeconds: 360
   image: alpine/k8s:1.37.2
+
+# Kills a server process that stopped while saving was held and will never
+# exit on its own. See templates/hold-wedge-watchdog.yaml. Renders only with
+# the console bridge, whose resume gauge is one of its conditions.
+holdWedgeWatchdog:
+  enabled: true
+  # Offset from the listener watchdog's minute so the two never exec into the
+  # server at the same moment.
+  schedule: "1-59/5 * * * *"
+  # How long the server must have been not ready, with a resume owed, before
+  # it is killed. A snapshot holds for seconds and the bridge caps a hold at
+  # five minutes, so fifteen leaves a stalled-but-recovering hold three times
+  # its own ceiling. The 2026-11-18 wedge would have ended at about 17:00
+  # instead of four days later.
+  wedgeSeconds: 900
+  # No kill while the previous container's non-zero exit (a kill from here,
+  # or a crash) is younger than this. Six hours: one automatic recovery covers a one-off race, and a
+  # server that wedges again that soon has a cause a kill will not fix.
+  backoffSeconds: 21600
+  image: alpine/k8s:1.37.2

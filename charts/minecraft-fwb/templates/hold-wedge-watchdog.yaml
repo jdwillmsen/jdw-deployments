@@ -1,0 +1,265 @@
+{{- if and .Values.global.consoleBridge.enabled .Values.holdWedgeWatchdog.enabled }}
+{{- $name := printf "%s-hold-wedge-watchdog" .Release.Name }}
+{{- $serverPod := include "backup.serverPod" . }}
+{{- $serverContainer := include "backup.serverStatefulSet" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  # One pod, by name, and never a delete: the process is killed inside its
+  # container so the kubelet restarts it in place with the world volume still
+  # mounted, the same shape as the nightly restart.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: [{{ $serverPod | quote }}]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+# A server told to `stop` while saving is held never exits. On 2026-11-18 the
+# nightly restart's stop landed 250ms after a map snapshot's `save hold`: the
+# server logged "Stopping server...", closed its game port and stopped reading
+# its console, so the bridge's `save resume` went unanswered, and the process
+# stayed alive for four days until someone deleted the pod. Nothing else here
+# can end that state: liveness is off on purpose, readiness only takes the pod
+# out of its Services, and every other actor restarts the server through the
+# console it no longer reads.
+#
+# So this kills the server process, and only when every one of these holds:
+# the container passed its startup probe, has been not ready for at least
+# wedgeSeconds, the bridge still owes a resume, and the server fails several
+# fresh pings. With saving held since before the stop, the world on disk is
+# the one the hold flushed, so the kill loses only changes that could never
+# have been saved. A restarted container resets the startup and readiness
+# clocks, so a server that comes back broken while booting is the startup
+# probe's to judge. The hard bound is the previous container: if it exited
+# non-zero within backoffSeconds -- a kill from here, or any crash -- this
+# reports and leaves the server alone, so at most one kill per window can come
+# from here and a second wedge is the alert's, for a person. Non-zero rather
+# than 137 alone, because the container's exit code is its entrypoint's, not
+# necessarily the signal the server died of.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.holdWedgeWatchdog.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      # Ceilings: two gets 20, three pings 3 x 30 + 20 of sleep, gauge 30,
+      # signal 30, restart poll 60 + 13. About 260s, so a hung exec cannot
+      # outlive the next run's slot by much while concurrencyPolicy Forbid
+      # holds it back.
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ $name }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: watchdog
+              image: {{ .Values.holdWedgeWatchdog.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: 32Mi
+                  cpu: 10m
+                limits:
+                  memory: 128Mi
+                  cpu: 100m
+              env:
+                - name: SERVER_POD
+                  value: {{ $serverPod | quote }}
+                - name: SERVER_CONTAINER
+                  value: {{ $serverContainer | quote }}
+                # The address the server's own readiness probe pings.
+                - name: SERVER_PORT
+                  value: {{ index .Values "minecraft-bedrock" "minecraftServer" "serverPort" | quote }}
+                # The bridge sidecar shares the pod's network namespace, so its
+                # metrics are read on loopback from inside the server container.
+                # The bridge's Service is no use here: it selects the same pod,
+                # and has no endpoints for exactly as long as the pod is not
+                # ready.
+                - name: BRIDGE_PORT
+                  value: {{ .Values.consoleBridge.service.port | quote }}
+                - name: WEDGE_SECONDS
+                  value: {{ .Values.holdWedgeWatchdog.wedgeSeconds | quote }}
+                - name: BACKOFF_SECONDS
+                  value: {{ .Values.holdWedgeWatchdog.backoffSeconds | quote }}
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -uo pipefail
+                  NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+                  emit() { echo "{\"event\":\"$1\",\"detail\":\"${2:-}\"}"; }
+                  in_server() { timeout 30s kubectl exec -n "$NS" "$SERVER_POD" -c "$SERVER_CONTAINER" -- sh -c "$1" 2>/dev/null; }
+
+                  pod="$(timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" -o json 2>/dev/null || true)"
+                  if [[ -z "$pod" ]]; then
+                    emit skipped "server pod absent"
+                    exit 0
+                  fi
+                  # Prints "<started> <ready> <seconds not ready> <seconds since
+                  # the previous container exited non-zero, or -1>", or nothing
+                  # when the container is not running.
+                  state="$(POD="$pod" python3 -c '
+                  import datetime, json, os, sys
+                  pod = json.loads(os.environ["POD"])
+                  c = next((s for s in pod["status"].get("containerStatuses", []) if s["name"] == sys.argv[1]), None)
+                  if not c or "running" not in c.get("state", {}):
+                      sys.exit(0)
+                  now = datetime.datetime.now(datetime.timezone.utc)
+                  age = lambda ts: int((now - datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)).total_seconds())
+                  cond = next((x for x in pod["status"].get("conditions", []) if x["type"] == "Ready"), {})
+                  since = age(cond["lastTransitionTime"]) if cond.get("status") == "False" and cond.get("lastTransitionTime") else 0
+                  last = c.get("lastState", {}).get("terminated", {})
+                  failed = age(last["finishedAt"]) if last.get("exitCode", 0) != 0 and last.get("finishedAt") else -1
+                  print(str(c.get("started", False)).lower(), str(c.get("ready", False)).lower(), since, failed)
+                  ' "$SERVER_CONTAINER" 2>/dev/null || true)"
+                  if [[ -z "$state" ]]; then
+                    emit skipped "server container is not running"
+                    exit 0
+                  fi
+                  read -r started ready since failed_ago <<<"$state"
+                  if [[ "$ready" == "true" ]]; then
+                    emit ok "server is ready"
+                    exit 0
+                  fi
+                  if [[ "$started" != "true" ]]; then
+                    emit skipped "server has not passed its startup probe; a boot is the startup probe's to judge"
+                    exit 0
+                  fi
+                  if (( since < WEDGE_SECONDS )); then
+                    emit waiting "server not ready for ${since}s, under ${WEDGE_SECONDS}s"
+                    exit 0
+                  fi
+                  if (( failed_ago >= 0 && failed_ago < BACKOFF_SECONDS )); then
+                    emit backoff "server not ready for ${since}s, but its previous container exited non-zero ${failed_ago}s ago; left for a person"
+                    exit 0
+                  fi
+
+                  # A hold nobody is going to resume is what makes the kill
+                  # safe and what distinguishes this from any other outage, so
+                  # an unreadable gauge is reported, never assumed.
+                  owed="$(in_server "curl -s -m 5 http://127.0.0.1:$BRIDGE_PORT/metrics" \
+                    | awk '$1 == "mc_console_bridge_snapshot_resume_owed" { print $2 }')"
+                  if [[ -z "$owed" ]]; then
+                    emit unverified "server not ready for ${since}s but the bridge's resume gauge could not be read"
+                    exit 0
+                  fi
+                  if [[ "$owed" != "1" ]]; then
+                    emit not_held "server not ready for ${since}s with no resume owed; not a hold wedge, left alone"
+                    exit 0
+                  fi
+
+                  answered=0
+                  for attempt in 1 2 3; do
+                    out="$(in_server "timeout 10 mc-monitor status-bedrock --host 127.0.0.1 --port $SERVER_PORT >/dev/null 2>&1; echo ping=\$?")"
+                    case "$out" in
+                      *ping=0*) answered=1; break ;;
+                      *ping=*) ;;
+                      *) emit unverified "could not run a ping inside the server container"; exit 0 ;;
+                    esac
+                    (( attempt < 3 )) && sleep 10
+                  done
+                  if (( answered )); then
+                    emit waiting "resume owed and not ready for ${since}s, but the server answered a ping"
+                    exit 0
+                  fi
+
+                  restarts() {
+                    timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" \
+                      -o jsonpath="{.metadata.uid} {.status.containerStatuses[?(@.name=='$SERVER_CONTAINER')].restartCount}" 2>/dev/null || true
+                  }
+                  before="$(restarts)"
+                  if [[ -z "$before" ]]; then
+                    emit unverified "could not read the restart count, so a kill could not be confirmed; left alone"
+                    exit 0
+                  fi
+
+                  emit wedged "resume owed, not ready for ${since}s and three pings unanswered; killing the server process"
+                  # comm is the binary's name cut to 15 characters, and the
+                  # binary is versioned (bedrock_server-1.26.60.6), so match the
+                  # prefix. TERM first in case the process can still act on it,
+                  # then KILL: a server wedged in its own shutdown ignores TERM.
+                  # The container user owns the process, so no privilege is
+                  # needed. The exec usually dies with the container it runs
+                  # in, so its output is a detail and the restart count is the
+                  # verdict.
+                  signalled="$(in_server '
+                    pids=""
+                    for p in /proc/[0-9]*; do
+                      read -r comm < "$p/comm" 2>/dev/null || continue
+                      case "$comm" in bedrock_server*) pids="$pids ${p#/proc/}" ;; esac
+                    done
+                    [ -n "$pids" ] || { echo none; exit 0; }
+                    kill -TERM $pids 2>/dev/null
+                    for _ in 1 2 3 4; do
+                      sleep 5
+                      alive=""
+                      for pid in $pids; do [ -d "/proc/$pid" ] && alive="$alive $pid"; done
+                      [ -z "$alive" ] && { echo "term$pids"; exit 0; }
+                    done
+                    kill -KILL $alive 2>/dev/null
+                    echo "kill$alive"
+                  ')"
+                  if [[ "$signalled" == none ]]; then
+                    emit failed "no bedrock_server process found in $SERVER_POD"
+                    exit 1
+                  fi
+
+                  deadline=$(( SECONDS + 60 ))
+                  while (( SECONDS < deadline )); do
+                    now="$(restarts)"
+                    if [[ -n "$now" && "$now" != "$before" ]]; then
+                      if [[ "${now%% *}" != "${before%% *}" ]]; then
+                        emit failed "pod was recreated (${before%% *} -> ${now%% *}), not restarted in place"
+                        exit 1
+                      fi
+                      emit killed "server process ended (${signalled:-exec ended with the container}); restartCount ${before##* } -> ${now##* }"
+                      exit 0
+                    fi
+                    sleep 3
+                  done
+                  emit failed "signalled the server process (${signalled:-no output}) but $SERVER_POD did not restart"
+                  exit 1
+{{- end }}
