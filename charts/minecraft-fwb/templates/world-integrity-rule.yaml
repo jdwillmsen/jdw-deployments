@@ -322,6 +322,23 @@ spec:
               backup.retention.hardMax are deleted, and never a protected one.
               README, "Backup retention".
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#backup-retention"
+        - alert: JdwillmsenMinecraftWorldArchiveRetentionFailed
+          # The retention step crashed. The job carries the previous run's
+          # per-archive metrics forward so the alerts reading them keep their
+          # state; this is what says those numbers are no longer fresh.
+          expr: |
+            max by (namespace, backup_job, artifact) (backup_retention_failed{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"}) == 1
+          for: 30m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft world backup retention failed
+            description: >-
+              The last backup wrote its archive but the retention step failed, so
+              nothing was deleted and the per-archive metrics are from an earlier
+              run. The job log has the error. README, "Backup retention".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#backup-retention"
         - alert: JdwillmsenMinecraftWorldBackupClaimFilling
           # A full claim fails every backup, and a backup whose tar hit ENOSPC
           # exits before it can trim, so the volume then stays full. Held

@@ -239,6 +239,7 @@ def main(argv):
     t.add_argument("--baseline", default="", help="acknowledged baseline stamp; older archives stop counting")
     t.add_argument("--backfill", default="", help="file of STAMP=COUNT for archives taken before counts were recorded")
     t.add_argument("--job", default="backup")
+    t.add_argument("--quiet", action="store_true", help="print only deletions, for the pass before the archive is built")
     t.add_argument("--budget-bytes", type=int, default=0)
     t.add_argument("--reserve-bytes", type=int, default=0, help="space the incoming archive and its staging will need")
     t.add_argument("--budget-only", action="store_true", help="delete only to fit the budget; used before the archive is built")
@@ -265,11 +266,14 @@ def main(argv):
                                                  a.budget_bytes, a.reserve_bytes, a.budget_only)
 
     for ar in archives:
+        if a.quiet and ar not in delete:
+            continue
         status = "delete" if ar in delete else "keep"
         why = protected.get(ar["stamp"], "")
         print("%s %s chunks=%s quiesced=%s%s" % (status, os.path.basename(ar["path"]), ar["chunks"], ar["quiesced"], " (%s)" % why if why else ""))
-    print("max_chunks=%s held=%s" % (max_chunks, ",".join(held) or "no"))
-    if held:
+    if not a.quiet:
+        print("max_chunks=%s held=%s" % (max_chunks, ",".join(held) or "no"))
+    if held and not a.quiet:
         print("WARNING: retention held (%s); deleting only what exceeds %d archives" % (",".join(held), a.hard_max), file=sys.stderr)
 
     if not a.dry_run:

@@ -1,4 +1,10 @@
 {{- if .Values.backup.enabled }}
+{{- if not (regexMatch "^[0-9]+$" (toString .Values.backup.retention.budgetBytes)) }}
+{{- fail "backup.retention.budgetBytes must be plain bytes, e.g. \"17179869184\" for 16Gi: the job does not parse Gi suffixes" }}
+{{- end }}
+{{- if gt (int .Values.backup.keep) (int .Values.backup.retention.hardMax) }}
+{{- fail "backup.keep must not exceed backup.retention.hardMax" }}
+{{- end }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -386,6 +392,27 @@ spec:
                   fi
                   [[ -n "$CENSUS" ]] || echo "WARNING: no fresh chunk census, this archive is recorded without a chunk count and retention will hold" >&2
 
+                  # An operator's baseline acknowledgement and chunk counts for
+                  # archives taken before this job recorded them. Read before
+                  # anything is deleted, because the pre-build space trim needs
+                  # the backfill as much as the final one: without it the
+                  # archive the backfill exists to protect is unprotected and
+                  # the oldest, so the byte budget would delete it first.
+                  # Absent is normal. A read that fails is not: retention then
+                  # cannot know what the operator protected, so it deletes
+                  # nothing for age or count that night and only what the byte
+                  # budget needs (ACK_OK=0 selects that below).
+                  BASELINE=""
+                  ACK_OK=1
+                  : > /tmp/chunks-backfill.txt
+                  if ! BASELINE="$(kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.baseline}' 2>/tmp/ack.err)" \
+                    || ! kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.chunks}' > /tmp/chunks-backfill.txt 2>>/tmp/ack.err; then
+                    echo "WARNING: could not read $RETENTION_ACK_CM, deleting only what the byte budget needs tonight: $(head -c 300 /tmp/ack.err)" >&2
+                    BASELINE=""
+                    ACK_OK=0
+                    : > /tmp/chunks-backfill.txt
+                  fi
+
                   # Make room before building, not after: the trim below runs
                   # once the archive exists, and a tar that hits a full claim
                   # exits before any trim, which leaves the claim full for every
@@ -394,9 +421,10 @@ spec:
                   # byte budget acts here; the age and hold rules wait for the
                   # new archive's own numbers.
                   STAGED="$(du -sk "$STAGE" | awk '{print $1 * 1024}')"
-                  python3 -I /opt/retention/backup-retention.py trim --budget-only \
+                  python3 -I /opt/retention/backup-retention.py trim --budget-only --quiet \
                     --dir /backup --keep "$KEEP" --hard-max "$RETENTION_HARD_MAX" \
                     --budget-bytes "$RETENTION_BUDGET_BYTES" --reserve-bytes "$((STAGED * 2))" \
+                    --baseline "$BASELINE" --backfill /tmp/chunks-backfill.txt \
                     --job "$BACKUP_JOB" || echo "WARNING: pre-build space trim failed, continuing" >&2
                   AVAIL="$(df -Pk /backup | awk 'NR==2 {print $4 * 1024}')"
                   if [[ "$AVAIL" =~ ^[0-9]+$ && "$AVAIL" -lt "$STAGED" ]]; then
@@ -462,34 +490,37 @@ spec:
                   shopt -s nullglob
                   ARCHIVES=(/backup/fwb-????????T??????Z.tar.gz)
 
-                  # An operator's baseline acknowledgement and chunk counts for
-                  # archives taken before this job recorded them. Absent is
-                  # normal; any other failure aborts, since retention decided
-                  # without the acknowledgement would be stricter or weaker
-                  # than the operator asked for.
-                  BASELINE=""
-                  : > /tmp/chunks-backfill.txt
-                  if ! BASELINE="$(kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.baseline}' 2>/tmp/ack.err)" \
-                    || ! kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.chunks}' > /tmp/chunks-backfill.txt 2>>/tmp/ack.err; then
-                    echo "WARNING: could not read $RETENTION_ACK_CM, retention runs without it: $(head -c 300 /tmp/ack.err)" >&2
-                    BASELINE=""
-                    : > /tmp/chunks-backfill.txt
-                  fi
                   LOST=""
                   [[ "$CENSUS" =~ lost=([0-9]+) ]] && LOST="${BASH_REMATCH[1]}"
 
                   # The archive is already written, so a retention fault must
-                  # not fail the run: nothing is deleted when the script dies,
-                  # and the missing metrics are what says so.
+                  # not fail the run. Nothing is deleted when the script dies,
+                  # and the previous run's per-archive metrics are carried over
+                  # with backup_retention_failed set: empty metrics would make
+                  # the alerts that read them resolve, which is the failure this
+                  # whole change exists to prevent.
+                  MODE=()
+                  [[ "$ACK_OK" -eq 1 ]] || MODE=(--budget-only)
                   : > /tmp/archive-metrics.txt
-                  python3 -I /opt/retention/backup-retention.py trim \
+                  RETENTION_FAILED=0
+                  python3 -I /opt/retention/backup-retention.py trim "${MODE[@]}" \
                     --dir /backup --keep "$KEEP" --hard-max "$RETENTION_HARD_MAX" \
                     --budget-bytes "$RETENTION_BUDGET_BYTES" \
                     --protect-pct "$RETENTION_PROTECT_PCT" --regress-pct "$RETENTION_REGRESS_PCT" \
                     --lost "$LOST" --baseline "$BASELINE" --backfill /tmp/chunks-backfill.txt \
-                    --job "$BACKUP_JOB" --metrics-out /tmp/archive-metrics.txt \
-                    || echo "WARNING: retention failed, nothing was deleted and no per-archive metrics are published" >&2
-                  echo "backup complete, ${#ARCHIVES[@]} archives on disk before trim"
+                    --job "$BACKUP_JOB" --metrics-out /tmp/archive-metrics.txt || RETENTION_FAILED=1
+                  if [[ "$RETENTION_FAILED" -eq 1 ]]; then
+                    echo "WARNING: retention failed, nothing more was deleted; carrying the previous per-archive metrics forward" >&2
+                    kubectl get configmap "$METRICS_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.metrics\.txt}' 2>/dev/null \
+                      | grep -E '^(# (HELP|TYPE) )?backup_(archive_|last_artifact_chunks|newest_archive_counted|world_lost_chunks|retention_(held|archives|budget|deleted))' \
+                      > /tmp/archive-metrics.txt || : > /tmp/archive-metrics.txt
+                  fi
+                  {
+                    echo "# HELP backup_retention_failed 1 if this run's retention step failed and the per-archive metrics are from an earlier run."
+                    echo "# TYPE backup_retention_failed gauge"
+                    echo "backup_retention_failed{backup_job=\"${BACKUP_JOB}\",artifact=\"world\"} ${RETENTION_FAILED}"
+                  } >> /tmp/archive-metrics.txt
+                  echo "backup complete, ${#ARCHIVES[@]} archives on disk"
 
                   # Publish the freshness contract. Derived from a scan of the
                   # archive directory rather than from variables this run set,
