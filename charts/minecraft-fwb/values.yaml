@@ -631,7 +631,7 @@ backup:
     # needs the staging copy (about the archive's size) and the .partial on the
     # same claim, so the budget leaves room for both: at 819 MB an archive, 20
     # of them plus staging and partial is 18.1 GB, 84% of the claim, and the
-    # archive is still growing. 16Gi holds 20 archives up to about 860 MB each.
+    # archive is still growing. 16Gi holds about 18 archives of 860 MB once the build reserve is counted.
     budgetBytes: "17179869184"
     # The newest quiesced archive within this percent of the highest chunk
     # count is kept as well as the highest one: the highest may be a cold copy.

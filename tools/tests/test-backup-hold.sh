@@ -170,4 +170,28 @@ run
 grep -q 'reading the map census failed: Error from server (Forbidden)' <<<"$out" || fail "the census error was swallowed: $out"
 echo "  ok: an unreadable census is reported, not hidden"
 
+# --- the acknowledgement unreadable: budget only, and the run still publishes --
+python3 - "$work/bin/kubectl" <<'PY'
+import sys
+p = sys.argv[1]
+t = open(p).read()
+t = t.replace('if [[ "$1" == get && "$*" == *--raw* ]]', 'if [[ "$1" == get && "$*" == *configmap*ack* ]]; then echo "Error: etcd timeout" >&2; exit 1; fi\nif [[ "$1" == get && "$*" == *--raw* ]]')
+open(p, "w").write(t)
+PY
+run
+[ "$rc" -eq 0 ] || fail "a backup with an unreadable acknowledgement exited $rc: $out"
+grep -q 'deleting only what the byte budget needs tonight' <<<"$out" || fail "the unreadable acknowledgement was not reported: $out"
+grep -q '^backup_retention_failed{.*} 0$' "$work/metrics.txt" || fail "the retention-failed gauge is missing from the payload"
+echo "  ok: an unreadable acknowledgement degrades to budget-only"
+
+# --- a retention crash carries the last metrics forward ---------------------
+cp "$work/bin/retention.py" "$work/bin/retention.py.good"
+printf 'import sys\nsys.exit(3)\n' > "$work/bin/retention.py"
+run
+[ "$rc" -eq 0 ] || fail "a retention crash failed the backup: $out"
+grep -q 'carrying the previous per-archive metrics forward' <<<"$out" || fail "the crash was not reported: $out"
+grep -q '^backup_retention_failed{.*} 1$' "$work/metrics.txt" || fail "the crash is not in the payload"
+cp "$work/bin/retention.py.good" "$work/bin/retention.py"
+echo "  ok: a retention crash is flagged and the backup still publishes"
+
 echo "PASS"

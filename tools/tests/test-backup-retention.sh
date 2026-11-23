@@ -190,6 +190,29 @@ assert len(left) == 20, left
 left, _, _ = run(make(ok, size=100), "--budget-only", "--budget-bytes", "2000", "--reserve-bytes", "700")
 assert len(left) == 14, left            # 20*100+700 over 2000; only the 6 beyond the window can go, and 7 would be needed
 
+# R1: the Nov 16 fixture before the tar. The pass that runs before the archive
+# is built must keep a backfilled best archive under budget pressure; without
+# the backfill it is the oldest unprotected archive and the first to go.
+nine = {d: 150564 for d in days(17, 19)}
+nine["20261116"] = None
+d = make(nine, size=830)
+open(d + "/backfill", "w").write("20261116T040059Z=162882\n")
+left, out, m = run(d, "--budget-only", "--quiet", "--budget-bytes", "16000", "--reserve-bytes", "2000", "--backfill", d + "/backfill")
+assert "20261116" in left, ("the budget pass deleted the backfilled best archive", left)
+d2 = make(nine, size=830)
+left, _, _ = run(d2, "--budget-only", "--quiet", "--budget-bytes", "16000", "--reserve-bytes", "2000")
+assert "20261116" not in left, "control: without the backfill it is the first to go"
+# The pre-build pass says nothing unless it deletes, so its output cannot be
+# mistaken for the real decision in the job log.
+assert "held=" not in out, out
+
+# R2: with the ack unreadable the job runs budget-only, so a world whose hold
+# lived in the ack (ledger acknowledged, Nov 16 backfilled) loses nothing for age.
+d = make({**{x: 150561 for x in days(17, 16)}, "20261116": None}, size=10)
+open(d + "/backfill", "w").write("20261116T040059Z=162882\n")
+left, _, _ = run(d, "--budget-only", "--backfill", d + "/backfill")
+assert len(left) == 17 and "20261116" in left, left
+
 # A night with no count keeps the series at the last counted value, so an
 # alert reading it cannot resolve for want of a measurement.
 unk2 = {d: 150564 for d in days(17, 5)}
@@ -209,6 +232,14 @@ assert r.census(text, 3600, 9000) == ""
 assert r.census("", 3600, 1100) == ""
 print("retention cases pass")
 PY
+
+# R3: budgetBytes is plain bytes; a Gi suffix fails the render rather than
+# making the job crash after the archive is written.
+if helm template minecraft-fwb "$here/charts/minecraft-fwb" --namespace jdwillmsen-prd \
+     -f "$here/charts/minecraft-fwb/values.yaml" --set backup.retention.budgetBytes=16Gi >/dev/null 2>"$work/err"; then
+  fail "a budgetBytes of 16Gi rendered"
+fi
+grep -q "plain bytes" "$work/err" || fail "the budgetBytes refusal does not say why: $(cat "$work/err")"
 
 # The Role must name what the API server authorises for a service proxy call:
 # the "<service>:<port>" path segment. A grant on the bare service name matches
