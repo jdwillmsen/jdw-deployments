@@ -92,8 +92,9 @@ committing, measure what is actually broken and what a rollback would cost:
 
   A world damaged by an abrupt node loss logs, on the first start after it,
   `LevelDB worlds/FWB/db status NOT OK(Corruption: N missing files; ...). Trying
-  repair.` The critical `JdwillmsenMinecraftWorldArchiveShrank` alert is the
-  other signal, but it only fires after the next nightly backup.
+  repair.` The critical `JdwillmsenMinecraftWorldArchiveChunksDropped` alert is
+  the other signal, but it only fires after the next nightly backup; unlike
+  `...ArchiveShrank` it does not clear as the week's median absorbs the loss.
 * Size the damage by comparing the last good archive with the damaged one; see
   [Measuring the loss](#measuring-the-loss).
 * Work out who played since the archive. Each human who was on is someone whose
@@ -152,7 +153,14 @@ itself (name in UTC, `20261001T040103Z` is 2026-10-01 04:01:03 UTC).
 
 Choose the newest archive that predates the damage and is not itself damaged.
 An archive taken after the damage carries the damage; the size drop between
-consecutive archives is the tell.
+consecutive archives is the tell, and so is the `chunks=` line in its `.meta`
+(`backup_archive_chunks` per archive in Prometheus). Retention keeps the archive
+with the highest chunk count and the newest quiesced one within 1% of it, and
+deletes nothing while the loss ledger is above zero or the newest archive is
+more than 2% under the best, so the right archive is still here; see the chart
+README, [Backup retention](../charts/minecraft-fwb/README.md#backup-retention).
+Archives from before the job recorded counts have none; give them one in the
+retention acknowledgement ConfigMap described there.
 
 ### Record what production runs now
 
@@ -561,6 +569,11 @@ UTC, about 20 seconds after the scale-up). Then:
   anyone who joins later will not know the world moved back unless they are told.
 * The `JdwillmsenMinecraftWorldArchiveShrank` alert, if it was firing, keeps
   firing until the 04:00 UTC backup produces an archive back near the old size.
+  `JdwillmsenMinecraftWorldArchiveChunksDropped` clears when that archive is
+  within 2% of the best chunk count on disk. Retention stays held until the
+  map's loss ledger is acknowledged ([README](../charts/minecraft-fwb/README.md#world-chunk-loss)).
+  If you accept the loss instead of restoring, set the baseline
+  ([Backup retention](../charts/minecraft-fwb/README.md#backup-retention)).
 * Delete the Job: `kubectl -n $N delete job $JOB`. Jobs made by hand with
   `--from=cronjob` sit outside the CronJob's history limits and are yours to
   remove.

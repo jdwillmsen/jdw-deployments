@@ -15,7 +15,8 @@ same thing from a different distance:
 | `JdwillmsenMinecraftWorldCorruptionReported` | the server's own log line, through the console bridge | a minute |
 | `JdwillmsenMinecraftWorldChunksLost` | the map's census of the world against every chunk it has seen | one map refresh interval (15 minutes) |
 | `JdwillmsenMinecraftWorldChunkCountDropped` | the same census against its own recent maximum | one refresh interval plus 5 minutes |
-| `JdwillmsenMinecraftWorldArchiveShrank` | the nightly backup archive's size | a day |
+| `JdwillmsenMinecraftWorldArchiveShrank` | the nightly backup archive's size against the week's median | a day, and clears on its own as the median absorbs the loss |
+| `JdwillmsenMinecraftWorldArchiveChunksDropped` | the newest archive's chunk count against the best archive still on disk | a day, and does not clear until an archive recovers or a baseline is acknowledged ([Backup retention](#backup-retention)) |
 
 `JdwillmsenMinecraftWorldNotCensused` is the other half of the set: it says the
 census has stopped, which is the state in which neither of the two alerts that
@@ -52,9 +53,9 @@ the clock on the last good copy is running:
      -o jsonpath='{.status.active[*].name}{"\n"}'
    ```
    Let it finish and do not delete it. It may be holding the server's saves,
-   and what it trims is the oldest of the `backup.keep` (14) archives, not the
-   newest good one. Count the window from the archive list afterwards, since
-   that run has added an archive of the damaged world to it.
+   and what it trims is the oldest of the `backup.keep` (14) archives, never
+   the best one ([Backup retention](#backup-retention)). Suspending is still
+   right: it stops the damaged world adding archives.
 2. Do not restart the server pod to "see if it comes back clean". The repair the
    server runs at world open drops the records it cannot find, so a clean start
    is the damage being made permanent, not the world being intact.
@@ -141,6 +142,70 @@ kubectl -n jdwillmsen-prd patch cronjob jdwillmsen-minecraft-fwb-prd-backup \
 week's archives has moved past the restored size, and
 `JdwillmsenMinecraftWorldChunkCountDropped` until the 24-hour baseline rolls
 past it. Both are true statements about the world while they last.
+`JdwillmsenMinecraftWorldArchiveChunksDropped` clears when the next archive of
+the restored world is within 2% of the best one, which a good restore is.
+
+### Backup retention
+
+`backup.keep` (14) is no longer the whole rule. Age alone deleted the last good
+archive two weeks after a loss nobody acted on: the 2026-11-16 archive
+(162,882 chunks) was due to go on 2026-11-30, after a loss of 12,321 chunks on
+2026-11-17. The job now records what each archive holds and decides from it.
+
+Each night the job reads the map's census (`mcmap_world_chunks`,
+`mcmap_world_chunks_lost`, through the API server, ignored if older than
+`backup.retention.censusMaxAgeSeconds`) and writes `chunks=` and `lost=` into
+the archive's `.meta`, with the table-file count, bytes and zero-byte count
+(`ldb_files`, `ldb_bytes`, `ldb_zero`). The decision is
+`scripts/backup-retention.py`, shipped in a ConfigMap and run by the existing
+job image; no new image.
+
+Beyond the newest `keep` archives, an archive is deleted only if it is none of:
+
+- the archive with the highest chunk count;
+- the newest `quiesced=1` archive within `protectPercent` (1%) of that count.
+
+And nothing is deleted for age at all while any of these holds, each reported
+as `backup_retention_held{reason=...}` and by
+`JdwillmsenMinecraftWorldArchiveRetentionHeld`:
+
+- `world-loss-ledger`: the map's loss ledger is above zero;
+- `chunk-regression`: the newest archive is more than `regressPercent` (2%)
+  under the highest;
+- `chunks-unknown`: the newest archive has no fresh census count.
+
+A hold is bounded by `backup.retention.hardMax` (20): a full claim fails every
+backup, so past that the oldest unprotected archive goes anyway. Protected
+archives never do.
+
+Limits to know:
+
+- The count is the map's census of the live world when the archive was taken,
+  not a count of the archive's own LevelDB keys; the job image has no tool that
+  reads them. It is the same measure the loss alerts use. It cannot see a loss
+  the map has not yet counted, and a chunk Bedrock regenerates after a loss
+  counts again, which is why the ledger is a separate hold.
+- The table-file figures are only proxies and decide nothing; a zero-byte table
+  count above zero is the signature of the crash that cost the chunks.
+- The ledger is sticky by design, so after a loss retention stays held until the
+  loss is restored and acknowledged in the map. That is the intent.
+
+**Acknowledging.** To accept a loss rather than restore it (or to give archives
+taken before this change a count), create the ConfigMap the job reads; it is
+not chart-managed, so a sync leaves it alone:
+
+```bash
+kubectl -n jdwillmsen-prd create configmap jdwillmsen-minecraft-fwb-prd-backup-retention-ack \
+  --from-literal=baseline=20261124T040000Z \
+  --from-literal=chunks=$'20261116T040059Z=162882\n20261117T040105Z=150564'
+```
+
+`baseline` is the stamp of the first archive that counts: older archives stop
+being the highest and lose their protection, and the chunk-drop alert clears at
+the next run. `chunks` is `STAMP=COUNT` lines for archives with no recorded
+count; a count the job recorded wins. Delete the ConfigMap to withdraw it.
+Removing the best archive by hand clears the alert the same way and is the one
+thing retention cannot prevent.
 
 ### What each signal depends on
 
