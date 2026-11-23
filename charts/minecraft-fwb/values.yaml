@@ -2919,6 +2919,9 @@ worldIntegrity:
     # stale between points and the rule evaluates against nothing.
     baselineWindow: 7d
     for: 15m
+    # How long the newest archive may read quiesced=0 before it pages. Short on
+    # purpose: the gauge changes once a night, so this only debounces a scrape.
+    unquiescedFor: 5m
 
   # A Loki rule on the server's own corruption lines, which is the one signal
   # that exists before any of the gauges move.

@@ -658,6 +658,51 @@ tests:
       - eval_time: 168h
         alertname: JdwillmsenMinecraftWorldArchiveShrank
         exp_alerts: []
+
+  # The nightly archive could not hold the server (quiesced=0): one is enough.
+  # It resolves when the next night's archive is quiesced again.
+  - interval: 15m
+    name: one unquiesced archive pages and the next quiesced one clears it
+    input_series:
+      - series: 'backup_last_artifact_quiesced{namespace="jdwillmsen-prd",backup_job="minecraft-fwb-backup",artifact="world",instance="10.244.7.245:9101"}'
+        values: '1x15 0x95 1x40'
+      - series: 'backup_state_reported{namespace="jdwillmsen-prd",backup_job="minecraft-fwb-backup",artifact="world",instance="10.244.7.245:9101"}'
+        values: '1x150'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: JdwillmsenMinecraftWorldArchiveUnquiesced
+        exp_alerts: []
+      - eval_time: 10h
+        alertname: JdwillmsenMinecraftWorldArchiveUnquiesced
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: jdwillmsen-prd
+              backup_job: minecraft-fwb-backup
+              artifact: world
+            exp_annotations:
+              summary: "Minecraft world backup was taken while the server was writing"
+              description: "The newest world archive was copied from a server that was meant to be running but could not be held (quiesced=0), so its LevelDB can be torn and may not restore. It is also the copy retention counts as good. Find out why the save hold failed (the backup job's log and the server's state), and keep the last quiesced archive until a quiesced one replaces it. Restore procedure: docs/minecraft-fwb-restore-runbook.md."
+              runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/docs/minecraft-fwb-restore-runbook.md"
+      - eval_time: 32h
+        alertname: JdwillmsenMinecraftWorldArchiveUnquiesced
+        exp_alerts: []
+
+  # A deliberate stop is quiesced=1 and a producer with no state is not a 0.
+  - interval: 15m
+    name: quiesced archives and a producer with no state do not page
+    input_series:
+      - series: 'backup_last_artifact_quiesced{namespace="jdwillmsen-prd",backup_job="minecraft-fwb-backup",artifact="world",instance="10.244.7.245:9101"}'
+        values: '1x39 0x40'
+      - series: 'backup_state_reported{namespace="jdwillmsen-prd",backup_job="minecraft-fwb-backup",artifact="world",instance="10.244.7.245:9101"}'
+        values: '1x39 0x40'
+    alert_rule_test:
+      - eval_time: 9h
+        alertname: JdwillmsenMinecraftWorldArchiveUnquiesced
+        exp_alerts: []
+      - eval_time: 19h
+        alertname: JdwillmsenMinecraftWorldArchiveUnquiesced
+        exp_alerts: []
 EOF
 
 ( cd "$work" && promtool test rules tests-archive.yaml ) || fail "world-archive alert tests did not pass"
