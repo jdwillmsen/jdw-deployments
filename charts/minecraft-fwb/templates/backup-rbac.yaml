@@ -40,6 +40,21 @@ rules:
     resources: ["configmaps"]
     resourceNames: ["{{ include "backup.metricsConfigMap" . }}"]
     verbs: ["get", "update", "patch"]
+  # An operator's acknowledgement and backfilled chunk counts for retention,
+  # read-only: the job decides from it and never writes it.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ include "backup.retentionAckConfigMap" . }}"]
+    verbs: ["get"]
+{{- if .Values.map.enabled }}
+  # The chunk count each archive is recorded with comes from the map's census
+  # metrics, read through the API server so the job needs no route to the
+  # map's cluster-only port. One service, one verb.
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    resourceNames: ["{{ include "map.name" . }}"]
+    verbs: ["get"]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

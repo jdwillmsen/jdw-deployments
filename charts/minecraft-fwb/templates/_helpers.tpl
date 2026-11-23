@@ -14,6 +14,18 @@
 {{ .Release.Name }}-backup-metrics
 {{- end -}}
 
+{{/*
+Created by an operator, never by this chart: ArgoCD would revert a managed copy
+and the point is that a human's acknowledgement survives a sync.
+*/}}
+{{- define "backup.retentionAckConfigMap" -}}
+{{ .Release.Name }}-backup-retention-ack
+{{- end -}}
+
+{{- define "backup.retentionScriptConfigMap" -}}
+{{ .Release.Name }}-backup-retention
+{{- end -}}
+
 {{- define "backup.serverStatefulSet" -}}
 {{ .Release.Name }}-minecraft-bedrock
 {{- end -}}

@@ -43,7 +43,13 @@ PY
 # volume.
 mkdir -p "$work/sa" "$work/backup" "$work/bin"
 echo -n "test-ns" > "$work/sa/namespace"
-sed -i -e "s|/var/run/secrets/kubernetes.io/serviceaccount/namespace|$work/sa/namespace|" \
+# The retention script comes from the chart's own file. Copied to a name with no
+# "/backup" in its path, which the substitution below would otherwise mangle.
+cp "$chart/scripts/backup-retention.py" "$work/bin/retention.py"
+sed -i -e "s|/opt/retention/backup-retention.py|$work/bin/retention.py|g" \
+       -e "s|/tmp/archive-metrics.txt|$work/archive-metrics.txt|g" \
+       -e "s|/tmp/chunks-backfill.txt|$work/chunks-backfill.txt|g" \
+       -e "s|/var/run/secrets/kubernetes.io/serviceaccount/namespace|$work/sa/namespace|" \
        -e "s|/data/worlds|$work/worlds|g" -e "s|/backup|$work/backup|g" \
        -e "s|/tmp/metrics.txt|$work/metrics.txt|g" "$work/backup.sh"
 
