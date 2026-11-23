@@ -162,7 +162,8 @@ job image; no new image.
 
 Beyond the newest `keep` archives, an archive is deleted only if it is none of:
 
-- the archive with the highest chunk count;
+- the newest archive with the highest chunk count (one archive, even if many
+  tie, so a flat stretch cannot protect every night);
 - the newest `quiesced=1` archive within `protectPercent` (1%) of that count.
 
 And nothing is deleted for age at all while any of these holds, each reported
@@ -174,9 +175,21 @@ as `backup_retention_held{reason=...}` and by
   under the highest;
 - `chunks-unknown`: the newest archive has no fresh census count.
 
-A hold is bounded by `backup.retention.hardMax` (20): a full claim fails every
-backup, so past that the oldest unprotected archive goes anyway. Protected
-archives never do.
+A hold is bounded twice, because a full claim fails every backup: by
+`backup.retention.hardMax` (20 archives) and by `backup.retention.budgetBytes`
+(16Gi). Past either, the oldest unprotected archive beyond the newest `keep`
+goes anyway. Protected archives never do.
+
+**Sizing.** The claim is 20Gi (21.47 GB). A run also needs the staging copy and
+the `.partial` on the same claim, each about the archive's size. At 819 MB an
+archive, 20 archives plus both is 18.1 GB, 84% of the claim, and the archive
+is growing, hence a byte budget rather than a count alone. Before it builds the
+archive the job trims to the budget less twice the staged size, and refuses to
+start the `tar` if the claim has less free space than the staged world, so a
+full claim cannot lock itself. `JdwillmsenMinecraftWorldBackupClaimFilling`
+warns when the archives are within 5% of the budget or the claim reports under
+10% free (an NFS claim may not report its quota, hence both). Raise
+`backup.size` before raising `hardMax` or the budget.
 
 Limits to know:
 
@@ -185,6 +198,16 @@ Limits to know:
   reads them. It is the same measure the loss alerts use. It cannot see a loss
   the map has not yet counted, and a chunk Bedrock regenerates after a loss
   counts again, which is why the ledger is a separate hold.
+- Only a quiesced archive is given a count. A cold copy of a world the server
+  could not serve (a guard hold, a wedge) is not the world the map counted, so it
+  is recorded without one and retention holds (`chunks-unknown`), instead of it
+  becoming the "best" archive.
+- `backup_last_artifact_chunks` is the newest archive *that has a count*, so a
+  night the map could not be read does not make the chunk-drop alert resolve;
+  `JdwillmsenMinecraftWorldArchiveRetentionHeld` says the night was uncounted.
+- The job reads the census through the API server, which authorises the
+  `<map service>:internal` name; a failure is logged as `reading the map census
+  failed` with the server's error.
 - The table-file figures are only proxies and decide nothing; a zero-byte table
   count above zero is the signature of the crash that cost the chunks.
 - The ledger is sticky by design, so after a loss retention stays held until the
@@ -203,7 +226,10 @@ kubectl -n jdwillmsen-prd create configmap jdwillmsen-minecraft-fwb-prd-backup-r
 `baseline` is the stamp of the first archive that counts: older archives stop
 being the highest and lose their protection, and the chunk-drop alert clears at
 the next run. `chunks` is `STAMP=COUNT` lines for archives with no recorded
-count; a count the job recorded wins. Delete the ConfigMap to withdraw it.
+count; a count the job recorded wins. A malformed `baseline` or a malformed
+`chunks` line is ignored with a warning in the job log (so check the log after
+creating it); an unreadable ConfigMap makes retention run without it. Neither
+fails the backup. Delete the ConfigMap to withdraw it.
 Removing the best archive by hand clears the alert the same way and is the one
 thing retention cannot prevent.
 
