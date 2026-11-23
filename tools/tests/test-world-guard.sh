@@ -27,8 +27,8 @@ grep -q 'in sync' "$work/embed.log" || fail "no chart carries a world-guard bloc
 # Both charts that run the guard are held to the same rules. The mode each is
 # expected to be in is the one thing that differs, and it is spelled out here so
 # that flipping a release to enforce (or back) is a deliberate edit of this file:
-# the main server starts in warn and goes to enforce in a separate change; going
-# back to warn after that, and enforce again after that, are the owner's call.
+# both are in enforce; going back to warn, and enforce again after that, are the
+# owner's call.
 pg="$here/charts/proving-grounds"
 helm template jdwillmsen-proving-grounds-prd "$pg" --namespace jdwillmsen-prd \
   -f "$pg/values.yaml" -f "$pg/values-prd.yaml" > "$work/pg.yaml"
@@ -105,7 +105,7 @@ PY
 
 check_chart proving-grounds "$work/pg-nosync.yaml" "$work/pg.yaml" enforce off \
   || fail "the proving-grounds guard or sidecar is not what the rules require"
-check_chart minecraft-fwb "$work/fwb.yaml" "$work/fwb-sync.yaml" warn off \
+check_chart minecraft-fwb "$work/fwb.yaml" "$work/fwb-sync.yaml" enforce off \
   || fail "the main server's guard or sidecar is not what the rules require"
 
 echo "PASS: world guard"

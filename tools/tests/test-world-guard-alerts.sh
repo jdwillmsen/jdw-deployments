@@ -122,7 +122,7 @@ tests:
               namespace: jdwillmsen-prd
             exp_annotations:
               summary: "Minecraft FWB is held before its world opens"
-              description: "The world guard found tables the database's MANIFEST names that are missing, empty or the wrong size, and is holding the server in Init so it cannot repair them away. Nobody can join until this is resolved. The guard's log line and /data/.world-guard/report.json name the files and the bytes. Restore a good world with tools/world-restore (preferred), or let the server repair and accept the loss with \`touch /data/.world-guard-accept\` in the world-guard container, and log which on JDW-341. Do not delete the pod. charts/minecraft-fwb/README.md, \"World guard held\"."
+              description: "The world guard found tables the database's MANIFEST names that are missing, empty or the wrong size, and is holding the server in Init so it cannot repair them away. Nobody can join until this is resolved. The guard's log line and /data/.world-guard/report.json name the files and the bytes. Restore a good world with tools/world-restore (preferred), or let the server repair and accept the loss with \`touch /data/.world-guard-accept\` in the world-guard container, and log which on JDW-341. Do not delete the pod. Restore or accept within 24 h. charts/minecraft-fwb/README.md, \"World guard held\"; docs/minecraft-fwb-restore-runbook.md."
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-guard-held"
 
   # Resolved: the world was restored, the guard passed and exited.
@@ -140,7 +140,7 @@ tests:
               namespace: jdwillmsen-prd
             exp_annotations:
               summary: "Minecraft FWB is held before its world opens"
-              description: "The world guard found tables the database's MANIFEST names that are missing, empty or the wrong size, and is holding the server in Init so it cannot repair them away. Nobody can join until this is resolved. The guard's log line and /data/.world-guard/report.json name the files and the bytes. Restore a good world with tools/world-restore (preferred), or let the server repair and accept the loss with \`touch /data/.world-guard-accept\` in the world-guard container, and log which on JDW-341. Do not delete the pod. charts/minecraft-fwb/README.md, \"World guard held\"."
+              description: "The world guard found tables the database's MANIFEST names that are missing, empty or the wrong size, and is holding the server in Init so it cannot repair them away. Nobody can join until this is resolved. The guard's log line and /data/.world-guard/report.json name the files and the bytes. Restore a good world with tools/world-restore (preferred), or let the server repair and accept the loss with \`touch /data/.world-guard-accept\` in the world-guard container, and log which on JDW-341. Do not delete the pod. Restore or accept within 24 h. charts/minecraft-fwb/README.md, \"World guard held\"; docs/minecraft-fwb-restore-runbook.md."
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-guard-held"
       - eval_time: 12m
         alertname: JdwillmsenMinecraftWorldGuardHeld

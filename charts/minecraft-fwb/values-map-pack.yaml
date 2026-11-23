@@ -26,15 +26,15 @@ minecraft-bedrock:
   # first: CURRENT, the MANIFEST's records, and every live table's presence,
   # size and footer, read-only, in about a tenth of a second.
   #
-  # GUARD_MODE is "warn": it logs `would_hold` and alerts
-  # (JdwillmsenMinecraftWorldGuardWouldHold) but the server starts regardless.
-  # After a week of reports that are understood, a separate small change sets it
-  # to "enforce", where damage holds the pod in Init, pages
+  # GUARD_MODE is "enforce": damage holds the pod in Init, pages
   # (JdwillmsenMinecraftWorldGuardHeld) and re-checks every 30 s until the world
   # is restored (tools/world-restore) or an operator accepts the loss:
   #   kubectl -n jdwillmsen-prd exec jdwillmsen-minecraft-fwb-prd-minecraft-bedrock-0 \
   #     -c world-guard -- touch /data/.world-guard-accept
-  # Putting enforce back after it has been set to warn needs the owner's sign-off.
+  # Restore or accept within 24 h; a held server is nobody's world. It was "warn"
+  # until the pve1 crashes of 2026-11-13, -16 and -22 each logged would_hold and
+  # the server's own repair then dropped the tables. Putting warn back after this
+  # needs the owner's sign-off.
   #
   # Everything the rules above say about install-map-pack applies here, and
   # more strongly: this is a container the server waits on, so it fails open on
@@ -621,7 +621,7 @@ minecraft-bedrock:
         - name: LEVEL_NAME
           value: FWB
         - name: GUARD_MODE
-          value: warn
+          value: enforce
         - name: RECHECK_SECONDS
           value: "30"
       volumeMounts:

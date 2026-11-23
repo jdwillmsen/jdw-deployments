@@ -72,8 +72,7 @@ kubectl -n "$N" exec "$POD" -c world-guard -- touch /data/.world-guard-accept
 
 Any agent may do this on a page, and must log it on JDW-341 (who, when, the report). The
 guard deletes the file when it uses it, and deletes a stale one when the world is clean, so
-one `touch` accepts one finding. Re-enabling `enforce` after a release has been put back to
-`warn` is an R3 change.
+one `touch` accepts one finding. Putting a release back to `warn`, and then to `enforce` again, is an R3 change.
 
 Deleting the pod to "see if it comes back" achieves nothing: the init container runs again
 and holds again.
@@ -92,12 +91,17 @@ and holds again.
   run a CronJob has it.
 - It does not stop the damage; the sidecar shortens the window.
 
-## Warn first
+## Warn first, then enforce
 
-A release ships with `GUARD_MODE: warn`: the guard reports `would_hold` and the server starts.
-After a week of clean (or understood) reports a separate small change flips it to `enforce`.
-The container's `env` is a literal: init containers are rendered without templating, so the
-flip is one line in the values file that carries the container.
+A new release ships with `GUARD_MODE: warn`: the guard reports `would_hold` and the server starts.
+After a week of clean (or understood) reports a separate small change flips it to `enforce`. The
+FWB server was flipped on 2026-11-23 (JDW-365) after `warn` logged three true holds (11-13, 11-16,
+11-22) and the server's repair dropped the tables each time. The container's `env` is a literal:
+init containers are rendered without templating, so the flip is one line in the values file that
+carries the container.
+
+**Operators:** under `enforce` the pod waits in `Init` for as long as the damage stands. Restore
+or accept (above) within 24 h of the page; do not leave it held.
 
 ## Assisted restore
 
