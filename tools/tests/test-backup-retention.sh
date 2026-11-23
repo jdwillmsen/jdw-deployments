@@ -43,12 +43,12 @@ import datetime, os, subprocess, sys, tempfile
 
 SCRIPT = sys.argv[1]
 
-def make(counts, quiesced=None):
+def make(counts, quiesced=None, size=10):
     """counts: {date: chunks or None}. Returns a directory of archives."""
     d = tempfile.mkdtemp()
     for day, chunks in counts.items():
         name = "fwb-%sT040059Z.tar.gz" % day
-        open(os.path.join(d, name), "wb").write(b"x" * 10)
+        open(os.path.join(d, name), "wb").write(b"x" * size)
         meta = ["quiesced=%d" % (quiesced or {}).get(day, 1)]
         if chunks is not None:
             meta.append("chunks=%d" % chunks)
@@ -157,9 +157,47 @@ left, out, m = run(make(nov), "--baseline", "20261117T000000Z")
 assert "20261116" not in left and len(left) == 14, left
 assert "held=no" in out
 
-# The unprotected ones have no meta, and a malformed baseline is refused.
-p = subprocess.run([sys.executable, "-I", SCRIPT, "trim", "--dir", make(nov), "--keep", "14", "--hard-max", "20", "--baseline", "nope"], capture_output=True, text=True)
-assert p.returncode != 0
+# A malformed baseline is ignored with a warning, not fatal: the job has
+# already written the archive and must still publish. Ignoring it is the
+# stricter outcome, so the 16th is still held.
+left, out, m = run(make(nov), "--baseline", "nope")
+assert "ignoring baseline" in out and "20261116" in left and len(left) == 15, (out, left)
+# A typo in a backfill line is named, not dropped silently.
+d = make(legacy)
+open(d + "/backfill", "w").write("20261116T040059Z=162882\n2026-11-16=162882\n")
+left, out, m = run(d, "--backfill", d + "/backfill")
+assert "ignoring malformed chunks line '2026-11-16=162882'" in out, out
+
+# A flat stretch ties every archive at the max. Only the newest is protected,
+# so the directory stays bounded (22 archives -> 14), rather than all 22.
+flat = {d: 100 for d in days(1, 22)}
+left, out, m = run(make(flat))
+assert len(left) == 14 and left == days(9, 14), left
+
+# A byte budget deletes the oldest unprotected archives past the window even
+# while held, never a protected one. 20 archives of 100 bytes, held by the
+# ledger; the budget fits 15, so the 5 oldest beyond the 14 newest go.
+big = {d: 100 for d in days(1, 20)}
+big["20261101"] = 200                    # the highest: protected, oldest
+left, out, m = run(make(big, size=100), "--lost", "5", "--budget-bytes", "1500")
+assert len(left) == 15 and "20261101" in left, left
+assert 'backup_retention_budget_bytes{backup_job="backup",artifact="world"} 1500' in m
+# Before the archive is built only the budget acts: nothing is deleted for age
+# or held, and the reserve is counted against the budget.
+d = make(ok, size=100)
+left, _, _ = run(d, "--budget-only")
+assert len(left) == 20, left
+left, _, _ = run(make(ok, size=100), "--budget-only", "--budget-bytes", "2000", "--reserve-bytes", "700")
+assert len(left) == 14, left            # 20*100+700 over 2000; only the 6 beyond the window can go, and 7 would be needed
+
+# A night with no count keeps the series at the last counted value, so an
+# alert reading it cannot resolve for want of a measurement.
+unk2 = {d: 150564 for d in days(17, 5)}
+unk2["20261116"] = 162882
+unk2["20261122"] = None
+left, out, m = run(make(unk2))
+assert 'backup_last_artifact_chunks{backup_job="backup",artifact="world"} 150564' in m, m
+assert 'backup_newest_archive_counted{backup_job="backup",artifact="world"} 0' in m
 
 # Census reading: stale or absent counts yield nothing, never a guess.
 import importlib.util
@@ -171,6 +209,44 @@ assert r.census(text, 3600, 9000) == ""
 assert r.census("", 3600, 1100) == ""
 print("retention cases pass")
 PY
+
+# The Role must name what the API server authorises for a service proxy call:
+# the "<service>:<port>" path segment. A grant on the bare service name matches
+# nothing (confirmed on a real API server), so the census is never readable.
+python3 -I - "$work/rendered.yaml" <<'PY' || fail "the backup Role cannot read the census"
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+role = next(d for d in docs if d["kind"] == "Role" and d["metadata"]["name"].endswith("-backup"))
+rule = next(r for r in role["rules"] if r["resources"] == ["services/proxy"])
+job = next(d for d in docs if d["kind"] == "CronJob" and d["metadata"]["name"].endswith("-backup"))
+env = {e["name"]: e.get("value") for e in job["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["env"]}
+script = job["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["args"][0]
+want = "%s:%s" % (env["MAP_SERVICE"], env["MAP_INTERNAL_PORT_NAME"])
+assert rule["resourceNames"] == [want], (rule, want)
+assert "/services/${MAP_SERVICE}:${MAP_INTERNAL_PORT_NAME}/proxy/" in script
+assert "2>/dev/null" not in script.split("CENSUS=")[1].split("python3")[0], "the census error must not be swallowed"
+open(sys.argv[1] + ".job.sh", "w").write(script)
+PY
+
+# The job's shell lines run in the image they ship in. BusyBox find there has no
+# -printf, which under `set -euo pipefail` once aborted every backup before tar.
+if command -v docker >/dev/null 2>&1 && docker image inspect "$(python3 -c "import yaml;print(yaml.safe_load(open('$here/charts/minecraft-fwb/values.yaml'))['backup']['image'])")" >/dev/null 2>&1; then
+  image="$(python3 -c "import yaml;print(yaml.safe_load(open('$here/charts/minecraft-fwb/values.yaml'))['backup']['image'])")"
+  sed -n '/LDB_FILES=/,/LDB_ZERO=/p' "$work/rendered.yaml.job.sh" > "$work/ldb.sh"
+  grep -q LDB_ZERO "$work/ldb.sh" || fail "could not extract the table-file lines"
+  out="$(docker run --rm --entrypoint bash -v "$work/ldb.sh:/ldb.sh:ro" "$image" -c '
+    set -euo pipefail
+    STAGE="$(mktemp -d)"; mkdir -p "$STAGE/FWB/db"
+    head -c 1000 /dev/zero > "$STAGE/FWB/db/1.ldb"; head -c 234 /dev/zero > "$STAGE/FWB/db/2.ldb"; : > "$STAGE/FWB/db/3.ldb"
+    . /ldb.sh
+    echo "$LDB_FILES $LDB_BYTES $LDB_ZERO"
+    STAGE="$(mktemp -d)"; . /ldb.sh; echo "$LDB_FILES $LDB_BYTES $LDB_ZERO"
+    du -sk "$STAGE" >/dev/null; df -Pk /tmp | awk "NR==2 {print \$4 * 1024}" >/dev/null')" || fail "the table-file lines fail in $image: $out"
+  [ "$out" = "$(printf '3 1234 1\n0 0 0')" ] || fail "the table-file lines give '$out' in $image"
+  echo "  ok: table-file lines run in $image"
+else
+  echo "SKIP: image not available to docker; BusyBox behaviour of the job's shell lines not verified"
+fi
 
 if ! command -v promtool >/dev/null 2>&1; then
   echo "SKIP: promtool not on PATH; chunk-drop alert not verified"
@@ -186,10 +262,13 @@ python3 -I - "$work" <<'PY'
 import sys, yaml
 work = sys.argv[1]
 ann = {}
+fill_ann = {}
 for g in yaml.safe_load(open(work + "/rules.yaml"))["groups"]:
     for r in g["rules"]:
         if r.get("alert") == "JdwillmsenMinecraftWorldArchiveChunksDropped":
             ann = r["annotations"]
+        if r.get("alert") == "JdwillmsenMinecraftWorldBackupClaimFilling":
+            fill_ann = r["annotations"]
 L = 'namespace="jdwillmsen-prd",backup_job="minecraft-fwb-backup",artifact="world"'
 firing = [{"exp_labels": {"severity": "critical", "namespace": "jdwillmsen-prd", "backup_job": "minecraft-fwb-backup", "artifact": "world"},
            "exp_annotations": ann}]
@@ -218,14 +297,27 @@ tests = [
                       series("backup_last_artifact_chunks", "150000+100x10"),
                       series("backup_state_reported", "1+0x10")],
      "alert_rule_test": [at("9d", [])]},
+    {"interval": "1h", "name": "the claim filling pages, and an unreported claim size does not",
+     "input_series": [series("backup_archive_total_bytes", "16500000000+0x200"),
+                      series("backup_retention_budget_bytes", "17179869184+0x200"),
+                      series("backup_claim_available_bytes", "9000000000+0x200")],
+     "alert_rule_test": [
+         {"eval_time": "30m", "alertname": "JdwillmsenMinecraftWorldBackupClaimFilling", "exp_alerts": []},
+         {"eval_time": "2h", "alertname": "JdwillmsenMinecraftWorldBackupClaimFilling", "exp_alerts": [
+             {"exp_labels": {"severity": "warning", "namespace": "jdwillmsen-prd", "backup_job": "minecraft-fwb-backup", "artifact": "world"}, "exp_annotations": fill_ann}]}]},
     {"interval": "1d", "name": "placeholder zeros from a producer that has not reported do not fire",
      "input_series": [series("backup_archive_chunks_max", "162882+0x10"),
                       series("backup_last_artifact_chunks", "0+0x10"),
                       series("backup_state_reported", "0+0x10")],
      "alert_rule_test": [at("5d", [])]},
 ]
-with open(work + "/tests.yaml", "w") as f:
-    yaml.safe_dump({"rule_files": ["rules.yaml"], "evaluation_interval": "1d", "tests": tests}, f, sort_keys=False)
+# The claim rule has a `for: 1h`, which a daily evaluation never satisfies, so
+# it runs in its own file at an hourly one.
+hourly = [t for t in tests if t["interval"] == "1h"]
+daily = [t for t in tests if t["interval"] != "1h"]
+for name_, ts, ev in (("tests", daily, "1d"), ("tests-hourly", hourly, "1h")):
+    with open("%s/%s.yaml" % (work, name_), "w") as f:
+        yaml.safe_dump({"rule_files": ["rules.yaml"], "evaluation_interval": ev, "tests": ts}, f, sort_keys=False)
 PY
-(cd "$work" && promtool test rules tests.yaml) > "$work/promtool.log" 2>&1 || { cat "$work/promtool.log"; fail "chunk-drop alert cases failed"; }
+(cd "$work" && promtool test rules tests.yaml tests-hourly.yaml) > "$work/promtool.log" 2>&1 || { cat "$work/promtool.log"; fail "chunk-drop alert cases failed"; }
 echo "PASS: test-backup-retention"

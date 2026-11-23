@@ -269,6 +269,11 @@ spec:
           # within the tolerance, or with an operator's baseline acknowledgement
           # (README "Backup retention").
           #
+          # backup_last_artifact_chunks is the newest archive that has a count,
+          # so a night the map could not be read leaves the last value in place
+          # instead of making this resolve; RetentionHeld says the night was
+          # uncounted.
+          #
           # No `max_over_time`: the high-water mark is read from the archives
           # that exist now, not from what the series once held, so it cannot
           # decay as samples age out of a window.
@@ -316,6 +321,35 @@ spec:
               newest archive was taken. While held, only archives beyond
               backup.retention.hardMax are deleted, and never a protected one.
               README, "Backup retention".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#backup-retention"
+        - alert: JdwillmsenMinecraftWorldBackupClaimFilling
+          # A full claim fails every backup, and a backup whose tar hit ENOSPC
+          # exits before it can trim, so the volume then stays full. Held
+          # retention is what fills it. Two views because an NFS claim does not
+          # always report its quota: the archives against their own byte budget
+          # always exist, the filesystem's own free space when it is reported.
+          expr: |
+            (
+              max by (namespace, backup_job, artifact) (backup_archive_total_bytes{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"})
+                > 0.95 * max by (namespace, backup_job, artifact) (backup_retention_budget_bytes{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"})
+            )
+            or
+            (
+              max by (namespace, backup_job, artifact) (backup_claim_available_bytes{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"})
+                < 0.1 * max by (namespace, backup_job, artifact) (backup_claim_size_bytes{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"})
+            )
+          for: 1h
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft world backup claim is nearly full
+            description: >-
+              The retained archives are within 5% of backup.retention.budgetBytes,
+              or the claim has under 10% free. Past the budget the oldest
+              unprotected archive is deleted; a claim that actually fills fails
+              every backup. Find why retention is held (README, "Backup
+              retention") or raise backup.size.
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#backup-retention"
 {{- end }}
 {{- end }}
