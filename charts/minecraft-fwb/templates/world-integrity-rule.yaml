@@ -231,5 +231,30 @@ spec:
               world. Restore procedure: charts/minecraft-fwb/README.md,
               "World chunk loss".
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#world-chunk-loss"
+        - alert: JdwillmsenMinecraftWorldArchiveUnquiesced
+          # One unquiesced archive is enough: from 2026-11-19 to 11-22 four nights
+          # in a row were cold copies of a running server and nothing said so.
+          # The gauge is the newest archive's, so this resolves on the next
+          # quiesced one; the state guard keeps placeholder values from a
+          # producer that has not reported from reading as a real 0.
+          expr: |
+            max by (namespace, backup_job, artifact) (backup_last_artifact_quiesced{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"}) == 0
+            and
+            max by (namespace, backup_job, artifact) (backup_state_reported{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"}) == 1
+          for: {{ .Values.worldIntegrity.archive.unquiescedFor }}
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft world backup was taken while the server was writing
+            description: >-
+              The newest world archive was copied from a server that was meant to be
+              running but could not be held (quiesced=0), so its LevelDB can be torn
+              and may not restore. It is also the copy retention counts as good.
+              Find out why the save hold failed (the backup job's log and the
+              server's state), and keep the last quiesced archive until a quiesced
+              one replaces it. Restore procedure:
+              docs/minecraft-fwb-restore-runbook.md.
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/docs/minecraft-fwb-restore-runbook.md"
 {{- end }}
 {{- end }}
