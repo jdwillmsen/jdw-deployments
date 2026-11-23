@@ -101,6 +101,8 @@ spec:
                   value: {{ include "backup.retentionAckConfigMap" . }}
                 - name: RETENTION_HARD_MAX
                   value: {{ .Values.backup.retention.hardMax | quote }}
+                - name: RETENTION_BUDGET_BYTES
+                  value: {{ .Values.backup.retention.budgetBytes | quote }}
                 - name: RETENTION_PROTECT_PCT
                   value: {{ .Values.backup.retention.protectPercent | quote }}
                 - name: RETENTION_REGRESS_PCT
@@ -363,19 +365,44 @@ spec:
                   # retention actually compares. Neither may fail the backup: a
                   # missing number is a reason for retention to keep more, not
                   # for the world to go unprotected.
-                  LDB_FILES="$(find "$STAGE" -name '*.ldb' -type f | wc -l)"
-                  LDB_BYTES="$(find "$STAGE" -name '*.ldb' -type f -printf '%s\n' | awk '{s+=$1} END {print s+0}')"
-                  LDB_ZERO="$(find "$STAGE" -name '*.ldb' -type f -size 0 | wc -l)"
+                  # BusyBox find (this image's) has no -printf, so sizes come from
+                  # stat. A failure here costs the figure, not the backup.
+                  LDB_FILES="$(find "$STAGE" -name '*.ldb' -type f | wc -l)" || LDB_FILES=0
+                  LDB_BYTES="$(find "$STAGE" -name '*.ldb' -type f -exec stat -c %s {} + | awk '{s+=$1} END {print s+0}')" || LDB_BYTES=0
+                  LDB_ZERO="$(find "$STAGE" -name '*.ldb' -type f -size 0 | wc -l)" || LDB_ZERO=0
                   # The census is the map's own count of the live world, taken
                   # within its interval of this copy. It is read through the
                   # API server and ignored when stale; see README "Backup
                   # retention" for what it cannot tell apart.
                   CENSUS=""
                   if [[ -n "$MAP_SERVICE" ]]; then
-                    CENSUS="$(timeout 30s kubectl get --raw "/api/v1/namespaces/${NS}/services/${MAP_SERVICE}:${MAP_INTERNAL_PORT_NAME}/proxy/metrics" 2>/dev/null \
-                      | python3 -I /opt/retention/backup-retention.py census --max-age "$CENSUS_MAX_AGE_SECONDS")" || CENSUS=""
+                  # The error is kept and logged: swallowing it once hid an RBAC
+                  # grant that matched nothing and left every archive uncounted.
+                  if timeout 30s kubectl get --raw "/api/v1/namespaces/${NS}/services/${MAP_SERVICE}:${MAP_INTERNAL_PORT_NAME}/proxy/metrics" > /tmp/census.txt 2> /tmp/census.err; then
+                      CENSUS="$(python3 -I /opt/retention/backup-retention.py census --max-age "$CENSUS_MAX_AGE_SECONDS" < /tmp/census.txt)" || CENSUS=""
+                    else
+                      echo "WARNING: reading the map census failed: $(head -c 300 /tmp/census.err)" >&2
+                    fi
                   fi
-                  [[ -n "$CENSUS" ]] || echo "WARNING: no fresh chunk census, this archive is recorded without a chunk count" >&2
+                  [[ -n "$CENSUS" ]] || echo "WARNING: no fresh chunk census, this archive is recorded without a chunk count and retention will hold" >&2
+
+                  # Make room before building, not after: the trim below runs
+                  # once the archive exists, and a tar that hits a full claim
+                  # exits before any trim, which leaves the claim full for every
+                  # later run. The staging copy and the partial each need about
+                  # the archive's size, so that is what is reserved. Only the
+                  # byte budget acts here; the age and hold rules wait for the
+                  # new archive's own numbers.
+                  STAGED="$(du -sk "$STAGE" | awk '{print $1 * 1024}')"
+                  python3 -I /opt/retention/backup-retention.py trim --budget-only \
+                    --dir /backup --keep "$KEEP" --hard-max "$RETENTION_HARD_MAX" \
+                    --budget-bytes "$RETENTION_BUDGET_BYTES" --reserve-bytes "$((STAGED * 2))" \
+                    --job "$BACKUP_JOB" || echo "WARNING: pre-build space trim failed, continuing" >&2
+                  AVAIL="$(df -Pk /backup | awk 'NR==2 {print $4 * 1024}')"
+                  if [[ "$AVAIL" =~ ^[0-9]+$ && "$AVAIL" -lt "$STAGED" ]]; then
+                    echo "FATAL: only $AVAIL bytes free on the backup claim for a $STAGED byte world; free space or raise backup.size" >&2
+                    exit 1
+                  fi
                   tar czf "$ARCHIVE_TMP" -C "$STAGE" .
                   rm -rf "$STAGE"
 
@@ -408,8 +435,16 @@ spec:
                     echo "ldb_files=$LDB_FILES"
                     echo "ldb_bytes=$LDB_BYTES"
                     echo "ldb_zero=$LDB_ZERO"
-                    # chunks=N lost=M, or nothing.
-                    [[ -z "$CENSUS" ]] || echo "${CENSUS// /$'\n'}"
+                    # The map counts the live world. A cold copy of a world the
+                    # server could not serve (a guard hold, a wedge) is not that
+                    # world, so only a quiesced archive is given the count;
+                    # otherwise it would become the "best" archive with a number
+                    # it does not hold. The ledger is the live world's and is
+                    # recorded either way.
+                    if [[ -n "$CENSUS" ]]; then
+                      [[ "$QUIESCED" -ne 1 ]] || echo "${CENSUS%% *}"
+                      echo "${CENSUS##* }"
+                    fi
                   } > "${ARCHIVE}.meta"
 
                   # Both globs match the scheduled naming only --
@@ -432,16 +467,28 @@ spec:
                   # normal; any other failure aborts, since retention decided
                   # without the acknowledgement would be stricter or weaker
                   # than the operator asked for.
-                  BASELINE="$(kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.baseline}')"
-                  kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.chunks}' > /tmp/chunks-backfill.txt
+                  BASELINE=""
+                  : > /tmp/chunks-backfill.txt
+                  if ! BASELINE="$(kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.baseline}' 2>/tmp/ack.err)" \
+                    || ! kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.chunks}' > /tmp/chunks-backfill.txt 2>>/tmp/ack.err; then
+                    echo "WARNING: could not read $RETENTION_ACK_CM, retention runs without it: $(head -c 300 /tmp/ack.err)" >&2
+                    BASELINE=""
+                    : > /tmp/chunks-backfill.txt
+                  fi
                   LOST=""
                   [[ "$CENSUS" =~ lost=([0-9]+) ]] && LOST="${BASH_REMATCH[1]}"
 
+                  # The archive is already written, so a retention fault must
+                  # not fail the run: nothing is deleted when the script dies,
+                  # and the missing metrics are what says so.
+                  : > /tmp/archive-metrics.txt
                   python3 -I /opt/retention/backup-retention.py trim \
                     --dir /backup --keep "$KEEP" --hard-max "$RETENTION_HARD_MAX" \
+                    --budget-bytes "$RETENTION_BUDGET_BYTES" \
                     --protect-pct "$RETENTION_PROTECT_PCT" --regress-pct "$RETENTION_REGRESS_PCT" \
                     --lost "$LOST" --baseline "$BASELINE" --backfill /tmp/chunks-backfill.txt \
-                    --job "$BACKUP_JOB" --metrics-out /tmp/archive-metrics.txt
+                    --job "$BACKUP_JOB" --metrics-out /tmp/archive-metrics.txt \
+                    || echo "WARNING: retention failed, nothing was deleted and no per-archive metrics are published" >&2
                   echo "backup complete, ${#ARCHIVES[@]} archives on disk before trim"
 
                   # Publish the freshness contract. Derived from a scan of the

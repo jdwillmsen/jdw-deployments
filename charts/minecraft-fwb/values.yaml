@@ -621,12 +621,18 @@ backup:
   # the exceptions.
   retention:
     # Most archives the volume is allowed to hold while retention is held (a
-    # world-loss ledger, a chunk regression, or no chunk count). 14 archives
-    # take about 10 GiB of the 20Gi claim; a full claim fails every backup,
-    # which is worse than rotating an unprotected old one, so the hold is
-    # bounded rather than absolute. Protected archives are never part of the
-    # overflow.
+    # world-loss ledger, a chunk regression, or no chunk count). A full claim
+    # fails every backup, which is worse than rotating an unprotected old one,
+    # so the hold is bounded rather than absolute; see budgetBytes for the
+    # byte bound. Protected archives are never part of the overflow.
     hardMax: 20
+    # Bytes the retained archives may occupy before the oldest unprotected
+    # one is deleted, held or not. The claim is 20Gi (21.47 GB); a run also
+    # needs the staging copy (about the archive's size) and the .partial on the
+    # same claim, so the budget leaves room for both: at 819 MB an archive, 20
+    # of them plus staging and partial is 18.1 GB, 84% of the claim, and the
+    # archive is still growing. 16Gi holds 20 archives up to about 860 MB each.
+    budgetBytes: "17179869184"
     # The newest quiesced archive within this percent of the highest chunk
     # count is kept as well as the highest one: the highest may be a cold copy.
     protectPercent: 1

@@ -69,8 +69,13 @@ cat > "$work/bin/kubectl" <<'SHIM'
 case "$1" in
   get)
     case "$*" in
+      *--raw*)
+        # The map's census, as the API server proxy would serve it.
+        printf 'mcmap_world_chunks{dimension="overworld"} 1000\nmcmap_world_chunks{dimension="end"} 34\n'
+        printf 'mcmap_world_chunks_lost{dimension="overworld"} 7\n'
+        printf 'mcmap_world_census_last_success_timestamp_seconds %s\n' "$(date +%s)" ;;
       *statefulset*) printf 1 ;;
-      *phase*)       printf Running ;;
+      *phase*)       printf "${FAKE_PHASE:-Running}" ;;
       *Ready*)       printf True ;;
     esac ;;
   exec)
@@ -128,5 +133,41 @@ run
 grep -q 'copied 3 files under hold' <<<"$out" || fail "the manifest was not read off a quiet console: $out"
 [ "$rc" -eq 0 ] || fail "a held backup on a quiet console exited $rc: $out"
 echo "  ok: a quiet console still works"
+
+# --- the archive records what it holds, and only a quiesced one gets a count --
+meta="$(find "$work/backup" -name 'fwb-*.tar.gz.meta' | head -1)"
+grep -q '^chunks=1034$' "$meta" || fail "a held archive was not given the map's count: $(cat "$meta")"
+grep -q '^lost=7$' "$meta" || fail "the loss ledger was not recorded: $(cat "$meta")"
+grep -q '^ldb_files=1$' "$meta" || fail "the table-file count was not recorded: $(cat "$meta")"
+grep -q '^backup_archive_chunks{' "$work/archive-metrics.txt" || fail "per-archive metrics were not written"
+grep -q '^backup_archive_chunks{' "$work/metrics.txt" || fail "per-archive metrics did not reach the published payload"
+echo "  ok: a held archive is recorded with the census count"
+
+# A cold copy (the server is not Ready but is meant to be running) is not the
+# world the map counted, so it is recorded without a count. The ledger is still
+# the live world's and is kept.
+FAKE_PHASE=Pending run
+[ "$rc" -eq 0 ] || fail "a cold backup exited $rc: $out"
+grep -q 'falling back to a cold copy' <<<"$out" || fail "the cold path was not taken: $out"
+meta="$(find "$work/backup" -name 'fwb-*.tar.gz.meta' | head -1)"
+grep -q '^quiesced=0$' "$meta" || fail "expected an unquiesced archive: $(cat "$meta")"
+grep -q '^chunks=' "$meta" && fail "an unquiesced archive was given the map's count: $(cat "$meta")"
+grep -q '^lost=7$' "$meta" || fail "the ledger was not recorded for a cold archive: $(cat "$meta")"
+grep -q 'reason="chunks-unknown"} 1' "$work/archive-metrics.txt" || fail "retention did not hold on an uncounted archive"
+echo "  ok: a cold copy is not given a count and retention holds"
+
+# A census that cannot be read is logged with its error, not swallowed, and the
+# backup still completes.
+cat > "$work/bin/kubectl-denied" <<'SHIM'
+#!/usr/bin/env bash
+if [[ "$1" == get && "$*" == *--raw* ]]; then echo 'Error from server (Forbidden): services/proxy denied' >&2; exit 1; fi
+exec "$(dirname "$0")/kubectl" "$@"
+SHIM
+chmod +x "$work/bin/kubectl-denied"
+mv "$work/bin/kubectl" "$work/bin/kubectl-real"; sed -i 's|/kubectl" "\$@"|/kubectl-real" "$@"|' "$work/bin/kubectl-denied"; mv "$work/bin/kubectl-denied" "$work/bin/kubectl"
+run
+[ "$rc" -eq 0 ] || fail "a backup with an unreadable census exited $rc: $out"
+grep -q 'reading the map census failed: Error from server (Forbidden)' <<<"$out" || fail "the census error was swallowed: $out"
+echo "  ok: an unreadable census is reported, not hidden"
 
 echo "PASS"

@@ -95,7 +95,7 @@ def load(dirpath, backfill):
     return archives
 
 
-def decide(archives, keep, hard_max, protect_pct, regress_pct, lost, baseline):
+def decide(archives, keep, hard_max, protect_pct, regress_pct, lost, baseline, budget=0, reserve=0, budget_only=False):
     """Returns (delete, protected, held_reasons, max_chunks).
 
     Integer arithmetic throughout: chunk counts are integers and a float
@@ -105,9 +105,13 @@ def decide(archives, keep, hard_max, protect_pct, regress_pct, lost, baseline):
     max_chunks = max((a["chunks"] for a in counted), default=None)
     protected = {}
     if max_chunks is not None:
+        # Only the newest archive at the maximum: a flat stretch (an unvisited
+        # world) would otherwise tie every night and protect all of them,
+        # leaving nothing deletable and the claim to fill.
         for a in counted:
             if a["chunks"] == max_chunks:
                 protected[a["stamp"]] = "highest-chunk-count"
+                break
         # Newest first, so the first match is the newest.
         for a in counted:
             if a["quiesced"] == 1 and a["chunks"] * 100 >= max_chunks * (100 - protect_pct):
@@ -127,7 +131,9 @@ def decide(archives, keep, hard_max, protect_pct, regress_pct, lost, baseline):
     delete = []
     # Oldest first, from the beyond-window tail only.
     tail = [a for a in archives[keep:] if a["stamp"] not in protected]
-    if not held:
+    if budget_only:
+        pass
+    elif not held:
         delete = tail[::-1]
     else:
         # Disk is finite and a full volume fails every backup, which is worse
@@ -135,10 +141,22 @@ def decide(archives, keep, hard_max, protect_pct, regress_pct, lost, baseline):
         # overflow past hard_max goes, and never a protected archive.
         excess = len(archives) - hard_max
         delete = tail[::-1][:max(excess, 0)]
+    # A byte budget on top of the count, because the claim is sized in bytes and
+    # an archive has grown from 661 MB to 819 MB since the count was chosen.
+    # Same candidates as above: never a protected archive, never one inside the
+    # window.
+    if budget:
+        used = sum(a["bytes"] for a in archives if a not in delete) + reserve
+        for a in tail[::-1]:
+            if used <= budget:
+                break
+            if a not in delete:
+                delete.append(a)
+                used -= a["bytes"]
     return delete, protected, held, max_chunks
 
 
-def metrics(archives, protected, held, max_chunks, deleted_count, lost, job):
+def metrics(archives, protected, held, max_chunks, deleted_count, lost, job, baseline="", budget=0, claim=None):
     L = 'backup_job="%s",artifact="world"' % job
     out = []
 
@@ -165,8 +183,20 @@ def metrics(archives, protected, held, max_chunks, deleted_count, lost, job):
         gauge("backup_archive_chunks_max",
               "Highest chunk count among retained archives at or after the acknowledged baseline. Falls only when that archive is deleted or a baseline is acknowledged.",
               [(L, max_chunks)])
-    if archives and archives[0]["chunks"] is not None:
-        gauge("backup_last_artifact_chunks", "Chunks the map counted when the newest archive was taken.", [(L, archives[0]["chunks"])])
+    # The newest archive that has a count, not the newest archive: when a night
+    # goes uncounted the series must keep its last value, or an alert reading
+    # it would resolve because a measurement is missing rather than because the
+    # world recovered.
+    counted = [a for a in archives if a["chunks"] is not None and (not baseline or a["stamp"] >= baseline)]
+    if counted:
+        gauge("backup_last_artifact_chunks", "Chunks in the newest archive that has a count.", [(L, counted[0]["chunks"])])
+    gauge("backup_newest_archive_counted", "1 if the newest archive has a chunk count.", [(L, 1 if archives and archives[0]["chunks"] is not None else 0)])
+    gauge("backup_archive_total_bytes", "Bytes of all retained archives.", [(L, sum(a["bytes"] for a in archives))])
+    if budget:
+        gauge("backup_retention_budget_bytes", "Bytes the retained archives may occupy before the oldest unprotected are deleted.", [(L, budget)])
+    if claim:
+        gauge("backup_claim_size_bytes", "Size the filesystem reports for the backup claim.", [(L, claim[0])])
+        gauge("backup_claim_available_bytes", "Bytes available on the backup claim after this run.", [(L, claim[1])])
     if lost is not None:
         gauge("backup_world_lost_chunks", "Chunks in the map's loss ledger when the newest archive was taken. Cleared only by an operator's acknowledgement in the map.", [(L, lost)])
     gauge("backup_retention_held",
@@ -183,8 +213,14 @@ def parse_backfill(path):
         with open(path) as f:
             for line in f:
                 k, sep, v = line.strip().partition("=")
+                if not line.strip():
+                    continue
                 if sep and STAMP_RE.match(k) and v.isdigit():
                     out[k] = int(v)
+                else:
+                    # An unprotected archive is the cost of a typo here, so say
+                    # which line was dropped.
+                    print("WARNING: ignoring malformed chunks line %r in the retention acknowledgement" % line.strip(), file=sys.stderr)
     return out
 
 
@@ -203,6 +239,9 @@ def main(argv):
     t.add_argument("--baseline", default="", help="acknowledged baseline stamp; older archives stop counting")
     t.add_argument("--backfill", default="", help="file of STAMP=COUNT for archives taken before counts were recorded")
     t.add_argument("--job", default="backup")
+    t.add_argument("--budget-bytes", type=int, default=0)
+    t.add_argument("--reserve-bytes", type=int, default=0, help="space the incoming archive and its staging will need")
+    t.add_argument("--budget-only", action="store_true", help="delete only to fit the budget; used before the archive is built")
     t.add_argument("--metrics-out", default="")
     t.add_argument("--dry-run", action="store_true")
     a = p.parse_args(argv)
@@ -212,14 +251,18 @@ def main(argv):
         return 0
 
     if a.baseline and not STAMP_RE.match(a.baseline):
-        print("FATAL: baseline %r is not a YYYYmmddTHHMMSSZ stamp" % a.baseline, file=sys.stderr)
-        return 1
+        # Ignored, not fatal: this runs after the archive is written, and a
+        # typo must not stop the run publishing. Ignoring it only makes
+        # retention stricter, since every old archive keeps counting.
+        print("WARNING: ignoring baseline %r, not a YYYYmmddTHHMMSSZ stamp" % a.baseline, file=sys.stderr)
+        a.baseline = ""
     if a.keep < 1 or a.hard_max < a.keep:
         print("FATAL: need 1 <= keep <= hard-max", file=sys.stderr)
         return 1
     lost = as_int(a.lost)
     archives = load(a.dir, parse_backfill(a.backfill))
-    delete, protected, held, max_chunks = decide(archives, a.keep, a.hard_max, a.protect_pct, a.regress_pct, lost, a.baseline)
+    delete, protected, held, max_chunks = decide(archives, a.keep, a.hard_max, a.protect_pct, a.regress_pct, lost, a.baseline,
+                                                 a.budget_bytes, a.reserve_bytes, a.budget_only)
 
     for ar in archives:
         status = "delete" if ar in delete else "keep"
@@ -238,7 +281,12 @@ def main(argv):
                 pass
     if a.metrics_out:
         remaining = [ar for ar in archives if ar not in delete]
-        text = metrics(remaining, protected, held, max_chunks, len(delete), lost, a.job)
+        try:
+            st = os.statvfs(a.dir)
+            claim = (st.f_blocks * st.f_frsize, st.f_bavail * st.f_frsize)
+        except OSError:
+            claim = None
+        text = metrics(remaining, protected, held, max_chunks, len(delete), lost, a.job, a.baseline, a.budget_bytes, claim)
         with open(a.metrics_out, "w") as f:
             f.write(text)
     return 0

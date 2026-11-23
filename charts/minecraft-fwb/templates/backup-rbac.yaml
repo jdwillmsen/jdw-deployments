@@ -49,10 +49,12 @@ rules:
 {{- if .Values.map.enabled }}
   # The chunk count each archive is recorded with comes from the map's census
   # metrics, read through the API server so the job needs no route to the
-  # map's cluster-only port. One service, one verb.
+  # map's cluster-only port. One service port, one verb. The resource name the
+  # API server authorises is the whole path segment, "<service>:<port>", so a
+  # grant on the bare service name matches nothing.
   - apiGroups: [""]
     resources: ["services/proxy"]
-    resourceNames: ["{{ include "map.name" . }}"]
+    resourceNames: ["{{ include "map.name" . }}:internal"]
     verbs: ["get"]
 {{- end }}
 ---
