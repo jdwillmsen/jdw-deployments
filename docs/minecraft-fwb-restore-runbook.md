@@ -62,6 +62,18 @@ The world, the scratch claim and the backup claim:
 
 ## Before you start
 
+### When the world guard holds the server
+
+The prd world guard runs in `enforce` mode (JDW-365). After a host crash that left
+tables the MANIFEST names missing, empty or short, the pod stays `Init:0/2`, the
+database is never opened and nothing is repaired, so this runbook's measurements are
+still possible on the untouched world. **Restore or acknowledge within 24 h**: restore
+as below (or `tools/world-restore`), or accept the loss with the accept file; both are
+in `charts/minecraft-fwb/README.md`, "World guard held". Suspend the backup first. The
+page is `JdwillmsenMinecraftWorldGuardHeld`; a quiesced=0 archive pages
+`JdwillmsenMinecraftWorldArchiveUnquiesced` and is not a restore source you can trust
+over the last quiesced one.
+
 ### Decide that a restore is the right move
 
 A restore throws away everything written since the archive's timestamp. Before

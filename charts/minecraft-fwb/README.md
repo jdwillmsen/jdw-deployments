@@ -164,6 +164,14 @@ past it. Both are true statements about the world while they last.
 | `JdwillmsenMinecraftWorldGuardHeld` | the cluster's state metrics: the `world-guard` init container has been running for 3 minutes | `GUARD_MODE: enforce`. The pod is `Init:0/2`, the server has **not** opened its database, nobody can join |
 | `JdwillmsenMinecraftWorldGuardWouldHold` | the guard's log line through Loki | `GUARD_MODE: warn`. Same finding, but the server **was started**; its own repair will drop the damaged tables |
 
+Production runs `GUARD_MODE: enforce` (since JDW-365). On a damaged world the pod stays
+`Init:0/2`, the database is not opened, nothing is repaired and nothing is deleted
+beyond what the crash already took; the guard re-checks every 30 s. The only ways on
+are a clean check (after a restore) or an operator's accept file. A clean restart is
+unaffected: `orphan-newer-than-manifest` and the other warnings in the log are
+reported but never hold. **Restore or acknowledge within 24 h** of the page: a held
+server is an outage, and the next crash must be able to page again.
+
 What the guard is, what it checks and how it fails open are in
 [docs/world-guard.md](../../docs/world-guard.md). Short version: after a host loses
 power, tables the database's MANIFEST names can be missing, empty or short, and the
@@ -221,6 +229,8 @@ loss](#world-chunk-loss)), then pick one:
 
 ### Would hold (warn)
 
+Not what production runs; read this for a release set to `warn`.
+
 This page is best effort. The guard prints the finding every 2 s for 30 s before the
 server may start, and the log shipper only reads lines written after it finds a container's
 log. After a host power loss the shipper on that node may itself start more than 30 s after
@@ -245,8 +255,8 @@ generation.
   writes under `worlds/`.
 - The script in `values-map-pack.yaml` is generated: edit
   `tools/world-guard/world_guard.py`, run `tools/world-guard/embed.py --write`.
-- It ships `warn`. A week of understood reports, then a separate small change sets
-  `enforce`.
+- Production is `enforce`; `warn` is the soak setting for a new release. Putting `warn`
+  back needs the owner's sign-off.
 
 ## Restoring from a retained generation
 
