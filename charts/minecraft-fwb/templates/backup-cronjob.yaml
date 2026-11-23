@@ -97,6 +97,24 @@ spec:
                   value: {{ .Values.backup.keep | quote }}
                 - name: METRICS_CM
                   value: {{ include "backup.metricsConfigMap" . }}
+                - name: RETENTION_ACK_CM
+                  value: {{ include "backup.retentionAckConfigMap" . }}
+                - name: RETENTION_HARD_MAX
+                  value: {{ .Values.backup.retention.hardMax | quote }}
+                - name: RETENTION_PROTECT_PCT
+                  value: {{ .Values.backup.retention.protectPercent | quote }}
+                - name: RETENTION_REGRESS_PCT
+                  value: {{ .Values.backup.retention.regressPercent | quote }}
+                - name: CENSUS_MAX_AGE_SECONDS
+                  value: {{ .Values.backup.retention.censusMaxAgeSeconds | quote }}
+                # Empty when there is no map: the archives are then recorded
+                # without a chunk count and retention holds, loudly.
+                - name: MAP_SERVICE
+                  value: {{ if .Values.map.enabled }}{{ include "map.name" . | quote }}{{ else }}""{{ end }}
+                - name: MAP_INTERNAL_PORT_NAME
+                  value: internal
+                - name: PYTHONDONTWRITEBYTECODE
+                  value: "1"
                 # Must match the exporter's label for the same workload, or the
                 # zeros it serves before the first run and the real values
                 # after it would arrive as two unrelated series.
@@ -338,6 +356,26 @@ spec:
                   # name of a backup.
                   ARCHIVE_TMP="/backup/.fwb-${STAMP}.tar.gz.partial"
                   trap 'rm -f "$ARCHIVE_TMP"' EXIT
+
+                  # What this archive holds, recorded while the copy is still
+                  # unpacked. The table-file figures need no tooling and
+                  # survive the map being down; the chunk count is what
+                  # retention actually compares. Neither may fail the backup: a
+                  # missing number is a reason for retention to keep more, not
+                  # for the world to go unprotected.
+                  LDB_FILES="$(find "$STAGE" -name '*.ldb' -type f | wc -l)"
+                  LDB_BYTES="$(find "$STAGE" -name '*.ldb' -type f -printf '%s\n' | awk '{s+=$1} END {print s+0}')"
+                  LDB_ZERO="$(find "$STAGE" -name '*.ldb' -type f -size 0 | wc -l)"
+                  # The census is the map's own count of the live world, taken
+                  # within its interval of this copy. It is read through the
+                  # API server and ignored when stale; see README "Backup
+                  # retention" for what it cannot tell apart.
+                  CENSUS=""
+                  if [[ -n "$MAP_SERVICE" ]]; then
+                    CENSUS="$(timeout 30s kubectl get --raw "/api/v1/namespaces/${NS}/services/${MAP_SERVICE}:${MAP_INTERNAL_PORT_NAME}/proxy/metrics" 2>/dev/null \
+                      | python3 -I /opt/retention/backup-retention.py census --max-age "$CENSUS_MAX_AGE_SECONDS")" || CENSUS=""
+                  fi
+                  [[ -n "$CENSUS" ]] || echo "WARNING: no fresh chunk census, this archive is recorded without a chunk count" >&2
                   tar czf "$ARCHIVE_TMP" -C "$STAGE" .
                   rm -rf "$STAGE"
 
@@ -367,23 +405,43 @@ spec:
                   {
                     echo "quiesced=$QUIESCED"
                     echo "source_replicas=$DESIRED"
+                    echo "ldb_files=$LDB_FILES"
+                    echo "ldb_bytes=$LDB_BYTES"
+                    echo "ldb_zero=$LDB_ZERO"
+                    # chunks=N lost=M, or nothing.
+                    [[ -z "$CENSUS" ]] || echo "${CENSUS// /$'\n'}"
                   } > "${ARCHIVE}.meta"
 
-                  # Both globs match the scheduled naming only —
-                  # fwb-<8 digits>T<6 digits>Z — never fwb-emergency-*. Manual
+                  # Both globs match the scheduled naming only --
+                  # fwb-<8 digits>T<6 digits>Z -- never fwb-emergency-*. Manual
                   # rescue archives must survive retention, and must not count
                   # towards freshness either: a hand-made copy from weeks ago
                   # sitting in this directory would otherwise make a dead
                   # CronJob look like a healthy one.
-                  # shopt -s nullglob so an empty backup dir does not make the
-                  # glob expand to a literal and trip set -e on the first run.
+                  #
+                  # What may be deleted is decided from what each archive holds,
+                  # not from its age alone. Age alone deleted nothing wrong
+                  # until a loss went unnoticed for longer than the window, at
+                  # which point the last good archive was next in line. The
+                  # rules are in backup-retention.py and the README.
                   shopt -s nullglob
                   ARCHIVES=(/backup/fwb-????????T??????Z.tar.gz)
-                  if [[ ${#ARCHIVES[@]} -gt $KEEP ]]; then
-                    ls -1t "${ARCHIVES[@]}" | tail -n +$((KEEP + 1)) | while read -r old; do
-                      rm -f "$old" "${old}.meta"
-                    done
-                  fi
+
+                  # An operator's baseline acknowledgement and chunk counts for
+                  # archives taken before this job recorded them. Absent is
+                  # normal; any other failure aborts, since retention decided
+                  # without the acknowledgement would be stricter or weaker
+                  # than the operator asked for.
+                  BASELINE="$(kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.baseline}')"
+                  kubectl get configmap "$RETENTION_ACK_CM" -n "$NS" --ignore-not-found -o jsonpath='{.data.chunks}' > /tmp/chunks-backfill.txt
+                  LOST=""
+                  [[ "$CENSUS" =~ lost=([0-9]+) ]] && LOST="${BASH_REMATCH[1]}"
+
+                  python3 -I /opt/retention/backup-retention.py trim \
+                    --dir /backup --keep "$KEEP" --hard-max "$RETENTION_HARD_MAX" \
+                    --protect-pct "$RETENTION_PROTECT_PCT" --regress-pct "$RETENTION_REGRESS_PCT" \
+                    --lost "$LOST" --baseline "$BASELINE" --backfill /tmp/chunks-backfill.txt \
+                    --job "$BACKUP_JOB" --metrics-out /tmp/archive-metrics.txt
                   echo "backup complete, ${#ARCHIVES[@]} archives on disk before trim"
 
                   # Publish the freshness contract. Derived from a scan of the
@@ -460,6 +518,7 @@ spec:
                       echo "# TYPE backup_last_artifact_source_replicas gauge"
                       echo "backup_last_artifact_source_replicas{${LABELS}} ${RMETRIC}"
                     fi
+                    cat /tmp/archive-metrics.txt
                   } > /tmp/metrics.txt
 
                   kubectl create configmap "$METRICS_CM" -n "$NS" \
@@ -473,7 +532,13 @@ spec:
                   mountPath: /backup
                 - name: tmp
                   mountPath: /tmp
+                - name: retention
+                  mountPath: /opt/retention
+                  readOnly: true
           volumes:
+            - name: retention
+              configMap:
+                name: {{ include "backup.retentionScriptConfigMap" . }}
             - name: world
               persistentVolumeClaim:
                 claimName: datadir-{{ .Release.Name }}-minecraft-bedrock-0

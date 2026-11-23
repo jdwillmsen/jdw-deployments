@@ -1,0 +1,13 @@
+{{- if .Values.backup.enabled }}
+# The retention decision lives in a file of its own, not inline in the job's
+# script, so tools/tests can run the very code that ships against fixture
+# archives.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "backup.retentionScriptConfigMap" . }}
+  namespace: {{ .Release.Namespace }}
+data:
+  backup-retention.py: |
+{{ .Files.Get "scripts/backup-retention.py" | indent 4 }}
+{{- end }}

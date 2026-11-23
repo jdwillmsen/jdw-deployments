@@ -617,6 +617,24 @@ backup:
   storageClass: truenas-nfs
   size: 20Gi
   keep: 14
+  # Retention is not by age alone: see README "Backup retention". These bound
+  # the exceptions.
+  retention:
+    # Most archives the volume is allowed to hold while retention is held (a
+    # world-loss ledger, a chunk regression, or no chunk count). 14 archives
+    # take about 10 GiB of the 20Gi claim; a full claim fails every backup,
+    # which is worse than rotating an unprotected old one, so the hold is
+    # bounded rather than absolute. Protected archives are never part of the
+    # overflow.
+    hardMax: 20
+    # The newest quiesced archive within this percent of the highest chunk
+    # count is kept as well as the highest one: the highest may be a cold copy.
+    protectPercent: 1
+    # The newest archive this far under the highest holds retention. Matches
+    # the 2% of JdwillmsenMinecraftWorldArchiveChunksDropped.
+    regressPercent: 2
+    # A census older than this is not the world the archive was copied from.
+    censusMaxAgeSeconds: 3600
   # Floor for a plausible archive. The world is ~590 MB raw and compresses to
   # roughly 700 MB with the rest of the level, so anything under 100 MB means
   # the copy went wrong — which is the failure the VM's backup hid by writing
