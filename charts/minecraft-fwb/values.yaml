@@ -2932,6 +2932,9 @@ worldIntegrity:
     # 2% under the median. A played-in world grows; it does not shrink, and it
     # does not fall below the middle of its own week.
     tolerance: 0.98
+    # Same 2% for the chunk-count rule, against the best archive still on disk
+    # rather than a median, which is why it cannot drift clear.
+    chunkTolerance: 0.98
     # A week of archives. The rule needs the window to hold continuous samples,
     # so a fixture or a scrape sparser than Prometheus' 5m lookback delta goes
     # stale between points and the rule evaluates against nothing.

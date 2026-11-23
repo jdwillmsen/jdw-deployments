@@ -256,5 +256,66 @@ spec:
               one replaces it. Restore procedure:
               docs/minecraft-fwb-restore-runbook.md.
             runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/docs/minecraft-fwb-restore-runbook.md"
+        - alert: JdwillmsenMinecraftWorldArchiveChunksDropped
+          # The archive alert that cannot clear by itself getting used to the
+          # loss. ArchiveShrank compares with a 7-day median, so three small
+          # archives are enough for the median to take the loss in and the alert
+          # to resolve with the world still short (2026-11-20, after the
+          # 2026-11-16 loss of 12,321 chunks).
+          #
+          # The baseline here is the highest chunk count among the archives
+          # still on disk. Retention never deletes that archive, so the baseline
+          # does not move with time -- only with a newer archive recovering to
+          # within the tolerance, or with an operator's baseline acknowledgement
+          # (README "Backup retention").
+          #
+          # No `max_over_time`: the high-water mark is read from the archives
+          # that exist now, not from what the series once held, so it cannot
+          # decay as samples age out of a window.
+          expr: |
+            (
+              max by (namespace, backup_job, artifact) (backup_last_artifact_chunks{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"})
+                <
+              max by (namespace, backup_job, artifact) (backup_archive_chunks_max{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"})
+                * {{ .Values.worldIntegrity.archive.chunkTolerance }}
+            )
+            and
+              max by (namespace, backup_job, artifact) (backup_state_reported{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"}) == 1
+          for: {{ .Values.worldIntegrity.archive.for }}
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Newest Minecraft world archive holds fewer chunks than an older one
+            description: >-
+              The newest archive has more than
+              {{ subf 1.0 .Values.worldIntegrity.archive.chunkTolerance | mulf 100 | printf "%.0f" }}% fewer
+              chunks than the best archive still on disk. A played-in world does not
+              lose chunks. This does not clear on its own: it clears when a newer
+              archive is back within the tolerance of the best, or when an operator
+              acknowledges a new baseline (README, "Backup retention"). Retention is
+              held while it fires, so the good archive is not rotated away. Restore
+              from the best archive: charts/minecraft-fwb/README.md, "World chunk loss".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#backup-retention"
+        - alert: JdwillmsenMinecraftWorldArchiveRetentionHeld
+          # Retention deleting nothing is the safe state and also a silent one:
+          # archives pile up towards the claim's size. Say so, with the reason.
+          expr: |
+            max by (namespace, backup_job, artifact, reason) (backup_retention_held{namespace="{{ .Release.Namespace }}", backup_job="{{ include "backup.name" . }}", artifact="world"}) == 1
+          for: 30m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: Minecraft world backup retention is held ({{ "{{ $labels.reason }}" }})
+            description: >-
+              The nightly job is not deleting archives for age. world-loss-ledger:
+              the map still records lost chunks, so restore or acknowledge them.
+              chunk-regression: the newest archive has fewer chunks than the best.
+              chunks-unknown: the map's census was unavailable or stale when the
+              newest archive was taken. While held, only archives beyond
+              backup.retention.hardMax are deleted, and never a protected one.
+              README, "Backup retention".
+            runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/charts/minecraft-fwb/README.md#backup-retention"
 {{- end }}
 {{- end }}
