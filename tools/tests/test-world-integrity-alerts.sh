@@ -682,7 +682,7 @@ tests:
               artifact: world
             exp_annotations:
               summary: "Minecraft world backup was taken while the server was writing"
-              description: "The newest world archive was copied from a server that was meant to be running but could not be held (quiesced=0), so its LevelDB can be torn and may not restore. It is also the copy retention counts as good. Find out why the save hold failed (the backup job's log and the server's state), and keep the last quiesced archive until a quiesced one replaces it. Restore procedure: docs/minecraft-fwb-restore-runbook.md."
+              description: "The newest world archive was copied from a server that was meant to be running but could not be held (quiesced=0), so its LevelDB can be torn and may not restore. Find out why the save hold failed (the backup job's log and the server's state), and keep the last quiesced archive until a quiesced one replaces it. Restore procedure: docs/minecraft-fwb-restore-runbook.md."
               runbook_url: "https://github.com/jdwillmsen/jdw-deployments/blob/main/docs/minecraft-fwb-restore-runbook.md"
       - eval_time: 32h
         alertname: JdwillmsenMinecraftWorldArchiveUnquiesced
