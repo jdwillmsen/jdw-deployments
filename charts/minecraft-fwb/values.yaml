@@ -925,7 +925,7 @@ restore:
     # plain copy later -- that conversion has never been exercised, and nothing
     # here should be read as a claim that it would work.
     storageClass: truenas-iscsi
-    size: 5Gi
+    size: 8Gi
 
 # What the AFK bots wear. The theme is generated per bot from its username;
 # a PNG in skins/ named <username>.png (64x64) replaces it for that bot. Other
@@ -2402,9 +2402,12 @@ map:
     # between them, not two more worlds. The ceiling is a quarantined damaged
     # snapshot plus two generations frozen by an unacknowledged loss, each
     # pinning tables the mirror has since compacted away: about three worlds
-    # plus the tiles and the renderer, around 2.4 GiB, half of this claim.
+    # plus the tiles and the renderer, around 2.4 GiB. The 2026-11 world loss
+    # filled the original 5Gi (snapshots failed with no space left), so the
+    # live claim was grown to 10Gi and this value must match it: a PVC cannot
+    # shrink and a smaller desired size breaks Argo's comparison.
     # JdwillmsenMinecraftVolumeNearFull is the signal to expand it.
-    size: 5Gi
+    size: 10Gi
 
   resources:
     requests:
