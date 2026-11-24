@@ -74,6 +74,11 @@ page is `JdwillmsenMinecraftWorldGuardHeld`; a quiesced=0 archive pages
 `JdwillmsenMinecraftWorldArchiveUnquiesced` and is not a restore source you can trust
 over the last quiesced one.
 
+A held pod never started its server container, so there is no `Version:` line in its
+log for the verify step below. Take the version the server last resolved from the log
+aggregator (the previous pod's `Version:` line) and pass it to `tools/world-restore`
+with `--version`; `VERSION=LATEST` in the StatefulSet is not a pin.
+
 ### Decide that a restore is the right move
 
 A restore throws away everything written since the archive's timestamp. Before
