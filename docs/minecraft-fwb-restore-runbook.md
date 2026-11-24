@@ -168,6 +168,11 @@ MCVER=$(kubectl -n $N logs $R-minecraft-bedrock-0 -c $R-minecraft-bedrock | sed 
 echo "image=$IMAGE node=$NODE version=$MCVER"
 ```
 
+If the world guard is holding the pod, there is no server log, so `MCVER` comes back
+empty. Do not go on with it empty: set `MCVER` by hand from the log aggregator (the
+previous pod's `Version:` line) before the restore Job scales anything down, because
+the verify pod reads it as `VERSION` and an empty value leaves the verify boot unpinned.
+
 Production sets `VERSION=LATEST`, so the StatefulSet's env is not a pin: the
 version that matters is the one the running server resolved, which is the
 `Version:` line in its log (`1.26.52.3` on 2026-10-02, image
