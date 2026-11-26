@@ -181,10 +181,12 @@ A hold is bounded twice, because a full claim fails every backup: by
 the render). Past either, the oldest unprotected archive beyond the newest
 `keep` goes anyway. Protected archives never do.
 
-**Sizing.** The claim is 20Gi (21.47 GB). A run also needs the staging copy and
+**Sizing.** The claim is 30Gi (32.21 GB). A run also needs the staging copy and
 the `.partial` on the same claim, each about the archive's size. At 819 MB an
-archive, 20 archives plus both is 18.1 GB, 84% of the claim, and the archive
-is growing, hence a byte budget rather than a count alone. In practice the
+archive, 20 archives plus both is 18.1 GB, 56% of the claim, and the archive
+is growing, hence a byte budget rather than a count alone. Incident and manual
+archives kept on the claim are outside the budget; in 2026-11 about 6.5 GB of
+them filled the then 20Gi claim and failed a nightly run. In practice the
 budget, not `hardMax`, holds about 18 archives at that size, because the job
 reserves twice the staged size before building. Before it builds the
 archive the job trims to the budget less twice the staged size, and refuses to
