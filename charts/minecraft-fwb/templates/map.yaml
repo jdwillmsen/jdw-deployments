@@ -399,7 +399,12 @@ spec:
               ready it is stuck mid-stop and ignores the console.
 {{- if .Values.holdWedgeWatchdog.enabled }} The
               hold-wedge watchdog kills its process after
-              {{ .Values.holdWedgeWatchdog.wedgeSeconds }}s not ready.
+              {{ .Values.holdWedgeWatchdog.wedgeSeconds }}s not ready, but only
+              when every one of its checks passes: every other container
+              ready, three unanswered pings, and no non-zero exit within
+              {{ .Values.holdWedgeWatchdog.backoffSeconds }}s. If the server
+              is still not ready, read the hold-wedge-watchdog job log for
+              the check that held it back and recover by hand.
 {{- end }}
 {{- if .Values.map.history.enabled }}
         - alert: JdwillmsenMinecraftMapHistoryMissed

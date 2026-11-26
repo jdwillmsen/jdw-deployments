@@ -1135,7 +1135,7 @@ tests:
               namespace: jdwillmsen-prd
             exp_annotations:
               summary: "Minecraft FWB may have world saving paused"
-              description: "The console bridge paused saving for a map snapshot and the server has not confirmed the resume for ten minutes. The bridge keeps retrying and refuses new snapshots meanwhile. Check the server log for \"Changes to the world are resumed\"; if it is missing, run `save resume` from the console. The nightly backup also resumes saving when it finishes. If the server is also not ready it is stuck mid-stop and ignores the console. The hold-wedge watchdog kills its process after 900s not ready."
+              description: "The console bridge paused saving for a map snapshot and the server has not confirmed the resume for ten minutes. The bridge keeps retrying and refuses new snapshots meanwhile. Check the server log for \"Changes to the world are resumed\"; if it is missing, run `save resume` from the console. The nightly backup also resumes saving when it finishes. If the server is also not ready it is stuck mid-stop and ignores the console. The hold-wedge watchdog kills its process after 900s not ready, but only when every one of its checks passes: every other container ready, three unanswered pings, and no non-zero exit within 21600s. If the server is still not ready, read the hold-wedge-watchdog job log for the check that held it back and recover by hand."
 
   # History. A map that keeps its days has a gauge no more than a day and a
   # cycle behind the clock; one tracking the clock is the limit of that.

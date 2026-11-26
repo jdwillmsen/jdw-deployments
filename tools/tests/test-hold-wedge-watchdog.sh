@@ -72,10 +72,17 @@ if os.environ.get("FAKE_LAST_EXIT"):
     ended = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=int(os.environ.get("FAKE_LAST_EXIT_AGO", "600")))
     last = {"terminated": {"exitCode": int(os.environ["FAKE_LAST_EXIT"]), "finishedAt": ended.strftime("%Y-%m-%dT%H:%M:%SZ")}}
 print(json.dumps({"status": {
-    "containerStatuses": [{"name": "server", "ready": ready, "started": os.environ.get("FAKE_STARTED", "true") == "true", "state": state, "lastState": last}],
+    "containerStatuses": [
+        {"name": "server", "ready": ready, "started": os.environ.get("FAKE_STARTED", "true") == "true", "state": state, "lastState": last, "containerID": "containerd://c1"},
+        {"name": "console-bridge", "ready": os.environ.get("FAKE_SIDECAR_READY", "true") == "true", "started": True, "state": {"running": {}}},
+    ],
     "conditions": [{"type": "Ready", "status": "True" if ready else "False", "lastTransitionTime": since.strftime("%Y-%m-%dT%H:%M:%SZ")}],
 }}))
 PY
+    exit 0
+  fi
+  if [[ "$*" == *containerID* ]]; then
+    printf '%s' "${FAKE_CID_NOW-containerd://c1}"
     exit 0
   fi
   # The restart count: unchanged until a kill has been recorded.
@@ -128,6 +135,12 @@ has   "a kill is confirmed by the restart count" '"event":"killed"'
 lacks "a killed server is not a failed run" '(exit'
 
 lacks "a ready server is left alone" __KILL_CALLED__ FAKE_READY=true
+# Pod readiness is pod-wide, so a sidecar's outage must not lend the server
+# its not-ready time.
+lacks "a sidecar not ready leaves the timing unattributed" __KILL_CALLED__ FAKE_SIDECAR_READY=false
+has   "a sidecar not ready is reported" '"event":"skipped"' FAKE_SIDECAR_READY=false
+lacks "a container replaced during the checks is not signalled" __KILL_CALLED__ FAKE_CID_NOW=containerd://c2
+lacks "an unreadable container id is not signalled" __KILL_CALLED__ FAKE_CID_NOW=
 lacks "a server not ready for under wedgeSeconds is left alone" __KILL_CALLED__ FAKE_NOT_READY_FOR=600
 lacks "a server still booting is the startup probe's" __KILL_CALLED__ FAKE_STARTED=false
 lacks "a stopped container is left alone" __KILL_CALLED__ FAKE_RUNNING=no

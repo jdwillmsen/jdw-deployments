@@ -157,8 +157,9 @@ spec:
                     exit 0
                   fi
                   # Prints "<started> <ready> <seconds not ready> <seconds since
-                  # the previous container exited non-zero, or -1>", or nothing
-                  # when the container is not running.
+                  # the previous container exited non-zero, or -1> <every other
+                  # container ready> <container id>", or nothing when the
+                  # container is not running.
                   state="$(POD="$pod" python3 -c '
                   import datetime, json, os, sys
                   pod = json.loads(os.environ["POD"])
@@ -171,19 +172,27 @@ spec:
                   since = age(cond["lastTransitionTime"]) if cond.get("status") == "False" and cond.get("lastTransitionTime") else 0
                   last = c.get("lastState", {}).get("terminated", {})
                   failed = age(last["finishedAt"]) if last.get("exitCode", 0) != 0 and last.get("finishedAt") else -1
-                  print(str(c.get("started", False)).lower(), str(c.get("ready", False)).lower(), since, failed)
+                  others = all(s.get("ready", False) for s in pod["status"].get("containerStatuses", []) if s["name"] != sys.argv[1])
+                  print(str(c.get("started", False)).lower(), str(c.get("ready", False)).lower(), since, failed, str(others).lower(), c.get("containerID") or "-")
                   ' "$SERVER_CONTAINER" 2>/dev/null || true)"
                   if [[ -z "$state" ]]; then
                     emit skipped "server container is not running"
                     exit 0
                   fi
-                  read -r started ready since failed_ago <<<"$state"
+                  read -r started ready since failed_ago others_ready cid <<<"$state"
                   if [[ "$ready" == "true" ]]; then
                     emit ok "server is ready"
                     exit 0
                   fi
                   if [[ "$started" != "true" ]]; then
                     emit skipped "server has not passed its startup probe; a boot is the startup probe's to judge"
+                    exit 0
+                  fi
+                  # Kubernetes records when the pod stopped being ready, not
+                  # when this container did. Only with every other container
+                  # ready is that time the server's own.
+                  if [[ "$others_ready" != "true" ]]; then
+                    emit skipped "another container in the pod is not ready, so the not-ready time cannot be attributed to the server"
                     exit 0
                   fi
                   if (( since < WEDGE_SECONDS )); then
@@ -231,6 +240,15 @@ spec:
                   before="$(restarts)"
                   if [[ -z "$before" ]]; then
                     emit unverified "could not read the restart count, so a kill could not be confirmed; left alone"
+                    exit 0
+                  fi
+                  # The checks above took up to a minute, and the exec below
+                  # reaches whichever container now has the name. Act only on
+                  # the one that was judged wedged.
+                  cid_now="$(timeout 10s kubectl get pod -n "$NS" "$SERVER_POD" \
+                    -o jsonpath="{.status.containerStatuses[?(@.name=='$SERVER_CONTAINER')].containerID}" 2>/dev/null || true)"
+                  if [[ "$cid_now" != "$cid" ]]; then
+                    emit skipped "the server container changed during the checks (${cid} -> ${cid_now:-none}); left alone"
                     exit 0
                   fi
 
