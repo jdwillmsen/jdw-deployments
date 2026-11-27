@@ -169,6 +169,54 @@ run -- whitelist add 'x"; stop'
 [ ! -s "$work/sent" ] || fail "an injected gamertag was sent: $(cat "$work/sent")"
 echo "  ok: op guards fwb, quotes gamertags, and reads the reply honestly"
 
+# A "<command> list" hint would op or deop a player called "list"; each
+# command names its own read-only check.
+logs '[Scripting] MCMAP1 {"gen":1,"kind":"tick"}'
+run -- --world lab deop Alice
+grep -q "^hint: .*run permission list$" <<<"$out" || fail "deop's hint must be permission list: $out"
+grep -q 'deop list' <<<"$out" && fail "deop's hint must never be 'deop list': $out"
+logs "[INFO] Server started."
+run -- --world lab op Alice
+grep -q "^hint: .*run permission list$" <<<"$out" || fail "op's hint must be permission list: $out"
+run -- --world lab whitelist remove Alice
+grep -q "^hint: .*run allowlist list$" <<<"$out" || fail "whitelist's hint must be allowlist list: $out"
+
+# The console is shared: an unrelated error is not this command's failure,
+# and a burst of later lines must not push the real reply out.
+logs "[ERROR] Failed to load skin: error" "Player connected: Bob, xuid: 1" \
+  "Opped: Alice" "[INFO] a" "[INFO] b" "[INFO] c" "[INFO] d" "[INFO] e" "[INFO] f" "[ERROR] not found: g"
+run -- --world lab op Alice
+[ "$rc" = 0 ] || fail "unrelated error lines must not fail op, got $rc: $out"
+grep -q '^result: replied' <<<"$out" || fail "op's own reply must be found among noise: $out"
+grep -q 'Opped: Alice' <<<"$out" || fail "the reply must survive later lines: $out"
+grep -q 'skin' <<<"$out" && fail "unrelated lines must not be shown as the reply: $out"
+logs "[ERROR] Something unrelated: error" "Player connected: Bob, xuid: 1"
+run -- --world lab deop Alice
+[ "$rc" = 0 ] || fail "noise alone must not read as failure, got $rc: $out"
+grep -q '^result: unconfirmed' <<<"$out" || fail "noise alone must read unconfirmed: $out"
+
+# The guard follows the pod, not the world's name.
+run MC_SELECTOR=app=jdwillmsen-minecraft-fwb-prd-minecraft-bedrock -- --world lab op Alice
+[ "$rc" = 2 ] || fail "op through an MC_SELECTOR must need --confirm, got $rc: $out"
+[ ! -s "$work/sent" ] || fail "op through an MC_SELECTOR sent without --confirm"
+run MC_SELECTOR=app=other -- --world pg op Alice
+[ "$rc" = 2 ] || fail "any MC_SELECTOR must need --confirm for op, got $rc"
+
+run -- whitelist add Alice
+[ "$rc" = 2 ] || fail "whitelist add on fwb must need --confirm, got $rc: $out"
+[ ! -s "$work/sent" ] || fail "whitelist add on fwb sent without --confirm"
+run -- whitelist add Alice --confirm
+[ "$(cat "$work/sent")" = 'allowlist add "Alice"' ] || fail "whitelist add --confirm must send: $(cat "$work/sent")"
+run -- whitelist remove Alice
+[ "$rc" = 0 ] || fail "whitelist remove needs no --confirm: $out"
+
+for bad in 'Alice ' 'Light King '; do
+  run -- --world lab op "$bad"
+  [ "$rc" = 2 ] || fail "a gamertag with a trailing space must be refused: '$bad'"
+  [ ! -s "$work/sent" ] || fail "a gamertag with a trailing space was sent"
+done
+echo "  ok: per-command hints, noise-proof replies, pod-based fwb guard, trailing spaces"
+
 # --- locate -------------------------------------------------------------------
 # Two samples of the overworld: an old one, and a newer one split over two
 # parts. A NUL is in the log because the real console carries binary bytes.
@@ -213,6 +261,8 @@ run -- locate 'sheep[x=1]'
 echo "  ok: locate states empty results and missing frames"
 
 # --- bots and fwb-only commands -------------------------------------------------
+run -- --world lab presence --help
+[ "$rc" = 0 ] || fail "presence --help must work on any world, got $rc: $out"
 for cmd in "bots park --reason x" "presence ls" "cull --types zombie --dry-run"; do
   # shellcheck disable=SC2086 # the command is split on purpose
   run -- --world lab $cmd
