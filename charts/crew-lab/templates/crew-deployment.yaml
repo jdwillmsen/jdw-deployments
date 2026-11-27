@@ -86,7 +86,8 @@ spec:
               always does: the lab's offline switch is not its. */}}
               value: {{ if or $unit.server (and $unit.nethernet $.Values.crew.nethernet.enabled) }}"false"{{ else }}{{ $.Values.crew.offline | quote }}{{ end }}
             - name: MC_VIEW_DISTANCE
-              value: {{ $.Values.crew.viewDistance | quote }}
+              {{- /* An idle unit holds what an FWB AFK bot holds. */}}
+              value: {{ if and $unit.idle $unit.idle.viewDistance }}{{ $unit.idle.viewDistance | quote }}{{ else }}{{ $.Values.crew.viewDistance | quote }}{{ end }}
             - name: STATUS_ADDR
               value: "0.0.0.0:{{ $.Values.crew.statusPort }}"
             - name: CAMERA_ENABLED
@@ -105,6 +106,9 @@ spec:
             - name: AUTH_CACHE_DIR
               value: {{ printf "/data/%s/auth" $unit.id | quote }}
             {{- end }}
+            {{- if not $unit.idle }}
+            {{- /* An idle unit is a stand-in for an FWB AFK bot: crew refuses
+            every worker setting below in idle mode, so none is rendered. */}}
             {{- $lab := include "crew.labRole" $unit }}
             {{- if $unit.workPlan }}
             {{- /* Standing work given outright, for a unit that is not in the
@@ -220,6 +224,35 @@ spec:
                   optional: true
             - name: TASK_TIMEOUT_S
               value: {{ .timeoutSeconds | quote }}
+            {{- end }}
+            {{- end }}
+            {{- else }}
+            - name: CREW_MODE
+              value: idle
+            {{- with $unit.idle.facing }}
+            - name: FACING
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if $unit.idle.stow }}
+            - name: STOW
+              value: "true"
+            {{- end }}
+            {{- with $unit.idle.seat }}
+            - name: SEAT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if and $unit.idle.presence $.Values.presenceStub.enabled }}
+            {{- /* The lab stub checks no token; crew still needs one set. */}}
+            - name: PRESENCE_URL
+              value: {{ printf "http://presence-stub:%v" $.Values.presenceStub.port | quote }}
+            - name: PRESENCE_ACTOR_ID
+              value: {{ $unit.id | quote }}
+            - name: PRESENCE_DEFAULT
+              value: {{ $unit.idle.presence.default | default "present" | quote }}
+            - name: PRESENCE_TOKEN
+              value: lab-stub
+            - name: PRESENCE_POLL_MS
+              value: {{ $unit.idle.presence.pollMs | default 2000 | quote }}
             {{- end }}
             {{- end }}
           ports:

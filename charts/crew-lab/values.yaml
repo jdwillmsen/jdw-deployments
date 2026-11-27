@@ -343,6 +343,13 @@ crew:
   #
   # A unit may set `replicas: 0` to stop alone without losing its volume.
   #
+  # A unit with `idle` runs crew's idle mode, the stand-in for an FWB AFK bot
+  # (crew docs/idle-mode.md): `facing` (yaw), `stow`, `seat` ("x,y,z" of a
+  # cushion), `viewDistance` (an FWB bot's 12 when set), and `presence`
+  # (`default`, `pollMs`) to poll presenceStub. It takes no role, work plan,
+  # squad, kit, survival, control or tasks setting, since crew refuses those in
+  # idle mode, and the unit-kit pack hands it no gear.
+  #
   # A unit with `server` (host, port) works on another server than the lab: it
   # joins that NetherNet server signed in, whatever `nethernet` and `offline`
   # say, and it is not a lab unit. The unit-kit pack, the lab rebuild and its
@@ -870,6 +877,19 @@ crew:
 # a test starts from a clean state. Off here; the prd overlay turns it on.
 # The crew image supplies the plans and scripts, so crew.image.tag must be a
 # release that ships /labcourses before this is enabled.
+# A stand-in for FWB's server agent, so an idle-mode unit (a unit with `idle`
+# under crew.units) can be parked and unparked on the lab. Runs crew's
+# /presencestub from the crew image; `imageTag` overrides the crew tag for a
+# release that carries it. `default` is the state of an actor nobody has set.
+# Park a unit: kubectl exec into any pod in the namespace with curl, or
+# port-forward the Service, then `curl -X PUT
+# 'http://presence-stub:8090/stub/actors/<unit id>?state=parked'`.
+presenceStub:
+  enabled: false
+  imageTag: ""
+  port: 8090
+  default: present
+
 labRebuild:
   enabled: false
 
