@@ -162,8 +162,32 @@ run -- --world lab deop Alice
 grep -q '^reply: none' <<<"$out" || fail "map lines are not a reply: $out"
 grep -q '^result: unconfirmed' <<<"$out" || fail "no reply must read unconfirmed, not success: $out"
 
-run -- --world seed whitelist add "Light King"
+run -- --world seed whitelist add "Light King" --confirm
 [ "$(cat "$work/sent")" = 'allowlist add "Light King"' ] || fail "whitelist add must send allowlist add: $(cat "$work/sent")"
+
+# fwb-seed is a player's own survival world and is guarded as FWB is: by
+# name, and by its selector reached through MC_RELEASE.
+for cmd in "op Alice" "whitelist add Alice"; do
+  # shellcheck disable=SC2086 # the command is split on purpose
+  run -- --world seed $cmd
+  [ "$rc" = 2 ] || fail "$cmd on seed must need --confirm, got $rc: $out"
+  [ ! -s "$work/sent" ] || fail "$cmd on seed sent without --confirm: $(cat "$work/sent")"
+  grep -q -- '--world seed .*--confirm' <<<"$out" || fail "the seed refusal must give the confirmed command: $out"
+  # shellcheck disable=SC2086
+  run MC_RELEASE=jdwillmsen-fwb-seed-prd -- --world lab $cmd
+  [ "$rc" = 2 ] || fail "$cmd reaching seed's pod through MC_RELEASE must need --confirm, got $rc: $out"
+done
+logs "Opped: Alice"
+run -- --world seed op Alice --confirm
+[ "$(cat "$work/sent")" = 'op "Alice"' ] || fail "op on seed with --confirm must send: $(cat "$work/sent")"
+for w in lab pg; do
+  run -- --world "$w" whitelist add Alice
+  [ "$rc" = 0 ] || fail "whitelist add on $w needs no --confirm, got $rc: $out"
+done
+run -- --help
+grep -q 'crew lab, NetherNet' <<<"$out" || fail "help must call the lab NetherNet: $out"
+grep -q 'RakNet' <<<"$out" && fail "help must not call the lab RakNet: $out"
+echo "  ok: seed is guarded like fwb, lab and pg are not"
 run -- --world seed whitelist list
 [ "$(cat "$work/sent")" = 'allowlist list' ] || fail "whitelist list must send allowlist list"
 run -- whitelist add 'x"; stop'
