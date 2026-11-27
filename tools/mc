@@ -295,7 +295,9 @@ cmd_announce() {
 
 # A gamertag goes onto the console inside double quotes. Anything that could
 # close the quote or turn it into a selector is refused rather than escaped.
-PLAYER_RE='^[A-Za-z0-9][A-Za-z0-9 _-]{0,31}$'
+# Ends on a non-space: a trailing space is invisible in a quoted target and
+# names a player who does not exist.
+PLAYER_RE='^[A-Za-z0-9]([A-Za-z0-9 _-]{0,30}[A-Za-z0-9_-])?$'
 
 need_player() {
   [ -n "$1" ] || usage_err "$2 needs a player" "$3"
@@ -364,36 +366,61 @@ cmd_tell() {
 # otherwise be all of them.
 console_reply() {
   kubectl logs -n "$NAMESPACE" "$1" --since-time="$2" 2>/dev/null \
-    | tr -d '\000' | grep -a -v 'MCMAP1 ' | tail -5
+    | tr -d '\000' | grep -a -v 'MCMAP1 '
 }
 
-# Sends one console command about a player and reports the server's reply.
-# The exact wording of Bedrock's replies to op and allowlist is not pinned
-# here, so only a reply that reads as a refusal counts as a failure; any other
-# reply is shown for the caller to read, and none at all is said to be none.
+# How Bedrock starts its replies to op, deop and allowlist, and its generic
+# refusals. Lines that start otherwise and do not name the player belong to
+# someone else: the console is shared with chat, joins and other tools.
+REPLY_RE='Opped|De-opped|Could not|No targets matched|Syntax error|Unknown command|[Aa]llowlist|Player (added|removed)'
+REFUSAL_RE='Could not|No targets matched|Syntax error|Unknown command'
+
+# player_command TARGET HINT COMMAND...: sends one console command about
+# TARGET (empty for a list) and reports the server's reply. HINT is the
+# read-only command to check the outcome with; each caller names its own,
+# since a generic "<command> list" would op a player called "list".
+#
+# The exact wording of Bedrock's replies is not pinned here, so only a reply
+# that reads as a refusal counts as a failure; any other is shown for the
+# caller to read, and none at all is said to be none.
 player_command() {
-  local pod since reply
+  local target="$1" hint="$2" pod since all reply
+  shift 2
   pod="$(server_pod)" || exit 1
   since="$(since_now)"
   send "$pod" "$@"
   sleep 2
-  reply="$(console_reply "$pod" "$since")"
+  all="$(console_reply "$pod" "$since")"
+  if [ -n "$target" ]; then
+    reply="$(grep -a -F -i -e "$target" <<<"$all"; grep -a -E "$REPLY_RE" <<<"$all" | grep -a -v -F -i -e "$target")"
+  else
+    reply="$(grep -a -E "$REPLY_RE" <<<"$all")"
+  fi
+  reply="$(grep -a . <<<"$reply" | tail -5)"
   echo "world: $WORLD"
   echo "sent: $*"
   if [ -z "$reply" ]; then
     echo "reply: none"
     echo "result: unconfirmed"
-    echo "hint: the server printed nothing; check with $SELF --world $WORLD run $1 list"
+    echo "hint: the server printed nothing about it; check with $SELF --world $WORLD run $hint"
     return 0
   fi
   echo "reply:"
   local line
   while IFS= read -r line; do echo "  $line"; done <<<"$reply"
-  if grep -a -qiE 'could not|no targets matched|syntax error|unknown command|not found|error' <<<"$reply"; then
+  if grep -a -qE "$REFUSAL_RE" <<<"$reply"; then
     echo "result: failed"
     exit 1
   fi
   echo "result: replied"
+}
+
+# FWB is the real players' world and who may act on it is the owner's call; an
+# agent should not change that as a side effect of some other task. Judged by
+# the pod, not just the world name: MC_SELECTOR can point any world at FWB, so
+# an explicit selector is treated as FWB too.
+fwb_guarded() {
+  [ "$WORLD" = fwb ] || [ "$SELECTOR" = "app=$(world_release fwb)-minecraft-bedrock" ] || [ -n "${MC_SELECTOR:-}" ]
 }
 
 cmd_op() {
@@ -411,28 +438,39 @@ cmd_op() {
     esac
   done
   need_player "$player" "$action" "$SELF $action <player>"
-  # FWB is the real players' world and its operators are the owner's call; an
-  # agent should not grant it as a side effect of some other task.
-  if [ "$action" = op ] && [ "$WORLD" = fwb ] && [ -z "$confirm" ]; then
-    usage_err "op on fwb needs --confirm: operators on the players' world are the owner's decision" \
+  if [ "$action" = op ] && [ -z "$confirm" ] && fwb_guarded; then
+    usage_err "op on fwb (or an MC_SELECTOR pod) needs --confirm: operators on the players' world are the owner's decision" \
       "$SELF op \"$player\" --confirm once the owner has asked for it; lab, seed and pg need no flag"
   fi
-  player_command "$action" "\"$player\""
+  player_command "$player" "permission list" "$action" "\"$player\""
 }
 
 cmd_whitelist() {
   local action="${1:-}"
   case "$action" in
     list)
-      player_command allowlist list ;;
+      player_command "" "allowlist list" allowlist list ;;
     add|remove)
       shift
-      [ $# -le 1 ] || usage_err "whitelist $action takes one player; quote a gamertag with spaces" "$SELF whitelist $action \"<gamertag>\""
-      need_player "${1:-}" "whitelist $action" "$SELF whitelist $action <player>"
+      local player="" confirm=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --confirm) confirm=1; shift ;;
+          -*) usage_err "unknown flag for whitelist $action: $1" "valid flags: --confirm" ;;
+          *) [ -z "$player" ] || usage_err "whitelist $action takes one player; quote a gamertag with spaces" "$SELF whitelist $action \"<gamertag>\""
+             player="$1"; shift ;;
+        esac
+      done
+      need_player "$player" "whitelist $action" "$SELF whitelist $action <player>"
+      # Letting someone into the players' world is the same call as op.
+      if [ "$action" = add ] && [ -z "$confirm" ] && fwb_guarded; then
+        usage_err "whitelist add on fwb (or an MC_SELECTOR pod) needs --confirm: who joins the players' world is the owner's decision" \
+          "$SELF whitelist add \"$player\" --confirm once the owner has asked for it"
+      fi
       # Bedrock renamed the command to allowlist; that is the name sent.
-      player_command allowlist "$action" "\"$1\"" ;;
+      player_command "$player" "allowlist list" allowlist "$action" "\"$player\"" ;;
     -h|--help|help|"")
-      echo "$SELF whitelist add|remove <player>    edit the server's allowlist"
+      echo "$SELF whitelist add|remove <player> [--confirm]    edit the allowlist; add on fwb needs --confirm"
       echo "$SELF whitelist list                   show it"
       [ -n "$action" ] || exit 2 ;;
     *) usage_err "unknown whitelist command: $action" "$SELF whitelist add|remove <player>, or $SELF whitelist list" ;;
@@ -954,6 +992,9 @@ presence_unpark() {
 }
 
 cmd_presence() {
+  case "${1:-}" in
+    -h|--help|help) presence_usage; return 0 ;;
+  esac
   world_needs_fwb presence "server agent, so no presence API"
   case "${1:-}" in
     ""|ls)  shift || true; presence_ls "$@" ;;
@@ -1561,7 +1602,7 @@ $SELF — console access to the Minecraft Bedrock servers
   $SELF where [player]             position, facing and bearings between players
   $SELF locate <mob> [--near p]    where mobs of a type are (map frames, fwb)
   $SELF op|deop <player>           grant or remove operator (op on fwb needs --confirm)
-  $SELF whitelist add|remove|list  the server's allowlist
+  $SELF whitelist add|remove|list  the server's allowlist (add on fwb needs --confirm)
   $SELF run <command> [args...]    any console command
   $SELF bots [ls|park|unpark]      park or restore the afk bots (fwb)
   $SELF presence [ls|park|unpark]  park or restore any actor (fwb)
