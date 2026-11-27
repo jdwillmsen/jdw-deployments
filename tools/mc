@@ -444,12 +444,20 @@ player_command() {
   echo "result: replied"
 }
 
-# FWB is the real players' world and who may act on it is the owner's call; an
-# agent should not change that as a side effect of some other task. Judged by
-# the pod, not just the world name: MC_SELECTOR can point any world at FWB, so
-# an explicit selector is treated as FWB too.
+# FWB is the real players' world and fwb-seed is a player's own survival
+# world; who may act on either is the owner's call, and an agent should not
+# change that as a side effect of some other task. Judged by the pod, not just
+# the world name: MC_SELECTOR can point at any pod, so an explicit selector is
+# guarded too.
+GUARDED_WORLDS="fwb seed"
 fwb_guarded() {
-  [ "$WORLD" = fwb ] || [ "$SELECTOR" = "app=$(world_release fwb)-minecraft-bedrock" ] || [ -n "${MC_SELECTOR:-}" ]
+  local w
+  [ -n "${MC_SELECTOR:-}" ] && return 0
+  for w in $GUARDED_WORLDS; do
+    [ "$WORLD" = "$w" ] && return 0
+    [ "$SELECTOR" = "app=$(world_release "$w")-minecraft-bedrock" ] && return 0
+  done
+  return 1
 }
 
 cmd_op() {
@@ -458,7 +466,7 @@ cmd_op() {
   while [ $# -gt 0 ]; do
     case "$1" in
       -h|--help)
-        echo "$SELF $action <player> [--confirm]    --confirm is required to op on fwb"
+        echo "$SELF $action <player> [--confirm]    --confirm is required to op on fwb or seed"
         return 0 ;;
       --confirm) confirm=1; shift ;;
       -*) usage_err "unknown flag for $action: $1" "valid flags for $action: --confirm, --help" ;;
@@ -468,8 +476,8 @@ cmd_op() {
   done
   need_player "$player" "$action" "$SELF $action <player>"
   if [ "$action" = op ] && [ -z "$confirm" ] && fwb_guarded; then
-    usage_err "op on fwb (or an MC_SELECTOR pod) needs --confirm: operators on the players' world are the owner's decision" \
-      "$SELF op \"$player\" --confirm once the owner has asked for it; lab, seed and pg need no flag"
+    usage_err "op on $WORLD needs --confirm: operators on fwb, seed or an MC_SELECTOR pod are the owner's decision" \
+      "$SELF --world $WORLD op \"$player\" --confirm once the owner has asked for it; lab and pg need no flag"
   fi
   player_command "$player" "permission list" "$action" "\"$player\""
 }
@@ -493,13 +501,13 @@ cmd_whitelist() {
       need_player "$player" "whitelist $action" "$SELF whitelist $action <player>"
       # Letting someone into the players' world is the same call as op.
       if [ "$action" = add ] && [ -z "$confirm" ] && fwb_guarded; then
-        usage_err "whitelist add on fwb (or an MC_SELECTOR pod) needs --confirm: who joins the players' world is the owner's decision" \
-          "$SELF whitelist add \"$player\" --confirm once the owner has asked for it"
+        usage_err "whitelist add on $WORLD needs --confirm: who joins fwb, seed or an MC_SELECTOR pod is the owner's decision" \
+          "$SELF --world $WORLD whitelist add \"$player\" --confirm once the owner has asked for it"
       fi
       # Bedrock renamed the command to allowlist; that is the name sent.
       player_command "$player" "allowlist list" allowlist "$action" "\"$player\"" ;;
     -h|--help|help|"")
-      echo "$SELF whitelist add|remove <player> [--confirm]    edit the allowlist; add on fwb needs --confirm"
+      echo "$SELF whitelist add|remove <player> [--confirm]    edit the allowlist; add on fwb or seed needs --confirm"
       echo "$SELF whitelist list                   show it"
       [ -n "$action" ] || exit 2 ;;
     *) usage_err "unknown whitelist command: $action" "$SELF whitelist add|remove <player>, or $SELF whitelist list" ;;
@@ -1636,8 +1644,8 @@ $SELF — console access to the Minecraft Bedrock servers
   $SELF players                    who is online
   $SELF where [player]             position, facing and bearings between players
   $SELF locate <mob> [--near p]    where mobs of a type are (map frames, fwb)
-  $SELF op|deop <player>           grant or remove operator (op on fwb needs --confirm)
-  $SELF whitelist add|remove|list  the server's allowlist (add on fwb needs --confirm)
+  $SELF op|deop <player>           grant or remove operator (op on fwb or seed needs --confirm)
+  $SELF whitelist add|remove|list  the server's allowlist (add on fwb or seed needs --confirm)
   $SELF run <command> [args...]    any console command
   $SELF bots [ls|park|unpark]      park or restore the afk bots (fwb)
   $SELF presence [ls|park|unpark]  park or restore any actor (fwb)
