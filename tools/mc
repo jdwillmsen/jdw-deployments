@@ -1645,7 +1645,7 @@ $SELF — console access to the Minecraft Bedrock servers
 
 worlds (--world, or MC_WORLD; default fwb):
   fwb    jdwillmsen-minecraft-fwb-prd     the players' survival world
-  lab    jdwillmsen-crew-lab-prd          crew lab, RakNet, bots train here
+  lab    jdwillmsen-crew-lab-prd          crew lab, NetherNet, bots train here
   seed   jdwillmsen-fwb-seed-prd          FWB's seed on its own server
   pg     jdwillmsen-proving-grounds-prd   pack and add-on test server
   empty  unverified: nothing in this repo deploys it
