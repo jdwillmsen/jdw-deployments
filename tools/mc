@@ -43,7 +43,10 @@ world_resolve() {
   fi
   NAMESPACE="${MC_NAMESPACE:-jdwillmsen-prd}"
   RELEASE="${MC_RELEASE:-$release}"
-  SELECTOR="${MC_SELECTOR:-app=${release}-minecraft-bedrock}"
+  # From the effective release, so MC_RELEASE moves the pod with it: cull
+  # takes its census from RELEASE and kills on SELECTOR's pod, and the two
+  # must be the same world.
+  SELECTOR="${MC_SELECTOR:-app=${RELEASE}-minecraft-bedrock}"
 }
 
 # Presence and the census exist only in the minecraft-fwb chart; on another
@@ -239,7 +242,7 @@ since_now() {
 }
 
 # tellraw_send POD TARGET JSON: sends, then reads the outcome back. Sets
-# TELLRAW_RESULT to ok, rejected or notarget, and TELLRAW_SERVER to the
+# TELLRAW_RESULT to ok, rejected, notarget or unread, and TELLRAW_SERVER to the
 # server's own error line when there is one.
 #
 # The console is a shared log, so the read-back has to be bounded to what
@@ -254,8 +257,13 @@ tellraw_send() {
   # tellraw does report failure, unlike say, so the outcome is read back
   # rather than assumed. Two signatures matter: a rejected payload, and a
   # well-formed one that reached nobody.
-  tail="$(kubectl logs -n "$NAMESPACE" "$1" --since-time="$since" 2>/dev/null | tr -d '\000')"
   TELLRAW_SERVER=""
+  # A failed read is not a quiet console: it says nothing about delivery.
+  if ! tail="$(kubectl logs -n "$NAMESPACE" "$1" --since-time="$since" 2>/dev/null)"; then
+    TELLRAW_RESULT=unread
+    return 0
+  fi
+  tail="$(tr -d '\000' <<<"$tail")"
   if grep -a -q "Syntax error" <<<"$tail"; then
     TELLRAW_RESULT=rejected
     TELLRAW_SERVER="$(grep -a -o 'Syntax error.*' <<<"$tail" | tail -1)"
@@ -264,6 +272,15 @@ tellraw_send() {
   else
     TELLRAW_RESULT=ok
   fi
+}
+
+# The message went to the console but its outcome could not be read. Sending
+# it again could deliver it twice, so the caller is told to check instead.
+unconfirmed_readback() {
+  echo "delivered: unconfirmed"
+  echo "reason: sent, but the console could not be read back"
+  echo "hint: do not resend blindly; check the pod with $SELF --world $WORLD status"
+  exit 0
 }
 
 cmd_announce() {
@@ -289,6 +306,8 @@ cmd_announce() {
       echo "help:"
       echo "  $SELF players    confirm who is on before announcing"
       exit 0 ;;
+    unread)
+      unconfirmed_readback ;;
   esac
   echo "delivered: yes"
 }
@@ -358,15 +377,10 @@ cmd_tell() {
       echo "reason: $player is not online"
       echo "hint: $SELF --world $WORLD players"
       exit 1 ;;
+    unread)
+      unconfirmed_readback ;;
   esac
   echo "delivered: yes"
-}
-
-# The console lines after SINCE, without the map's live layer, which would
-# otherwise be all of them.
-console_reply() {
-  kubectl logs -n "$NAMESPACE" "$1" --since-time="$2" 2>/dev/null \
-    | tr -d '\000' | grep -a -v 'MCMAP1 '
 }
 
 # How Bedrock starts its replies to op, deop and allowlist, and its generic
@@ -390,7 +404,15 @@ player_command() {
   since="$(since_now)"
   send "$pod" "$@"
   sleep 2
-  all="$(console_reply "$pod" "$since")"
+  if ! all="$(kubectl logs -n "$NAMESPACE" "$pod" --since-time="$since" 2>/dev/null)"; then
+    echo "world: $WORLD"
+    echo "sent: $*"
+    echo "reply: unreadable"
+    echo "result: unconfirmed"
+    echo "hint: the console could not be read back; do not resend, check with $SELF --world $WORLD run $hint"
+    return 0
+  fi
+  all="$(tr -d '\000' <<<"$all" | grep -a -v 'MCMAP1 ')"
   if [ -n "$target" ]; then
     reply="$(grep -a -F -i -e "$target" <<<"$all"; grep -a -E "$REPLY_RE" <<<"$all" | grep -a -v -F -i -e "$target")"
   else
@@ -408,9 +430,16 @@ player_command() {
   echo "reply:"
   local line
   while IFS= read -r line; do echo "  $line"; done <<<"$reply"
-  if grep -a -qE "$REFUSAL_RE" <<<"$reply"; then
+  # Only a refusal that names this player is this command's. A refusal naming
+  # no one could be another tool's, so it leaves the outcome unconfirmed.
+  if [ -n "$target" ] && grep -a -F -i -e "$target" <<<"$reply" | grep -a -qE "$REFUSAL_RE"; then
     echo "result: failed"
     exit 1
+  fi
+  if grep -a -qE "$REFUSAL_RE" <<<"$reply" && { [ -z "$target" ] || ! grep -a -q -F -i -e "$target" <<<"$reply"; }; then
+    echo "result: unconfirmed"
+    echo "hint: a refusal naming no one is in the console; check with $SELF --world $WORLD run $hint"
+    return 0
   fi
   echo "result: replied"
 }
@@ -1442,6 +1471,12 @@ cmd_cull() {
       || usage_err "MC_CULL_$setting must be a number of seconds, not '${!value}'" "unset it for the default"
   done
   world_needs_fwb cull "census CronJob to take the listing from"
+  # The census snapshot comes from RELEASE and the kills go to SELECTOR's pod;
+  # an MC_SELECTOR that names another release would plan on one world and
+  # kill on another.
+  [ "$SELECTOR" = "app=${RELEASE}-minecraft-bedrock" ] \
+    || usage_err "cull needs the pod and the census on one world: selector $SELECTOR is not release $RELEASE" \
+      "unset MC_SELECTOR, or set MC_RELEASE to the release that selector belongs to"
   command -v python3 >/dev/null 2>&1 || err "python3 is required for cull" "install python3, then re-run"
   command -v timeout >/dev/null 2>&1 || err "the timeout command is required for cull" "it is part of GNU coreutils; install that, then re-run"
 

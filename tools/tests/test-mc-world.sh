@@ -28,7 +28,9 @@ case "$1" in
     done
     if [ -n "$sel" ]; then printf 'pod[%s]' "$sel"; else printf 'true'; fi ;;
   exec) shift; while [[ "$1" != "--" ]]; do shift; done; shift 2; printf '%s\n' "$*" >> "$CAPTURE" ;;
-  logs) [ -n "${FAKE_LOG_FILE:-}" ] && cat "$FAKE_LOG_FILE" ;;
+  logs)
+    [ -n "${FAKE_LOGS_FAIL:-}" ] && { echo 'error: unable to upgrade connection' >&2; exit 1; }
+    [ -n "${FAKE_LOG_FILE:-}" ] && cat "$FAKE_LOG_FILE" ;;
 esac
 exit 0
 SHIM
@@ -215,6 +217,42 @@ for bad in 'Alice ' 'Light King '; do
   [ "$rc" = 2 ] || fail "a gamertag with a trailing space must be refused: '$bad'"
   [ ! -s "$work/sent" ] || fail "a gamertag with a trailing space was sent"
 done
+# Another player's refusal is not this one's; a refusal naming no one leaves
+# the outcome open rather than failing it.
+logs "Opped: Alice" "Could not op (already op or higher): Bob"
+run -- --world lab op Alice
+[ "$rc" = 0 ] || fail "Bob's refusal must not fail Alice's op, got $rc: $out"
+grep -q '^result: replied' <<<"$out" || fail "Alice's op must read replied: $out"
+logs "Syntax error: Unexpected \"x\""
+run -- --world lab op Alice
+[ "$rc" = 0 ] || fail "a refusal naming no one must not fail op, got $rc: $out"
+grep -q '^result: unconfirmed' <<<"$out" || fail "a refusal naming no one must read unconfirmed: $out"
+
+# A failed read-back after a good send says nothing about delivery, and the
+# command is never sent twice.
+logs "Opped: Alice"
+run FAKE_LOGS_FAIL=1 -- --world lab op Alice
+grep -q '^result: unconfirmed' <<<"$out" || fail "op with an unreadable console must be unconfirmed: $out"
+[ "$(grep -c . "$work/sent")" = 1 ] || fail "op must be sent once: $(cat "$work/sent")"
+run FAKE_LOGS_FAIL=1 -- --world lab tell Bob hi
+grep -q '^delivered: unconfirmed' <<<"$out" || fail "tell with an unreadable console must be unconfirmed: $out"
+grep -q '^delivered: yes' <<<"$out" && fail "tell must not claim delivery it could not read: $out"
+[ "$(grep -c . "$work/sent")" = 1 ] || fail "tell must be sent once: $(cat "$work/sent")"
+run FAKE_LOGS_FAIL=1 -- --world lab announce hi
+grep -q '^delivered: unconfirmed' <<<"$out" || fail "announce with an unreadable console must be unconfirmed: $out"
+[ "$(grep -c . "$work/sent")" = 1 ] || fail "announce must be sent once: $(cat "$work/sent")"
+
+# MC_RELEASE moves the pod with it, so cull's census and kills are one world;
+# an MC_SELECTOR naming another release is refused before the snapshot.
+run MC_RELEASE=jdwillmsen-minecraft-fwb-prd -- --world lab players
+grep -q -- '-l app=jdwillmsen-minecraft-fwb-prd-minecraft-bedrock' "$work/kubectl.log" \
+  || fail "MC_RELEASE must choose the pod too: $(cat "$work/kubectl.log")"
+run MC_SELECTOR=app=jdwillmsen-crew-lab-prd-minecraft-bedrock MC_RELEASE=jdwillmsen-minecraft-fwb-prd -- cull --types zombie --dry-run
+[ "$rc" = 2 ] || fail "cull with selector and release on different worlds must be refused, got $rc: $out"
+grep -q 'one world' <<<"$out" || fail "the refusal must say why: $out"
+[ ! -s "$work/kubectl.log" ] || fail "an inconsistent cull reached the cluster: $(cat "$work/kubectl.log")"
+echo "  ok: refusals by player, unreadable read-backs, and one world per cull"
+
 echo "  ok: per-command hints, noise-proof replies, pod-based fwb guard, trailing spaces"
 
 # --- locate -------------------------------------------------------------------
