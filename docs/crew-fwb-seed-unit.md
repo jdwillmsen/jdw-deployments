@@ -70,7 +70,7 @@ Nothing below is done by the PR. Run the copy when you are ready to look:
    the unit); the lab server is not touched.
 4. Watch for 15 minutes:
    - crew-23 on fwb-seed: `kubectl -n jdwillmsen-prd logs deploy/crew-23` shows
-     `spawned` and no `auth_failed`; `MC_SELECTOR=app=jdwillmsen-fwb-seed-prd-minecraft-bedrock tools/mc players`
+     `spawned` and no `auth_failed`; `tools/mc --world seed players`
      lists Dotablaze7321.
    - afk-bot-2 on FWB: `kubectl -n jdwillmsen-prd logs deploy/jdwillmsen-minecraft-fwb-prd-afk-bot-2 --since=20m`
      shows no `session_ended` or `session_error`, and `tools/mc players` still
