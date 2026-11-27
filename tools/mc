@@ -7,9 +7,52 @@
 # This wraps that.
 set -uo pipefail
 
-NAMESPACE="${MC_NAMESPACE:-jdwillmsen-prd}"
-SELECTOR="${MC_SELECTOR:-app=jdwillmsen-minecraft-fwb-prd-minecraft-bedrock}"
 SELF="$(basename "$0")"
+
+# The worlds this repo deploys, by the Helm release ArgoCD gives each one in
+# argocd/prd/config.yaml. Every server pod carries app=<release>-minecraft-bedrock
+# from the shared minecraft-bedrock subchart, so the release is all a world
+# needs. FWB stays the default: every caller written before --world meant it.
+WORLDS="fwb lab seed pg empty"
+world_release() {
+  case "$1" in
+    fwb)  echo jdwillmsen-minecraft-fwb-prd ;;
+    lab)  echo jdwillmsen-crew-lab-prd ;;
+    seed) echo jdwillmsen-fwb-seed-prd ;;
+    pg)   echo jdwillmsen-proving-grounds-prd ;;
+    *)    return 1 ;;
+  esac
+}
+
+# Sets WORLD, NAMESPACE, RELEASE and SELECTOR. MC_NAMESPACE, MC_RELEASE and
+# MC_SELECTOR still win, so a caller that set them before --world existed
+# reaches the same pod it always did.
+world_resolve() {
+  WORLD="$1"
+  case " $WORLDS " in
+    *" $WORLD "*) ;;
+    *) usage_err "unknown world: $WORLD" "worlds: ${WORLDS// /, }" ;;
+  esac
+  local release=""
+  if ! release="$(world_release "$WORLD")"; then
+    # Named in the session audit but deployed by nothing in this repo: no
+    # chart, no ArgoCD app, no pod. Refused rather than guessed, because a
+    # guessed selector that happens to match sends commands to the wrong world.
+    [ -n "${MC_SELECTOR:-}" ] || usage_err "world $WORLD is unverified: no release for it in argocd/prd/config.yaml" \
+      "set MC_NAMESPACE and MC_SELECTOR to reach it, or use one of: fwb, lab, seed, pg"
+  fi
+  NAMESPACE="${MC_NAMESPACE:-jdwillmsen-prd}"
+  RELEASE="${MC_RELEASE:-$release}"
+  SELECTOR="${MC_SELECTOR:-app=${release}-minecraft-bedrock}"
+}
+
+# Presence and the census exist only in the minecraft-fwb chart; on another
+# world the calls below would fail later with a message about a missing
+# Service or CronJob, which reads like an outage rather than a wrong world.
+world_needs_fwb() {
+  [ "$WORLD" = fwb ] || [ -n "${MC_RELEASE:-}" ] \
+    || err "$1 runs only on fwb: world $WORLD has no ${2}" "$SELF --world fwb $1 ..."
+}
 
 # Errors go to stdout as structured text, not stderr: an agent reading only
 # stdout must still see why a command failed rather than an empty result.
@@ -31,8 +74,8 @@ server_pod() {
   local pod
   pod="$(kubectl get pods -n "$NAMESPACE" -l "$SELECTOR" \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
-  [ -n "$pod" ] || err "no server pod in namespace $NAMESPACE" \
-    "check MC_NAMESPACE and MC_SELECTOR, or: kubectl get pods -n $NAMESPACE"
+  [ -n "$pod" ] || err "no server pod for world $WORLD in namespace $NAMESPACE (selector $SELECTOR)" \
+    "check --world, MC_NAMESPACE and MC_SELECTOR, or: kubectl get pods -n $NAMESPACE | grep minecraft-bedrock"
   printf '%s' "$pod"
 }
 
@@ -63,6 +106,7 @@ cmd_status() {
   restarts="$(kubectl get pod -n "$NAMESPACE" "$pod" \
     -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null)"
 
+  echo "world: $WORLD"
   echo "pod: $pod"
   echo "ready: ${ready:-unknown}"
   echo "restarts: ${restarts:-unknown}"
@@ -81,7 +125,10 @@ cmd_status() {
   echo "  $SELF announce <message>         broadcast it highlighted"
   echo "  $SELF players                    who is online"
   echo "  $SELF where [player]             position, facing and bearings between players"
+  echo "  $SELF locate <mob> [--near p]    where mobs of a type are"
+  echo "  $SELF tell <player> <message>    message one player"
   echo "  $SELF run <command> [args...]    any console command"
+  echo "  $SELF --world fwb|lab|seed|pg    any of the above on another world"
 }
 
 cmd_players() {
@@ -171,53 +218,412 @@ cmd_say() {
   echo "  $SELF announce <message>    reports delivery, and stands out in chat"
 }
 
+# Bedrock's tellraw is not Java's: it takes a top-level {"rawtext":[...]}
+# wrapper. Built with a JSON encoder rather than string interpolation so a
+# quote or backslash in the message cannot produce malformed JSON that the
+# server silently rejects. A § colour code in the message, or the prefix,
+# leaves as the JSON escape \u00a7, so the console never sees a raw byte
+# that a shell or the JSON parser could misread.
+tellraw_json() {
+  MC_MSG="$1" MC_PREFIX="${2:-}" python3 -c '
+import json, os
+print(json.dumps({"rawtext": [{"text": os.environ["MC_PREFIX"] + os.environ["MC_MSG"]}]}))
+' 2>/dev/null
+}
+
+# A UTC timestamp one second back, for reading the console from just before a
+# command was sent. The second of slack absorbs clock skew between here and
+# the node.
+since_now() {
+  date -u -d '1 second ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+# tellraw_send POD TARGET JSON: sends, then reads the outcome back. Sets
+# TELLRAW_RESULT to ok, rejected or notarget, and TELLRAW_SERVER to the
+# server's own error line when there is one.
+#
+# The console is a shared log, so the read-back has to be bounded to what
+# this command produced. A --tail window instead matches whatever happened to
+# be there -- including an error from a previous command, which reports a
+# healthy send as rejected.
+tellraw_send() {
+  local since tail
+  since="$(since_now)"
+  send "$1" tellraw "$2" "$3"
+  sleep 2
+  # tellraw does report failure, unlike say, so the outcome is read back
+  # rather than assumed. Two signatures matter: a rejected payload, and a
+  # well-formed one that reached nobody.
+  tail="$(kubectl logs -n "$NAMESPACE" "$1" --since-time="$since" 2>/dev/null | tr -d '\000')"
+  TELLRAW_SERVER=""
+  if grep -a -q "Syntax error" <<<"$tail"; then
+    TELLRAW_RESULT=rejected
+    TELLRAW_SERVER="$(grep -a -o 'Syntax error.*' <<<"$tail" | tail -1)"
+  elif grep -a -q "No targets matched selector" <<<"$tail"; then
+    TELLRAW_RESULT=notarget
+  else
+    TELLRAW_RESULT=ok
+  fi
+}
+
 cmd_announce() {
   [ $# -gt 0 ] || err "announce needs a message" "$SELF announce Backup starting now"
   local pod json message; pod="$(server_pod)" || exit 1
   message="$*"
-
-  # Bedrock's tellraw is not Java's: it takes a top-level {"rawtext":[...]}
-  # wrapper. Built with a JSON encoder rather than string interpolation so a
-  # quote or backslash in the message cannot produce malformed JSON that the
-  # server silently rejects.
-  json="$(MC_MSG="$message" python3 -c '
-import json, os
-print(json.dumps({"rawtext": [{"text": "§e" + os.environ["MC_MSG"]}]}))
-' 2>/dev/null)"
+  json="$(tellraw_json "$message" "§e")"
   [ -n "$json" ] || err "could not encode the message" "python3 is required for announce; $SELF say works without it"
 
-  # The console is a shared log, so the read-back below has to be bounded to
-  # what this command produced. A --tail window instead matches whatever
-  # happened to be there -- including an error from a previous command, which
-  # reports a healthy send as rejected. One second of slack absorbs clock skew
-  # between here and the node.
-  local since
-  since="$(date -u -d '1 second ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-  send "$pod" tellraw @a "$json"
-  sleep 2
-
-  # tellraw does report failure, unlike say, so the outcome is read back
-  # rather than assumed. Two signatures matter: a rejected payload, and a
-  # well-formed one that reached nobody.
-  local tail
-  tail="$(kubectl logs -n "$NAMESPACE" "$pod" --since-time="$since" 2>/dev/null)"
+  tellraw_send "$pod" @a "$json"
   echo "sent: tellraw"
   echo "message: $message"
-  if grep -a -q "Syntax error" <<<"$tail"; then
-    echo "delivered: no"
-    echo "reason: the server rejected the payload"
-    echo "server: $(grep -a -o 'Syntax error.*' <<<"$tail" | tail -1)"
-    exit 1
-  elif grep -a -q "No targets matched selector" <<<"$tail"; then
-    echo "delivered: no"
-    echo "reason: nobody was online to receive it"
-    echo
-    echo "help:"
-    echo "  $SELF players    confirm who is on before announcing"
-    exit 0
-  fi
+  case "$TELLRAW_RESULT" in
+    rejected)
+      echo "delivered: no"
+      echo "reason: the server rejected the payload"
+      echo "server: $TELLRAW_SERVER"
+      exit 1 ;;
+    notarget)
+      echo "delivered: no"
+      echo "reason: nobody was online to receive it"
+      echo
+      echo "help:"
+      echo "  $SELF players    confirm who is on before announcing"
+      exit 0 ;;
+  esac
   echo "delivered: yes"
+}
+
+# A gamertag goes onto the console inside double quotes. Anything that could
+# close the quote or turn it into a selector is refused rather than escaped.
+PLAYER_RE='^[A-Za-z0-9][A-Za-z0-9 _-]{0,31}$'
+
+need_player() {
+  [ -n "$1" ] || usage_err "$2 needs a player" "$3"
+  [[ "$1" =~ $PLAYER_RE ]] || usage_err "not a gamertag: $1" \
+    "letters, digits, spaces, _ and - only; for everyone use $SELF announce"
+}
+
+tell_usage() {
+  cat <<EOF
+$SELF tell — message one player, privately
+
+  $SELF tell [--colour <c>] <player> <message...>
+
+  --colour <c>   a Bedrock colour code, 0-9 or a-v (e = yellow, a = green)
+
+§ codes inside the message pass through as typed; the whole payload is
+JSON-encoded, so quotes, backslashes and \$(...) arrive as literal text.
+whisper is the same command.
+
+exit codes: 0 delivered, 1 not delivered, 2 usage
+EOF
+}
+
+cmd_tell() {
+  local colour="" player=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) tell_usage; return 0 ;;
+      --colour|--color)
+        [ $# -gt 1 ] || usage_err "--colour needs a code" "$SELF tell --colour e <player> <message>"
+        [[ "$2" =~ ^[0-9a-v]$ ]] || usage_err "not a colour code: $2" "one of 0-9 or a-v, e.g. e for yellow"
+        colour="§$2"; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  player="${1:-}"
+  need_player "$player" tell "$SELF tell <player> <message>"
+  shift
+  [ $# -gt 0 ] || usage_err "tell needs a message" "$SELF tell \"$player\" Meet at spawn"
+  local pod json message="$*"
+  pod="$(server_pod)" || exit 1
+  json="$(tellraw_json "$message" "$colour")"
+  [ -n "$json" ] || err "could not encode the message" "python3 is required for tell"
+
+  tellraw_send "$pod" "\"$player\"" "$json"
+  echo "world: $WORLD"
+  echo "sent: tellraw"
+  echo "to: $player"
+  echo "message: $message"
+  case "$TELLRAW_RESULT" in
+    rejected)
+      echo "delivered: no"
+      echo "reason: the server rejected the payload"
+      echo "server: $TELLRAW_SERVER"
+      exit 1 ;;
+    notarget)
+      echo "delivered: no"
+      echo "reason: $player is not online"
+      echo "hint: $SELF --world $WORLD players"
+      exit 1 ;;
+  esac
+  echo "delivered: yes"
+}
+
+# The console lines after SINCE, without the map's live layer, which would
+# otherwise be all of them.
+console_reply() {
+  kubectl logs -n "$NAMESPACE" "$1" --since-time="$2" 2>/dev/null \
+    | tr -d '\000' | grep -a -v 'MCMAP1 ' | tail -5
+}
+
+# Sends one console command about a player and reports the server's reply.
+# The exact wording of Bedrock's replies to op and allowlist is not pinned
+# here, so only a reply that reads as a refusal counts as a failure; any other
+# reply is shown for the caller to read, and none at all is said to be none.
+player_command() {
+  local pod since reply
+  pod="$(server_pod)" || exit 1
+  since="$(since_now)"
+  send "$pod" "$@"
+  sleep 2
+  reply="$(console_reply "$pod" "$since")"
+  echo "world: $WORLD"
+  echo "sent: $*"
+  if [ -z "$reply" ]; then
+    echo "reply: none"
+    echo "result: unconfirmed"
+    echo "hint: the server printed nothing; check with $SELF --world $WORLD run $1 list"
+    return 0
+  fi
+  echo "reply:"
+  local line
+  while IFS= read -r line; do echo "  $line"; done <<<"$reply"
+  if grep -a -qiE 'could not|no targets matched|syntax error|unknown command|not found|error' <<<"$reply"; then
+    echo "result: failed"
+    exit 1
+  fi
+  echo "result: replied"
+}
+
+cmd_op() {
+  local action="$1" player="" confirm=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help)
+        echo "$SELF $action <player> [--confirm]    --confirm is required to op on fwb"
+        return 0 ;;
+      --confirm) confirm=1; shift ;;
+      -*) usage_err "unknown flag for $action: $1" "valid flags for $action: --confirm, --help" ;;
+      *) [ -z "$player" ] || usage_err "$action takes one player; quote a gamertag with spaces" "$SELF $action \"<gamertag>\""
+         player="$1"; shift ;;
+    esac
+  done
+  need_player "$player" "$action" "$SELF $action <player>"
+  # FWB is the real players' world and its operators are the owner's call; an
+  # agent should not grant it as a side effect of some other task.
+  if [ "$action" = op ] && [ "$WORLD" = fwb ] && [ -z "$confirm" ]; then
+    usage_err "op on fwb needs --confirm: operators on the players' world are the owner's decision" \
+      "$SELF op \"$player\" --confirm once the owner has asked for it; lab, seed and pg need no flag"
+  fi
+  player_command "$action" "\"$player\""
+}
+
+cmd_whitelist() {
+  local action="${1:-}"
+  case "$action" in
+    list)
+      player_command allowlist list ;;
+    add|remove)
+      shift
+      [ $# -le 1 ] || usage_err "whitelist $action takes one player; quote a gamertag with spaces" "$SELF whitelist $action \"<gamertag>\""
+      need_player "${1:-}" "whitelist $action" "$SELF whitelist $action <player>"
+      # Bedrock renamed the command to allowlist; that is the name sent.
+      player_command allowlist "$action" "\"$1\"" ;;
+    -h|--help|help|"")
+      echo "$SELF whitelist add|remove <player>    edit the server's allowlist"
+      echo "$SELF whitelist list                   show it"
+      [ -n "$action" ] || exit 2 ;;
+    *) usage_err "unknown whitelist command: $action" "$SELF whitelist add|remove <player>, or $SELF whitelist list" ;;
+  esac
+}
+
+locate_usage() {
+  cat <<EOF
+$SELF locate — where mobs of one type are, from the map's live layer
+
+  $SELF locate <mob> [--near <player>] [--top <n>]
+
+  <mob>            entity type, e.g. sheep (minecraft: prefix optional)
+  --near <player>  sort by distance from this player, same dimension only,
+                   with the yaw that points them at each mob
+  --top <n>        rows to print (default 10)
+
+Reads the frames the map pack prints to the console; it sends nothing to the
+server. Those frames cover loaded chunks only, nearest players first, up to
+the map's cap, so a mob far from every player is not in them. Only worlds
+running the map pack have frames (fwb today).
+
+environment:
+  MC_LOCATE_WINDOW   seconds of console to read (default 15)
+
+exit codes: 0 answered (found may be 0), 1 no frames or player not found, 2 usage
+EOF
+}
+
+cmd_locate() {
+  local mob="" near="" top=10
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) locate_usage; return 0 ;;
+      --near) [ $# -gt 1 ] || usage_err "--near needs a player" "$SELF locate sheep --near <player>"
+              near="$2"; shift 2 ;;
+      --top)  [ $# -gt 1 ] || usage_err "--top needs a number" "$SELF locate sheep --top 20"
+              top="$2"; shift 2 ;;
+      -*) usage_err "unknown flag for locate: $1" "valid flags for locate: --near, --top, --help" ;;
+      *) [ -z "$mob" ] || usage_err "locate takes one mob type, got a second: $1" "$SELF locate <mob> [--near <player>]"
+         mob="$1"; shift ;;
+    esac
+  done
+  [ -n "$mob" ] || usage_err "locate needs a mob type" "$SELF locate sheep --near <player>"
+  mob="${mob#minecraft:}"
+  [[ "$mob" =~ ^[a-z0-9_]+$ ]] || usage_err "not an entity type: $mob" "lower case with underscores, e.g. iron_golem"
+  [[ "$top" =~ ^[1-9][0-9]*$ ]] || usage_err "--top must be a whole number of 1 or more, not '$top'" "$SELF locate $mob --top 10"
+  [ -z "$near" ] || need_player "$near" "--near" "$SELF locate $mob --near <player>"
+  local window="${MC_LOCATE_WINDOW:-15}"
+  [[ "$window" =~ ^[1-9][0-9]*$ ]] || usage_err "MC_LOCATE_WINDOW must be a whole number of seconds, not '$window'" "unset it for the default"
+  command -v python3 >/dev/null 2>&1 || err "python3 is required for locate" "install python3, then re-run"
+
+  local pod logs
+  pod="$(server_pod)" || exit 1
+  logs="$(kubectl logs -n "$NAMESPACE" "$pod" --since="${window}s" 2>/dev/null)" \
+    || err "could not read the server log" "the pod may be restarting: $SELF --world $WORLD status"
+  echo "world: $WORLD"
+  # shellcheck disable=SC2016 # backticks in the program are help text for the reader
+  printf '%s\n' "$logs" | tr -d '\000' | grep -a 'MCMAP1 {' \
+    | MOB="$mob" NEAR="$near" TOP="$top" SELF="$SELF" WORLD="$WORLD" WINDOW="$window" python3 -c '
+import json, math, os, re, sys
+
+mob, near, top = os.environ["MOB"], os.environ["NEAR"], int(os.environ["TOP"])
+self_, world = os.environ["SELF"], os.environ["WORLD"]
+
+# A sample of one dimension can be split over several lines (part/parts);
+# only a sample with every part is whole, so the newest whole one is used.
+frames = {}
+for line in sys.stdin:
+    m = re.search(r"MCMAP1 (\{.*\})\s*$", line)
+    if not m:
+        continue
+    try:
+        r = json.loads(m.group(1))
+    except ValueError:
+        continue
+    if r.get("kind") not in ("mobs", "players") or "dim" not in r:
+        continue
+    slot = frames.setdefault((r["dim"], r["kind"]), {}).setdefault(
+        r.get("gen", 0), {"parts": r.get("parts", 1), "got": {}, "more": 0})
+    slot["got"][r.get("part", 0)] = r.get("items", [])
+    slot["more"] = max(slot["more"], r.get("more", 0) or 0)
+
+if not frames:
+    print("error: no map frames in the last %ss of the %s console" % (os.environ["WINDOW"], world))
+    print("hint: locate needs the map pack (fwb only today); on other worlds: %s --world %s run testfor @e[type=%s]" % (self_, world, mob))
+    sys.exit(1)
+
+def latest(dim, kind):
+    gens = frames.get((dim, kind), {})
+    whole = [g for g, v in gens.items() if len(v["got"]) >= v["parts"]]
+    pick = max(whole) if whole else (max(gens) if gens else None)
+    if pick is None:
+        return [], 0, True
+    v = gens[pick]
+    return [i for p in sorted(v["got"]) for i in v["got"][p]], v["more"], bool(whole)
+
+def tv(v):
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        return "%.1f" % v
+    v = str(v)
+    return json.dumps(v) if re.search(r"[,\"\n:]|^\s|\s$", v) else v
+
+dims = sorted({d for d, _ in frames})
+players, mobs, unlisted, partial = [], [], 0, False
+for d in dims:
+    items, _, whole = latest(d, "players")
+    players += [dict(i, dim=d) for i in items if "n" in i]
+    items, more, whole_m = latest(d, "mobs")
+    unlisted += more
+    partial = partial or not whole or not whole_m
+    mobs += [dict(i, dim=d) for i in items if i.get("t") == mob]
+
+def bearing(a, b):
+    return math.degrees(math.atan2(-(b["x"] - a["x"]), b["z"] - a["z"])) % 360
+
+anchor = None
+if near:
+    hits = [p for p in players if p["n"].lower() == near.lower()]
+    if not hits:
+        print("error: %s is not in the map frames" % near)
+        print("hint: they may be offline or between dimensions: %s --world %s players" % (self_, world))
+        sys.exit(1)
+    anchor = hits[0]
+    others = len([m for m in mobs if m["dim"] != anchor["dim"]])
+    mobs = [m for m in mobs if m["dim"] == anchor["dim"]]
+
+rows = []
+for m in mobs:
+    ref = anchor
+    if ref is None:
+        same = [p for p in players if p["dim"] == m["dim"]]
+        ref = min(same, key=lambda p: math.hypot(p["x"] - m["x"], p["z"] - m["z"])) if same else None
+    dist = math.hypot(ref["x"] - m["x"], ref["z"] - m["z"]) if ref else None
+    rows.append((dist if dist is not None else float("inf"), m, ref))
+rows.sort(key=lambda r: r[0])
+
+print("mob: %s" % mob)
+print("found: %d" % len(rows))
+if anchor:
+    print("near: %s %s x=%.1f y=%.1f z=%.1f" % (anchor["n"], anchor["dim"], anchor["x"], anchor["y"], anchor["z"]))
+    print("other_dimensions: %d" % others)
+print("unlisted: %d" % unlisted)
+if partial:
+    print("complete: no (a frame was missing parts; counts may be low)")
+if not rows:
+    print("mobs: none in loaded chunks")
+else:
+    shown = rows[:top]
+    print("mobs[%d]{dim,x,y,z,name,player,distance,yaw}:" % len(shown))
+    for dist, m, ref in shown:
+        print("  " + ",".join(tv(v) for v in [
+            m["dim"], round(m["x"]), round(m["y"]), round(m["z"]), m.get("n"),
+            ref["n"] if ref else None,
+            round(dist, 1) if ref else None,
+            round(bearing(ref, m)) if ref else None]))
+print("help:")
+if unlisted:
+    print("  unlisted mobs were beyond the map cap; any of them may be %s" % mob)
+if rows and len(rows) > top:
+    print("  Run `%s --world %s locate %s --top %d` to see all %d" % (self_, world, mob, len(rows), len(rows)))
+target = anchor["n"] if anchor else "<player>"
+print("  Run `%s --world %s tell \"%s\" <text>` to send someone the spot" % (self_, world, target))
+'
+}
+
+bots_usage() {
+  cat <<EOF
+$SELF bots — park and restore the afk bots (the presence group "bots")
+
+  $SELF bots [ls]                                   every actor and its state
+  $SELF bots park --reason <text> [--for <duration>]
+  $SELF bots unpark
+
+fwb only. Same calls as $SELF presence park|unpark bots.
+EOF
+}
+
+cmd_bots() {
+  case "${1:-}" in
+    -h|--help|help) bots_usage; return 0 ;;
+  esac
+  world_needs_fwb bots "afk bots, so no presence API"
+  case "${1:-}" in
+    ""|ls)  shift || true; presence_ls "$@" ;;
+    park)   shift; presence_park bots "$@" ;;
+    unpark) shift; presence_unpark bots "$@" ;;
+    *) usage_err "unknown bots command: $1" "$SELF bots --help" ;;
+  esac
 }
 
 cmd_run() {
@@ -239,7 +645,6 @@ cmd_run() {
 # outside the cluster, so each call port-forwards to the agent's metrics
 # Service, which serves /v1 on the same port, for its own lifetime.
 
-RELEASE="${MC_RELEASE:-jdwillmsen-minecraft-fwb-prd}"
 PRESENCE_PORT="${MC_PRESENCE_PORT:-9090}"
 # global.presence.operatorToken.name in the chart. The key mirrors the
 # chart's presence.tokenKey helper, which swaps - for _.
@@ -549,6 +954,7 @@ presence_unpark() {
 }
 
 cmd_presence() {
+  world_needs_fwb presence "server agent, so no presence API"
   case "${1:-}" in
     ""|ls)  shift || true; presence_ls "$@" ;;
     park)   shift; presence_park "$@" ;;
@@ -994,6 +1400,7 @@ cmd_cull() {
     [[ "${!value}" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
       || usage_err "MC_CULL_$setting must be a number of seconds, not '${!value}'" "unset it for the default"
   done
+  world_needs_fwb cull "census CronJob to take the listing from"
   command -v python3 >/dev/null 2>&1 || err "python3 is required for cull" "install python3, then re-run"
   command -v timeout >/dev/null 2>&1 || err "the timeout command is required for cull" "it is part of GNU coreutils; install that, then re-run"
 
@@ -1142,32 +1549,76 @@ cmd_cull() {
 
 usage() {
   cat <<EOF
-$SELF — console access to the Minecraft Bedrock server
+$SELF — console access to the Minecraft Bedrock servers
+
+  $SELF [--world <w>] <command> ...
 
   $SELF                            server status and who is online
   $SELF say <message>              broadcast a plain message
   $SELF announce <message>         broadcast it highlighted
+  $SELF tell <player> <message>    message one player (alias: whisper)
   $SELF players                    who is online
   $SELF where [player]             position, facing and bearings between players
+  $SELF locate <mob> [--near p]    where mobs of a type are (map frames, fwb)
+  $SELF op|deop <player>           grant or remove operator (op on fwb needs --confirm)
+  $SELF whitelist add|remove|list  the server's allowlist
   $SELF run <command> [args...]    any console command
-  $SELF presence [ls|park|unpark]  park or restore the bots and the agent
-  $SELF cull --types <a,b> ...     remove mob types world-wide
+  $SELF bots [ls|park|unpark]      park or restore the afk bots (fwb)
+  $SELF presence [ls|park|unpark]  park or restore any actor (fwb)
+  $SELF cull --types <a,b> ...     remove mob types world-wide (fwb)
+
+worlds (--world, or MC_WORLD; default fwb):
+  fwb    jdwillmsen-minecraft-fwb-prd     the players' survival world
+  lab    jdwillmsen-crew-lab-prd          crew lab, RakNet, bots train here
+  seed   jdwillmsen-fwb-seed-prd          FWB's seed on its own server
+  pg     jdwillmsen-proving-grounds-prd   pack and add-on test server
+  empty  unverified: nothing in this repo deploys it
+
+--world goes before the command.
 
 environment:
-  MC_NAMESPACE   namespace to look in (default: $NAMESPACE)
-  MC_SELECTOR    label selector for the server pod
+  MC_WORLD       world when --world is not given (default: fwb)
+  MC_NAMESPACE   namespace to look in (default: jdwillmsen-prd)
+  MC_SELECTOR    label selector for the server pod, overriding the world's
+  MC_RELEASE     release name, overriding the world's
 EOF
 }
+
+world="${MC_WORLD:-fwb}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --world)   [ $# -gt 1 ] || usage_err "--world needs a name" "worlds: ${WORLDS// /, }"
+               world="$2"; shift 2 ;;
+    --world=*) world="${1#--world=}"; shift ;;
+    *) break ;;
+  esac
+done
+# A --world after the command would otherwise be sent as text: `mc say
+# --world lab hi` broadcasting "--world lab hi" on FWB is the wrong world and
+# the wrong message at once.
+for arg in "$@"; do
+  case "$arg" in
+    --world|--world=*) usage_err "--world goes before the command" "$SELF --world <w> <command> ..." ;;
+  esac
+done
+case "${1:-}" in
+  -h|--help|help) usage; exit 0 ;;
+esac
+world_resolve "$world"
 
 case "${1:-}" in
   ""|status)  shift || true; cmd_status ;;
   say)        shift; cmd_say "$@" ;;
   announce)   shift; cmd_announce "$@" ;;
+  tell|whisper) shift; cmd_tell "$@" ;;
   players)    shift; cmd_players ;;
   where)      shift; cmd_where "$@" ;;
+  locate)     shift; cmd_locate "$@" ;;
+  op|deop)    cmd_op "$@" ;;
+  whitelist|allowlist) shift; cmd_whitelist "$@" ;;
   run)        shift; cmd_run "$@" ;;
+  bots)       shift; cmd_bots "$@" ;;
   presence)   shift; cmd_presence "$@" ;;
   cull)       shift; cmd_cull "$@" ;;
-  -h|--help|help) usage ;;
   *)          err "unknown command: $1" "$SELF --help" ;;
 esac
