@@ -1,7 +1,8 @@
 {{- if .Values.presenceStub.enabled }}
 # Stands in for FWB's server agent so an idle-mode unit can be parked and
-# unparked on the lab (crew's presencestub). In-cluster only: it checks no
-# token, so nothing outside the namespace may reach it.
+# unparked on the lab (crew's presencestub). It checks no token and has only
+# a ClusterIP, so any pod in the cluster can park a lab unit: harmless on the
+# lab, and why it is never rendered for FWB.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -348,7 +348,9 @@ crew:
   # cushion), `viewDistance` (an FWB bot's 12 when set), and `presence`
   # (`default`, `pollMs`) to poll presenceStub. It takes no role, work plan,
   # squad, kit, survival, control or tasks setting, since crew refuses those in
-  # idle mode, and the unit-kit pack hands it no gear.
+  # idle mode (the chart fails on any), and the unit-kit pack hands it no gear.
+  # It needs a crew release with idle mode: set the unit's `imageTag` while the
+  # lab's tag predates it, or an older crew ignores CREW_MODE and works.
   #
   # A unit with `server` (host, port) works on another server than the lab: it
   # joins that NetherNet server signed in, whatever `nethernet` and `offline`
