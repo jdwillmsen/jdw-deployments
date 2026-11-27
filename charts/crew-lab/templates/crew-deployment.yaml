@@ -87,7 +87,7 @@ spec:
               value: {{ if or $unit.server (and $unit.nethernet $.Values.crew.nethernet.enabled) }}"false"{{ else }}{{ $.Values.crew.offline | quote }}{{ end }}
             - name: MC_VIEW_DISTANCE
               {{- /* An idle unit holds what an FWB AFK bot holds. */}}
-              value: {{ if and $unit.idle $unit.idle.viewDistance }}{{ $unit.idle.viewDistance | quote }}{{ else }}{{ $.Values.crew.viewDistance | quote }}{{ end }}
+              value: {{ if and (hasKey $unit "idle") (default dict $unit.idle).viewDistance }}{{ (default dict $unit.idle).viewDistance | quote }}{{ else }}{{ $.Values.crew.viewDistance | quote }}{{ end }}
             - name: STATUS_ADDR
               value: "0.0.0.0:{{ $.Values.crew.statusPort }}"
             - name: CAMERA_ENABLED
@@ -106,7 +106,18 @@ spec:
             - name: AUTH_CACHE_DIR
               value: {{ printf "/data/%s/auth" $unit.id | quote }}
             {{- end }}
-            {{- if not $unit.idle }}
+            {{- $idle := hasKey $unit "idle" }}
+            {{- if $idle }}
+            {{- range list "role" "squad" "workPlan" "survival" "server" }}
+            {{- if hasKey $unit . }}
+            {{- fail (printf "unit %s: an idle unit takes no %s; crew refuses worker settings in idle mode, and the unit-kit pack would tp and equip it" $unit.id .) }}
+            {{- end }}
+            {{- end }}
+            {{- if and (hasKey (default dict $unit.idle) "presence") (not $.Values.presenceStub.enabled) }}
+            {{- fail (printf "unit %s: idle.presence needs presenceStub.enabled, or the unit never polls" $unit.id) }}
+            {{- end }}
+            {{- end }}
+            {{- if not $idle }}
             {{- /* An idle unit is a stand-in for an FWB AFK bot: crew refuses
             every worker setting below in idle mode, so none is rendered. */}}
             {{- $lab := include "crew.labRole" $unit }}
@@ -229,30 +240,33 @@ spec:
             {{- else }}
             - name: CREW_MODE
               value: idle
-            {{- with $unit.idle.facing }}
+            {{- $cfg := default dict $unit.idle }}
+            {{- /* hasKey, not with: 0 is a real yaw (south). */}}
+            {{- if hasKey $cfg "facing" }}
             - name: FACING
-              value: {{ . | quote }}
+              value: {{ $cfg.facing | quote }}
             {{- end }}
-            {{- if $unit.idle.stow }}
+            {{- if $cfg.stow }}
             - name: STOW
               value: "true"
             {{- end }}
-            {{- with $unit.idle.seat }}
+            {{- with $cfg.seat }}
             - name: SEAT
               value: {{ . | quote }}
             {{- end }}
-            {{- if and $unit.idle.presence $.Values.presenceStub.enabled }}
+            {{- if hasKey $cfg "presence" }}
+            {{- $p := default dict $cfg.presence }}
             {{- /* The lab stub checks no token; crew still needs one set. */}}
             - name: PRESENCE_URL
               value: {{ printf "http://presence-stub:%v" $.Values.presenceStub.port | quote }}
             - name: PRESENCE_ACTOR_ID
               value: {{ $unit.id | quote }}
             - name: PRESENCE_DEFAULT
-              value: {{ $unit.idle.presence.default | default "present" | quote }}
+              value: {{ $p.default | default "present" | quote }}
             - name: PRESENCE_TOKEN
               value: lab-stub
             - name: PRESENCE_POLL_MS
-              value: {{ $unit.idle.presence.pollMs | default 2000 | quote }}
+              value: {{ $p.pollMs | default 2000 | quote }}
             {{- end }}
             {{- end }}
           ports:
