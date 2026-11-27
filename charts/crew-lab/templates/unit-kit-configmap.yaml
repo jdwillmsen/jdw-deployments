@@ -285,7 +285,8 @@ data:
     {{- if include "crew.onLab" $unit }}
     {{- $n := $unit.name | quote }}
     {{- $lab := include "crew.labRole" $unit }}
-    {{- if and (not $unit.hard) (ne $unit.role "warrior") (not $lab) }}
+    {{- /* An idle unit gets no gear: an FWB AFK bot has none handed to it. */}}
+    {{- if and (not $unit.hard) (not $unit.idle) (ne $unit.role "warrior") (not $lab) }}
     execute as @a[name={{ $n }},hasitem={item=iron_sword,quantity=0},tag=!kitted] run replaceitem entity @s slot.hotbar 8 iron_sword 1
     execute as @a[name={{ $n }},hasitem={item=iron_helmet,location=slot.armor.head,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.head 0 iron_helmet 1
     execute as @a[name={{ $n }},hasitem={item=iron_chestplate,location=slot.armor.chest,quantity=0},tag=!kitted] run replaceitem entity @s slot.armor.chest 0 iron_chestplate 1

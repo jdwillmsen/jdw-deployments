@@ -1,0 +1,69 @@
+{{- if .Values.presenceStub.enabled }}
+# Stands in for FWB's server agent so an idle-mode unit can be parked and
+# unparked on the lab (crew's presencestub). In-cluster only: it checks no
+# token, so nothing outside the namespace may reach it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presence-stub
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: presence-stub
+    app.kubernetes.io/component: presence-stub
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: presence-stub
+  template:
+    metadata:
+      labels:
+        app: presence-stub
+        app.kubernetes.io/component: presence-stub
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: presence-stub
+          image: "{{ .Values.crew.image.repository }}:{{ .Values.presenceStub.imageTag | default .Values.crew.image.tag }}"
+          imagePullPolicy: {{ .Values.crew.image.pullPolicy }}
+          command: ["/presencestub"]
+          args: ["-addr", ":{{ .Values.presenceStub.port }}", "-default", {{ .Values.presenceStub.default | quote }}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.presenceStub.port }}
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presence-stub
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: presence-stub
+    app.kubernetes.io/component: presence-stub
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.presenceStub.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: presence-stub
+{{- end }}
