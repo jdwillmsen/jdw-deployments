@@ -8,25 +8,29 @@ GitOps for the `jdwillmsen` tenant. Merging to `main` is deploying: the Applicat
 | `--world` | Release / chart | What | Policy |
 |---|---|---|---|
 | `fwb` | `jdwillmsen-minecraft-fwb-prd` / `minecraft-fwb` | the players' survival world | owner approves; no cheats or creative, ever |
-| `lab` | `jdwillmsen-crew-lab-prd` / `crew-lab` | crew lab, RakNet, bots train here | fine with players online |
+| `lab` | `jdwillmsen-crew-lab-prd` / `crew-lab` | crew lab, NetherNet, bots train here | fine with players online |
 | `pg` | `jdwillmsen-proving-grounds-prd` / `proving-grounds` | pack and add-on tests, creative | fine with players online |
 | `seed` | `jdwillmsen-fwb-seed-prd` / `fwb-seed` | FWB's seed, hard survival, no cheats | Josh's world: ask as for FWB, warn him before restarts |
 
 ## Console: `tools/mc`, never a hand-built `kubectl exec ... send-command`
 
 `tools/mc [--world fwb|lab|seed|pg] status|players|where|locate|say|announce|tell|op|whitelist|run|bots|presence|cull`
-(`tools/mc --help`). FWB is the default. Presence, bots, cull and `locate` (map frames) are FWB-only.
+(`tools/mc --help`). FWB is the default. `op` and `whitelist add` on fwb or seed need `--confirm` (seed from
+[jdwillmsen/jdw-deployments#494](https://github.com/jdwillmsen/jdw-deployments/pull/494)). Presence, bots and cull
+are FWB-only; `where` and `locate` read the map pack's frames, which only FWB runs.
 Console traps the tool already handles: `grep -a` on console logs, read replies by time not `--tail`, JSON-encode tellraw.
 
 ## Rollout
 
-- Change a chart's values or image tag, open a PR, rebase-merge; Argo syncs it. Never `kubectl apply`, scale or
-  edit live objects: selfHeal reverts them. Images are built in `jdwillmsen/gameops`; Renovate opens the bump PRs
-  here and auto-merges only images that never recreate a server pod (`renovate.json` says which).
+- Change a chart's values or image tag, open a PR, rebase-merge; Argo syncs it. Do not `kubectl apply`, scale or
+  edit live objects outside the steps a runbook or `tools/world-restore` performs. Images are built in
+  `jdwillmsen/gameops`; Renovate opens the bump PRs here and auto-merges only images that never recreate a server
+  pod (`renovate.json` says which).
 - Restart FWB with `tools/mc run stop` after a 120 s announce. Never delete its pod or `rollout restart` it: a pod
   that moves takes the world volume with it (`docs/incidents/2026-08-30-fwb-world-data-loss.md`).
-- Lab and proving-grounds: merge and roll out once CI is green and review is done, players online or not.
-  FWB, and anything touching player data, waits for the owner's approval.
+- The merge gate is the tier `change-class --pr N` gives; R3 waits for the owner. On 2026-11-09 the owner told
+  agents in chat to merge lab and proving-grounds PRs without waiting on him; that is in agent memory only, not
+  in `change-risk.toml`, so it never lowers a tier. Players online do not block lab or pg rollouts; FWB's do.
 
 ## Runbooks and checks
 
