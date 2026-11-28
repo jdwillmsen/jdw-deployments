@@ -97,8 +97,11 @@ data:
       }, 200);
     });
 
+    // A kill or fill can remove a dropped item before this event is handled, and
+    // touching it then logs a scripting ERROR that the nightly field rebuild
+    // counts as a failed build.
     world.afterEvents.entitySpawn.subscribe(({ entity }) => {
-      if (entity.typeId !== "minecraft:item") return;
+      if (!entity.isValid || entity.typeId !== "minecraft:item") return;
       if (entity.getComponent("item")?.itemStack.getLore().includes(MOB_GEAR)) entity.remove();
     });
 
