@@ -178,7 +178,7 @@ minecraft-bedrock:
       # players, so unitKitGate holds the sync until none are online.
       env:
         - name: UNIT_KIT_REV
-          value: "4a7ec664c7ef"
+          value: "683a523c5d37"
       command:
         - sh
         - -ec
